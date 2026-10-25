@@ -11,9 +11,29 @@
   .lp-scope button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
   .lp-scope button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
 
-  .lp-status { font-size: 14px; line-height: 1.7; color: var(--color-fg); }
-  .lp-status b { font-weight: 600; }
-  .lp-status .lp-muted { color: var(--color-fg-muted); }
+  .lp-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 860px) { .lp-pair { grid-template-columns: minmax(0, 1fr); } }
+  .lp-state { font-size: 14px; line-height: 1.6; }
+  .lp-state b, .lp-exit-got b { font-weight: 600; }
+
+  .lp-ranges { display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
+  .lp-range-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+  .lp-range-tag { font-size: 12px; white-space: nowrap; }
+  .lp-range-tag.in { color: var(--color-ok); }
+  .lp-range-tag.out { color: var(--color-warn); }
+  .lp-track { position: relative; height: 8px; margin: 9px 0 7px; border-radius: 4px; background: var(--cds-chart-grid); }
+  .lp-seg { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+  .lp-now { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--color-fg); }
+  .lp-range-sub { font-size: 12px; color: var(--color-fg-muted); line-height: 1.5; }
+
+  .lp-exit-input { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+  .lp-exit-input input { font: inherit; width: 7.5em; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--color-border-line); background: var(--color-bg); color: var(--color-fg); }
+  .lp-exit-input input:focus-visible, .lp-exit-input button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+  .lp-exit-modes { display: inline-flex; gap: 8px; }
+  .lp-exit-input button { font: inherit; font-size: 12px; border: 1px solid var(--color-border-line); background: transparent; color: var(--color-fg-muted); padding: 4px 10px; border-radius: 8px; cursor: pointer; }
+  .lp-exit-input button[aria-pressed="true"] { color: var(--color-fg); border-color: var(--color-fg-muted); }
+  .lp-exit-got { font-size: 13px; line-height: 1.6; }
+  .lp-exit-main { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
 
   .lp-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
   @media (max-width: 760px) { .lp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -63,14 +83,32 @@
     <p class="lp-asof" id="lp-asof">—</p>
   </header>
 
-  <p class="lp-status" id="lp-status">—</p>
-
   <section class="lp-kpis" aria-label="主要数字">
     <div class="lp-kpi"><span class="lp-kpi-label">现值</span><span class="lp-kpi-value" id="k-value">—</span><span class="lp-kpi-sub" id="k-invested">—</span></div>
     <div class="lp-kpi"><span class="lp-kpi-label">对比一直持有 USDC</span><span class="lp-kpi-value" id="k-pnl">—</span><span class="lp-kpi-sub" id="k-pnl-pct">—</span></div>
     <div class="lp-kpi"><span class="lp-kpi-label">累计利息收益</span><span class="lp-kpi-value" id="k-earn">—</span><span class="lp-kpi-sub" id="k-earn-sub">—</span></div>
     <div class="lp-kpi"><span class="lp-kpi-label">昨日利息收益</span><span class="lp-kpi-value" id="k-yday">—</span><span class="lp-kpi-sub" id="k-today">—</span></div>
   </section>
+
+  <div class="lp-pair">
+    <section class="lp-card" id="range">
+      <h2>现价在区间的位置</h2>
+      <p class="lp-state" id="range-state">—</p>
+      <div class="lp-ranges" id="range-rows"></div>
+    </section>
+
+    <section class="lp-card" id="exit">
+      <h2>撤出后的 ETH 成本价</h2>
+      <div class="lp-exit-input" id="exit-input">
+        <label for="exit-price">撤出时 ETH 价格 $</label>
+        <input id="exit-price" type="text" inputmode="decimal" autocomplete="off" spellcheck="false">
+        <span class="lp-exit-modes"><button type="button" data-exit="now" aria-pressed="true">现价</button><button type="button" data-exit="below" aria-pressed="false">跌出区间</button></span>
+      </div>
+      <p class="lp-exit-got" id="exit-got">—</p>
+      <div class="lp-exit-main"><span class="lp-kpi-label">ETH 成本价</span><span class="lp-kpi-value" id="exit-cost">—</span><span class="lp-kpi-sub" id="exit-cost-sub">—</span></div>
+      <p class="lp-note" id="exit-even">—</p>
+    </section>
+  </div>
 
   <section class="lp-card" id="interest">
     <h2>每日利息收益</h2>
@@ -99,8 +137,8 @@
   <section class="lp-about" id="about">
     <ul>
       <li>投入：从外面转进钱包的钱，按到账时的价格算美元。现值：钱包里的币、池子里的币和没领的奖励，按现在的价格算。</li>
-      <li>数据来自 Base 链上，每小时自动更新一次；按北京时间切日。</li>
-      <li>ETH 成本价：假设 ETH 跌破区间、仓位全部变成 ETH 后把流动性撤出来拿着，ETH 涨回这个价以上再全部卖出，投入的钱一分不少、利息全部到手。没卖的 AERO 按今天的价格算，卖出手续费没算。</li>
+      <li>数据来自 Base 链上，大约每小时自动更新一次；按北京时间切日。</li>
+      <li>ETH 成本价：在填的价格把流动性撤出来，拿着撤出的 ETH，等 ETH 涨到成本价以上再全部卖出，投入的钱一分不少、目前为止的利息全部到手。按现在的持仓和利息算，之后再赚的利息会让它更低一点；没卖的 AERO 按今天的价格算，卖出手续费没算。</li>
     </ul>
   </section>
 </div>
@@ -120,7 +158,6 @@
   const fmtNum = (v, d) => (v == null ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: d }));
   const fmtTick = (v) => (Number.isInteger(v) ? usd0.format(v) : fmtUsd(v));
   const tone = (el, v) => { el.classList.toggle('lp-pos', v > 0); el.classList.toggle('lp-neg', v < 0); };
-  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
   const parseDay = (d) => new Date(d + 'T00:00:00Z');
   const dayLabel = d3.utcFormat('%-m/%-d');
 
@@ -142,34 +179,99 @@
     scopeBox.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.scope === sc)));
   }
 
-  // ---------- status line: where the price is, and the ETH cost price ----------
-  function drawStatus(s) {
-    const el = $('lp-status');
-    el.replaceChildren();
-    if (!s) { el.textContent = '—'; return; }
-    const text = (t) => el.appendChild(document.createTextNode(t));
-    const bold = (t) => { const b = document.createElement('b'); b.textContent = t; el.appendChild(b); };
-    const muted = (t) => { const m = document.createElement('span'); m.className = 'lp-muted'; m.textContent = t; el.appendChild(m); };
-    text('ETH 现价 '); bold(fmtUsd(s.eth_usd)); text('，');
-    const low = fmtUsd(s.range_low_min), high = fmtUsd(s.range_high_max);
-    const states = {
-      in: `在区间 ${low}–${high} 内，正在赚利息。`,
-      part: `在 ${low}–${high} 之间，部分仓位在自己的区间内，那部分在赚利息。`,
-      gap: '每个仓位都在自己的区间外，现在不赚利息。',
-      below: `已经跌破区间下沿 ${low}，仓位全部变成了 ETH，现在不赚利息。`,
-      above: `已经涨过区间上沿 ${high}，仓位全部变成了 USDC，现在不赚利息。`,
-      none: '现在没有 LP 仓位。',
-    };
-    text(states[s.range_state] ?? '');
-    const c = s.cost_eth_price;
-    if (c == null || s.range_state === 'above') return;
-    const holding = s.range_state === 'below' || s.range_state === 'none';
-    text(holding ? `手里共 ${fmtNum(s.eth_units_below, 2)} 个 ETH，ETH 成本价 ` : `如果跌出区间，仓位会变成 ETH，连同钱包里的共 ${fmtNum(s.eth_units_below, 2)} 个；撤出拿着，ETH 成本价 `);
-    if (c === 0) { bold('任何价格都已覆盖'); text('。'); return; }
-    bold(fmtUsd(c));
-    text('：涨回这个价以上再卖，本金不亏、利息全拿');
-    if (holding && isNum(s.cost_gap_pct)) muted(s.cost_gap_pct > 0 ? `（还要涨 ${(s.cost_gap_pct * 100).toFixed(1)}%）` : '（现价已经高于成本价）');
-    text('。');
+  // ---------- the ETH curve: what the wallets hold at any ETH price ----------
+  // Each live WETH/USDC position turns into ETH as the price falls and into USDC as it rises; the
+  // rest (wallet ETH, USDC, AERO at today's price) stays as it is. Same maths as src/run.mjs.
+  const amountsAt = (p, P) => {
+    const r = Math.sqrt(P * 1e-12);
+    if (r <= p.sa) return [(p.L * (1 / p.sa - 1 / p.sb)) / 1e18, 0];
+    if (r < p.sb) return [(p.L * (1 / r - 1 / p.sb)) / 1e18, (p.L * (r - p.sa)) / 1e6];
+    return [0, (p.L * (p.sb - p.sa)) / 1e6];
+  };
+  const holdAt = (c, P) => c.positions.reduce(([e, u], p) => { const [a, b] = amountsAt(p, P); return [e + a, u + b]; }, [c.eth, c.usd]);
+  // Price the ETH must reach for everything held to be worth `target`; 0 when any price already does.
+  const needed = (e, u, target) => (e < 0.05 ? null : Math.max(0, (target - u) / e));
+  const pct = (v) => `${(Math.abs(v) * 100).toFixed(1)}%`;
+  const walletColor = (label) => { const i = walletKeys().findIndex((k) => labelOf(k) === label); return dash.colors[Math.max(0, i) % dash.colors.length]; };
+
+  const STATES = {
+    in: '在区间内，正在赚利息。',
+    part: '部分仓位在自己的区间内，那部分在赚利息。',
+    gap: '每个仓位都在自己的区间外，现在不赚利息。',
+    below: '已经跌破区间，仓位全部变成了 ETH，现在不赚利息。',
+    above: '已经涨过区间，仓位全部变成了 USDC，现在不赚利息。',
+    none: '现在没有 LP 仓位。',
+  };
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+
+  // ---------- where the price sits in each range ----------
+  function drawRange(s) {
+    const state = $('range-state'), list = $('range-rows');
+    state.replaceChildren(); list.replaceChildren();
+    if (!s) { state.textContent = '—'; return; }
+    const b = el('b', null, fmtUsd(s.eth_usd));
+    state.append('ETH 现价 ', b, '，', STATES[s.range_state] ?? '');
+    // Positions of one wallet with the same range move together: show them as one.
+    const ps = [];
+    for (const p of s.curve?.positions ?? []) {
+      const same = ps.find((q) => q.wallet === p.wallet && q.low === p.low && q.high === p.high);
+      if (same) same.L += p.L; else ps.push({ ...p });
+    }
+    if (!ps.length) return;
+    const now = s.eth_usd;
+    const lo0 = Math.min(now, ...ps.map((p) => p.low)), hi0 = Math.max(now, ...ps.map((p) => p.high));
+    const pad = (hi0 - lo0) * 0.12 || now * 0.05, lo = lo0 - pad, hi = hi0 + pad;
+    const at = (v) => `${(((v - lo) / (hi - lo)) * 100).toFixed(2)}%`;
+    const several = new Set(ps.map((p) => p.wallet)).size > 1;
+    for (const p of ps) {
+      const row = el('div', 'lp-range');
+      const inside = now >= p.low && now < p.high;
+      const head = el('div', 'lp-range-head');
+      head.append(el('span', null, `${several ? p.wallet + ' · ' : ''}${fmtUsd(p.low)} – ${fmtUsd(p.high)}`),
+        el('span', `lp-range-tag ${inside ? 'in' : 'out'}`, inside ? '区间内' : now < p.low ? '已跌破' : '已涨破'));
+      const track = el('div', 'lp-track');
+      const seg = el('i', 'lp-seg'); seg.style.left = at(p.low); seg.style.width = `calc(${at(p.high)} - ${at(p.low)})`; seg.style.background = walletColor(p.wallet);
+      const mark = el('i', 'lp-now'); mark.style.left = at(now); mark.title = `现价 ${fmtUsd(now)}`;
+      track.append(seg, mark);
+      const [e, u] = amountsAt(p, now);
+      const where = inside ? `跌 ${pct((now - p.low) / now)} 到下沿 · 涨 ${pct((p.high - now) / now)} 到上沿`
+        : now < p.low ? `要涨 ${pct((p.low - now) / now)} 才回到区间` : `要跌 ${pct((now - p.high) / now)} 才回到区间`;
+      row.append(head, track, el('div', 'lp-range-sub', `${where} · 池子里 ${fmtNum(e, 2)} ETH + ${fmtUsd(u)} USDC`));
+      list.appendChild(row);
+    }
+  }
+
+  // ---------- the ETH cost price for a withdrawal at any price ----------
+  let exitMode = 'now', exitText = '';
+  const exitBox = $('exit-input'), exitInput = $('exit-price');
+  exitBox.addEventListener('click', (e) => { const b = e.target.closest('button[data-exit]'); if (b) { exitMode = b.dataset.exit; exitText = ''; drawExit(current()); } });
+  exitInput.addEventListener('input', () => { exitMode = 'custom'; exitText = exitInput.value; drawExit(current(), true); });
+  function drawExit(s, typing) {
+    const got = $('exit-got'), cost = $('exit-cost'), sub = $('exit-cost-sub'), even = $('exit-even');
+    got.replaceChildren(); even.textContent = ''; cost.textContent = '—'; sub.textContent = '';
+    exitBox.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.exit === exitMode)));
+    if (!s?.curve) { got.textContent = '—'; return; }
+    const now = s.eth_usd, ps = s.curve.positions;
+    exitBox.hidden = !ps.length;
+    const lowest = ps.length ? Math.min(...ps.map((p) => p.low)) : null, highest = ps.length ? Math.max(...ps.map((p) => p.high)) : null;
+    let P = now;
+    if (exitMode === 'below' && lowest != null) P = Math.floor(lowest) - 1;
+    if (exitMode === 'custom') P = Number(String(exitText).replace(/[$,\s]/g, ''));
+    if (!typing) exitInput.value = exitMode === 'custom' ? exitText : String(Math.round(P));
+    if (!(P > 0)) { got.textContent = '填一个 ETH 价格，比如 2300。'; return; }
+    const [e, u] = holdAt(s.curve, P);
+    const c = needed(e, u, s.invested_usd + s.earn_total_usd), b = needed(e, u, s.invested_usd);
+    const bold = (t) => el('b', null, t);
+    if (!ps.length) got.append('现在没有仓位，手里有 ', bold(`${fmtNum(e, 2)} 个 ETH`), `，加上 ${fmtUsd(u)} 的 USDC 等其他资产。`);
+    else got.append(`按 ${fmtUsd(P)} 撤出，会拿到 `, bold(`${fmtNum(e, 2)} 个 ETH`), `，加上 ${fmtUsd(u)} 的 USDC 等其他资产。`);
+    if (lowest != null && P < lowest) got.append(`低于 ${fmtUsd(lowest)} 时仓位已全是 ETH，撤出价再低，成本价也不变。`);
+    if (c == null) { got.append(highest != null && P >= highest ? '这个价格撤出几乎全是 USDC，没有 ETH 要卖。' : '没有要卖的 ETH。'); return; }
+    if (c === 0) { cost.textContent = '已覆盖'; sub.textContent = '不用卖 ETH，其他资产已经够本金加利息。'; return; }
+    cost.textContent = fmtUsd(c);
+    // Measured from the withdrawal price: how far ETH must rise after withdrawing.
+    const g = c / P - 1;
+    sub.textContent = g > 0 ? `之后 ETH 涨到这个价以上再卖，本金不亏、利息全拿（比 ${fmtUsd(P)} 高 ${pct(g)}）` : `低于撤出价 ${fmtUsd(P)}：撤出时直接卖，就已经本金不亏、利息全拿`;
+    if (b != null) even.textContent = b === 0 ? '回本价：任何价格卖都不亏本金。' : `回本价 ${fmtUsd(b)}：卖到这个价，加上已经赚到的利息，整体不亏。`;
   }
 
   // ---------- chart helpers ----------
@@ -322,13 +424,15 @@
   }
 
   // ---------- draw ----------
+  const current = () => { const S = dash.data('summary'); return S.status === 'ok' ? S.data.find((r) => r.scope === scope()) ?? null : null; };
   dash.onData(() => {
-    const S = dash.data('summary'), D = dash.data('daily');
+    const D = dash.data('daily');
     const sc = scope();
     drawScopes(sc);
-    const s = S.status === 'ok' ? S.data.find((r) => r.scope === sc) : null;
-    $('lp-asof').textContent = s ? `数据截至 ${s.as_of_cst}（北京时间），每小时自动更新` : '—';
-    drawStatus(s);
+    const s = current();
+    $('lp-asof').textContent = s ? `数据截至 ${s.as_of_cst}（北京时间），大约每小时自动更新` : '—';
+    drawRange(s);
+    drawExit(s);
     const put = (id, text, v) => { const el = $(id); el.textContent = text; if (v !== undefined) tone(el, v); };
     put('k-value', s ? fmtUsd(s.value_usd) : '—');
     put('k-invested', s ? `投入 ${fmtUsd(s.invested_usd)}` : '—');
