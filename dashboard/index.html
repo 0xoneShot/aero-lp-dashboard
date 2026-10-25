@@ -454,7 +454,7 @@
       const tr = document.createElement('tr');
       if (r.partial) tr.className = 'lp-today';
       const cell = (text, v, cls) => { const td = document.createElement('td'); td.textContent = text; if (v !== undefined) tone(td, v); if (cls) td.classList.add(cls); return td; };
-      const day = cell(r.partial ? `${r.day.slice(5)} 今天` : r.day.slice(5));
+      const day = cell(r.partial && r.day === cstDay(Date.now()) ? `${r.day.slice(5)} 今天` : r.day.slice(5));
       if (r.range_status === 'out' || r.range_status === 'none') {
         const c = document.createElement('span'); c.className = 'lp-chip'; c.textContent = r.range_status === 'out' ? '区间外' : '无仓位'; day.appendChild(c);
       }
@@ -470,7 +470,7 @@
   // published curve, the same way src/run.mjs values them. AERO stays at the hourly price.
   const RPCS = ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'];
   const LIVE_EVERY = 15000, LIVE_STALE = 120000;
-  let live = null, liveFailed = false, liveBusy = false, rpcFirst = 0;
+  let live = null, liveFailed = false, liveBusy = null, rpcFirst = 0, dataFailed = false;
   async function rpcBatch(calls) {
     let err;
     for (let k = 0; k < RPCS.length; k++) {
@@ -490,14 +490,19 @@
     const w = hex.slice(2), x = Number(BigInt('0x' + w.slice(0, 64))) / 2 ** 96;
     return { price: x * x * 1e12, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) }; // WETH/USDC: 18 and 6 decimals
   };
-  async function readLive() {
+  // One read at a time; a caller during a read waits for it.
+  function readLive() {
     const S = dash.data('summary');
-    if (liveBusy || S.status !== 'ok' || !S.data.length) return;
+    if (liveBusy) return liveBusy;
+    if (S.status !== 'ok' || !S.data.length) return Promise.resolve();
+    liveBusy = doReadLive(S).finally(() => { liveBusy = null; });
+    return liveBusy;
+  }
+  async function doReadLive(S) {
     const ref = S.data[0].eth_ref_pool;
     if (!ref) return;
     const pools = [...new Set(S.data.flatMap((r) => (r.curve?.positions ?? []).map((p) => p.pool_address)).filter(Boolean))];
     const addrs = [ref, ...pools.filter((a) => a !== ref)];
-    liveBusy = true;
     try {
       const res = (await rpcBatch(addrs.map((to, id) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to, data: '0x3850c7bd' }, 'latest'] })))).map(slot0);
       const hourly = S.data[0].eth_usd;
@@ -507,7 +512,7 @@
     } catch (e) {
       liveFailed = true;
       if (live && Date.now() - live.at > LIVE_STALE) live = null;
-    } finally { liveBusy = false; }
+    }
     drawLive();
   }
   setInterval(() => { if (!document.hidden) readLive(); }, LIVE_EVERY);
@@ -515,7 +520,10 @@
   const refreshBtn = $('lp-refresh');
   refreshBtn.addEventListener('click', async () => {
     refreshBtn.disabled = true; refreshBtn.textContent = '刷新中…';
-    try { await Promise.all([dash.refresh?.(), readLive()]); } finally { refreshBtn.disabled = false; refreshBtn.textContent = '刷新'; }
+    try {
+      const [ok] = await Promise.all([dash.refresh?.(), readLive()]);
+      dataFailed = ok === false;
+    } finally { refreshBtn.disabled = false; refreshBtn.textContent = '刷新'; drawHead(current()); }
   });
 
   // A summary row as of the live prices; the row itself when there are none.
@@ -534,11 +542,18 @@
     return { ...s, eth_usd: live.ref, value_usd: value, pnl_usd: pnl, pnl_pct: s.invested_usd ? pnl / s.invested_usd : null, range_state, curve: { ...s.curve, positions: ps }, live_at: live.at };
   }
   const cstDay = (t) => new Date(t + 8 * 3600e3).toISOString().slice(0, 10);
-  // Today's row follows the live P&L too (its interest stays hourly).
+  // Today's row follows the live figures, its 区间外 mark included (its interest stays hourly). Just
+  // after Beijing midnight the newest published row is still yesterday's: it keeps its figures and a
+  // row for today, without interest yet, carries the live ones.
   function liveRows(rows, s) {
     if (!s?.live_at) return rows;
-    return rows.map((r) => (r.scope === s.scope && r.partial && r.day === cstDay(s.live_at)
-      ? { ...r, pnl_usd: s.pnl_usd, pnl_day_usd: s.pnl_usd - (r.pnl_usd - r.pnl_day_usd), value_usd: s.value_usd, eth_usd: s.eth_usd } : r));
+    const day = cstDay(s.live_at), last = rows.filter((r) => r.scope === s.scope).at(-1);
+    if (!last) return rows;
+    const now = { pnl_usd: s.pnl_usd, value_usd: s.value_usd, eth_usd: s.eth_usd, range_status: { in: 'in', part: 'part', none: 'none' }[s.range_state] ?? 'out' };
+    if (last.partial && last.day === day) return rows.map((r) => (r === last ? { ...r, ...now, pnl_day_usd: s.pnl_usd - (r.pnl_usd - r.pnl_day_usd) } : r));
+    if (last.day >= day) return rows;
+    return [...rows.map((r) => (r === last ? { ...r, partial: false } : r)),
+      { day, scope: s.scope, scope_label: s.scope_label, partial: true, earn_usd: null, earn_aero: null, earn_fee_usd: null, ...now, pnl_day_usd: s.pnl_usd - last.pnl_usd }];
   }
 
   // ---------- draw ----------
@@ -547,9 +562,9 @@
     $('lp-asof').textContent = s ? `数据截至 ${s.as_of_cst}（北京时间），利息大约每小时更新` : '—';
     const note = $('lp-live');
     note.className = s?.live_at ? 'lp-live-on' : '';
-    note.textContent = !s ? '' : s.live_at
+    note.textContent = (!s ? '' : s.live_at
       ? `价格实时 ${new Date(s.live_at).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}${liveFailed ? '（最新一次没取到）' : ''}`
-      : liveFailed ? '实时价格暂时取不到，用的是整点的价格' : '';
+      : liveFailed ? '实时价格暂时取不到，用的是整点的价格' : '') + (dataFailed ? ' · 整点数据没刷新成功，稍后再试' : '');
   }
   function drawNumbers(s) {
     const put = (id, text, v) => { const el = $(id); el.textContent = text; if (v !== undefined) tone(el, v); };
@@ -581,6 +596,7 @@
   }
   let liveStarted = false;
   dash.onData(() => {
+    dataFailed = false; // new data arrived
     draw();
     if (!liveStarted && dash.data('summary').status === 'ok') { liveStarted = true; readLive(); }
   });

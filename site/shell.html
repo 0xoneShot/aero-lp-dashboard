@@ -139,8 +139,13 @@
       if (fresh || !keys.includes(params.scope)) params.scope = keys.includes('total') ? 'total' : keys[0]
       fire()
     }
+    // Each load or 换地址 bumps seq; a background reload that comes back after one of them is dropped,
+    // so data for the previous addresses can never replace what is on screen now.
+    let seq = 0
     async function load(list) {
+      const my = ++seq
       const view = await openView(list)
+      if (my !== seq) return false
       if (!view) return false
       const fresh = norm(list) !== (current && norm(current))
       current = list
@@ -148,7 +153,18 @@
       return true
     }
     // Pick up the hourly refresh soon after it lands, and at once when the page comes back into view.
-    const reload = () => (current ? load(current).catch(() => false) : Promise.resolve(false))
+    // Resolves to false when the data could not be fetched.
+    async function reload() {
+      const list = current, my = seq
+      if (!list) return false
+      try {
+        const view = await openView(list)
+        if (my !== seq || list !== current) return true // the addresses changed meanwhile
+        if (!view) return false
+        show(view, false)
+        return true
+      } catch { return false }
+    }
     setInterval(() => { if (!document.hidden) reload() }, 3 * 60 * 1000)
     document.addEventListener('visibilitychange', () => { if (!document.hidden) reload() })
     let t
@@ -163,6 +179,7 @@
       scopes: () => (store.summary.status === 'ok' ? store.summary.data.map((r) => ({ key: r.scope, label: r.scope_label })) : []),
       colors: ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'],
       refresh: reload,
+      stop() { seq++; current = null },
       setLink() {},
     }
   })()
@@ -213,7 +230,7 @@
       if (!list.length) { msg.textContent = '请输入以 0x 开头的 42 位钱包地址。'; return }
       open(list, false)
     })
-    document.getElementById('site-switch').addEventListener('click', () => { try { localStorage.removeItem(KEY) } catch {}; input.value = ''; showGate() })
+    document.getElementById('site-switch').addEventListener('click', () => { try { localStorage.removeItem(KEY) } catch {}; dash.stop(); input.value = ''; showGate() })
     const list = saved()
     if (Array.isArray(list) && list.length) open(list, true)
     else showGate()
