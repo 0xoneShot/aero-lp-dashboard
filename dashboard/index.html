@@ -8,33 +8,60 @@
   .ae-take { font-size: var(--cds-font-size-body); line-height: 1.6; max-width: 70ch; }
   .ae-take b, .ae .ae-strong { font-weight: 600; }
   .ae-take .ae-m, .ae-take .ae-a { white-space: nowrap; }
-  .ae-scope { display: inline-flex; border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: 2px; gap: 2px; }
-  .ae-scope button { font: inherit; font-size: var(--cds-font-size-caption); border: 0; background: transparent; color: var(--color-fg-muted); padding: var(--cds-pad-xs) var(--cds-pad-md); border-radius: calc(var(--cds-radius) - 2px); cursor: pointer; }
-  .ae-scope button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
-  .ae-scope button:focus-visible { outline: 2px solid var(--color-fg); outline-offset: 1px; }
+  .ae-scope, .ae-seg { display: inline-flex; border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: 2px; gap: 2px; }
+  .ae-scope button, .ae-seg button { font: inherit; font-size: var(--cds-font-size-caption); border: 0; background: transparent; color: var(--color-fg-muted); padding: var(--cds-pad-xs) var(--cds-pad-md); border-radius: calc(var(--cds-radius) - 2px); cursor: pointer; }
+  .ae-scope button[aria-pressed="true"], .ae-seg button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
+  .ae-scope button:focus-visible, .ae-seg button:focus-visible { outline: 2px solid var(--color-fg); outline-offset: 1px; }
+  .ae-seg { background: var(--color-bg); }
 
-  .ae-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: var(--cds-gap-md); }
+  /* Six tiles in rows that fill: 6, 3 or 2 across, never one left alone. */
+  .ae-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--cds-gap-md); }
+  @media (max-width: 1100px) { .ae-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 560px) { .ae-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .ae-kpi { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-md) var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-xs); min-width: 0; }
   .ae-kpi-label { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
   .ae-kpi-value { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); line-height: 1.15; }
   .ae-kpi-sub { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ae-kpi-sub .ae-m { white-space: nowrap; }
+  .ae [hidden] { display: none !important; }
   .ae-pos { color: var(--color-ok); }
   .ae-neg { color: var(--color-bad); }
 
   .ae-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: var(--cds-gap-md); }
   .ae-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-sm); min-width: 0; }
   .ae-card h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); }
+  .ae-cardhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cds-gap-sm) var(--cds-gap-md); }
   .ae-note { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); line-height: 1.5; }
-  .ae-legend { display: flex; flex-wrap: wrap; gap: var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ae-legend { display: flex; flex-wrap: wrap; gap: var(--cds-gap-xs) var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
   .ae-legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .ae-sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-  .ae-sw-line { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+  .ae-sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
+  .ae-sw-line { width: 14px; height: 2px; border-radius: 1px; display: inline-block; flex: none; }
+  .ae-sw-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+  .ae-sw-strip { width: 14px; height: 4px; border-radius: 1px; display: inline-block; flex: none; }
   .ae-chart { position: relative; min-height: 240px; }
   .ae-chart svg { display: block; overflow: visible; }
   .ae-tip { position: absolute; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); white-space: nowrap; z-index: 2; display: none; }
   .ae-tip .t { color: var(--cds-text-secondary); margin-bottom: 2px; }
   .ae-tip .r { display: flex; align-items: center; gap: 6px; }
   .ae-tip .r b { margin-left: auto; padding-left: var(--cds-pad-sm); font-weight: 600; }
+
+  /* ETH cost card */
+  .ae-ec { gap: var(--cds-gap-md); }
+  .ae-ec-lead { font-size: var(--cds-font-size-body); line-height: 1.6; max-width: 72ch; }
+  .ae-ec-lead b { font-weight: 600; }
+  .ae-ec-lead .ae-m, .ae-nw { white-space: nowrap; }
+  .ae-ec-blocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr)); gap: var(--cds-gap-xl); }
+  .ae-ec-block { display: flex; flex-direction: column; gap: var(--cds-gap-sm); min-width: 0; }
+  .ae-ec-block h3 { font-size: var(--cds-font-size-body); font-weight: var(--cds-font-weight-medium); }
+  .ae-ec-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--cds-gap-md) var(--cds-gap-lg); }
+  .ae-ec-stat { display: flex; flex-direction: column; gap: var(--cds-gap-xs); min-width: 0; padding-top: var(--cds-pad-sm); border-top: 1px solid var(--color-border-line); }
+  .ae-ec-label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ae-ec-plain { font-size: var(--cds-font-size-caption); color: var(--color-fg); line-height: 1.5; }
+  .ae-ec .ae-kpi-value.ae-ec-word { font-family: var(--font-anthropic-sans); font-size: var(--cds-font-size-heading); line-height: 1.4; }
+  .ae-ec-basis { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); line-height: 1.5; }
+  .ae-ec-basis b { color: var(--color-fg); font-weight: 600; }
+  .ae-ec-basis .ae-m, .ae-ec-notes .ae-m { white-space: nowrap; }
+  .ae-ec-notes { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 2px; }
 
   .ae-wf { display: flex; flex-direction: column; gap: var(--cds-gap-sm); }
   .ae-wf-ends { display: flex; justify-content: space-between; gap: var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
@@ -52,8 +79,17 @@
   .ae .ae-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--color-border-line); }
   .ae .ae-chip.ok { color: var(--color-ok); }
   .ae .ae-chip.warn { color: var(--color-warn); }
+  .ae .ae-chip.mute { color: var(--color-fg-muted); }
   .ae a { color: inherit; }
-  @media (max-width: 640px) { .ae .ae-hide-sm { display: none; } }
+  .ae #daily-table th { white-space: normal; word-break: keep-all; vertical-align: bottom; }
+  .ae .ae-only-sm { display: none; }
+  @media (max-width: 640px) {
+    .ae .ae-hide-sm { display: none; }
+    .ae .ae-only-sm { display: inline; }
+    .ae #daily-table th, .ae #daily-table td { padding-inline: 4px; }
+    /* The 区间 column is hidden here: days that closed out of range or with no position get a stripe instead. */
+    .ae #daily-table tr.ae-out td:first-child { box-shadow: inset 3px 0 var(--color-warn); }
+  }
 
   .ae-method { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); line-height: 1.7; max-width: 80ch; display: flex; flex-direction: column; gap: var(--cds-gap-xs); }
   .ae-method h3 { font-size: var(--cds-font-size-body); color: var(--color-fg); font-weight: var(--cds-font-weight-medium); }
@@ -74,7 +110,7 @@
       <span class="ae-m" data-source="summary" data-field="scope_label">—</span>净投入
       <b class="ae-m dash-skeleton" data-source="summary" data-field="invested_usd">—</b>，现值
       <b class="ae-m dash-skeleton" data-source="summary" data-field="value_usd">—</b>，相比一直持有 USDC 累计盈亏
-      <b class="ae-m dash-skeleton" data-sign="1" data-source="summary" data-field="pnl_usd">—</b>（<span class="ae-m" data-sign="1" data-source="summary" data-field="pnl_pct">—</span>）。其中 LP 累计收益
+      <b class="ae-m dash-skeleton" data-sign="1" data-source="summary" data-field="pnl_usd">—</b>（<span class="ae-m" data-sign="1" data-source="summary" data-field="pnl_pct">—</span>）。其中 LP 利息收益累计
       <b class="ae-m dash-skeleton" data-sign="1" data-source="summary" data-field="earn_total_usd">—</b>，带入资产（主要是 ETH）的价格变动
       <b class="ae-a" data-step="market" data-source="attribution" data-field="usd">—</b>，无常损失与调仓
       <b class="ae-a" data-step="residual" data-source="attribution" data-field="usd">—</b>，其余是 AERO 价格变动和 Gas。
@@ -93,38 +129,139 @@
       <span class="ae-kpi-sub"><span class="ae-m" data-k="pnl_pct" data-sign="1" data-source="summary" data-field="pnl_pct">—</span> · 对比拿着原币不动 <span class="ae-m" data-k="vs_hodl_usd" data-sign="1" data-source="summary" data-field="vs_hodl_usd">—</span></span>
     </div>
     <div class="ae-kpi">
-      <span class="ae-kpi-label">累计 LP 收益</span>
+      <span class="ae-kpi-label">累计利息收益</span>
       <span class="ae-kpi-value ae-m dash-skeleton" data-k="earn_total_usd" data-source="summary" data-field="earn_total_usd">—</span>
       <span class="ae-kpi-sub"><span class="ae-m" data-k="aero_earned" data-source="summary" data-field="aero_earned">—</span> AERO · 手续费 <span class="ae-m" data-k="fees_usd" data-source="summary" data-field="fees_usd">—</span></span>
     </div>
     <div class="ae-kpi">
-      <span class="ae-kpi-label">昨日收益</span>
+      <span class="ae-kpi-label">昨日利息收益</span>
       <span class="ae-kpi-value ae-m dash-skeleton" data-k="yesterday_usd" data-source="summary" data-field="yesterday_usd">—</span>
       <span class="ae-kpi-sub">今日至今 <span class="ae-m" data-k="today_usd" data-source="summary" data-field="today_usd">—</span></span>
+    </div>
+    <div class="ae-kpi" id="kpi-day-pnl">
+      <span class="ae-kpi-label">昨日池子盈亏</span>
+      <span class="ae-kpi-value ae-m dash-skeleton" data-day="last" data-source="daily" data-field="lp_pnl_day_usd">—</span>
+      <span class="ae-kpi-sub">昨日整个账户 <span class="ae-m" data-day="last" data-source="daily" data-field="pnl_day_usd">—</span> · 今日池子 <span class="ae-m" data-day="today" data-source="daily" data-field="lp_pnl_day_usd">—</span></span>
     </div>
     <div class="ae-kpi">
       <span class="ae-kpi-label">近 <span class="ae-m" data-source="summary" data-field="apr_days">—</span> 日年化</span>
       <span class="ae-kpi-value ae-m dash-skeleton" data-k="apr_7d" data-source="summary" data-field="apr_7d">—</span>
-      <span class="ae-kpi-sub">这几天收益 <span class="ae-m" data-k="earn_7d_usd" data-source="summary" data-field="earn_7d_usd">—</span>，按时间加权的 LP 市值</span>
+      <span class="ae-kpi-sub">这几天利息 <span class="ae-m" data-k="earn_7d_usd" data-source="summary" data-field="earn_7d_usd">—</span>，按时间加权的 LP 市值</span>
     </div>
+  </section>
+
+  <section class="ae-card ae-ec" id="eth-cost">
+    <h2>ETH 成本价：什么价卖 ETH 才不亏</h2>
+    <p class="ae-ec-lead" data-state="in loading">ETH 现价 <b class="ae-m dash-skeleton" data-source="summary" data-field="eth_usd">—</b> 在仓位区间 <span class="ae-nw"><b class="ae-m dash-skeleton" data-source="summary" data-field="range_low_min">—</b>–<b class="ae-m dash-skeleton" data-source="summary" data-field="range_high_max">—</b></span> 内：池子里是 ETH 和 USDC 各一部分，连同钱包里的，现在一共有 <b class="ae-m dash-skeleton" data-source="summary" data-field="eth_units_now">—</b> 个 ETH。</p>
+    <p class="ae-ec-lead" data-state="part" hidden>ETH 现价 <b class="ae-m" data-source="summary" data-field="eth_usd">—</b> 在 <span class="ae-nw"><b class="ae-m" data-source="summary" data-field="range_low_min">—</b>–<b class="ae-m" data-source="summary" data-field="range_high_max">—</b></span> 之间，但只有部分仓位在自己的区间内：池子里是 ETH 和 USDC 各一部分，连同钱包里的，现在一共有 <b class="ae-m" data-source="summary" data-field="eth_units_now">—</b> 个 ETH。</p>
+    <p class="ae-ec-lead" data-state="gap" hidden>ETH 现价 <b class="ae-m" data-source="summary" data-field="eth_usd">—</b> 在 <span class="ae-nw"><b class="ae-m" data-source="summary" data-field="range_low_min">—</b>–<b class="ae-m" data-source="summary" data-field="range_high_max">—</b></span> 之间，但每个仓位都在自己的区间外，现在不赚利息：有的已经全是 ETH，有的全是 USDC，连同钱包里的现在一共有 <b class="ae-m" data-source="summary" data-field="eth_units_now">—</b> 个 ETH。</p>
+    <p class="ae-ec-lead" data-state="below" hidden>ETH 现价 <b class="ae-m" data-source="summary" data-field="eth_usd">—</b> 已经跌破 <b class="ae-m" data-source="summary" data-field="range_low_min">—</b>（所有仓位区间里最低的下沿），仓位已经全部变成 ETH，连同钱包里的一共 <b class="ae-m" data-source="summary" data-field="eth_units_below">—</b> 个，现在不赚利息。</p>
+    <p class="ae-ec-lead" data-state="above" hidden>ETH 现价 <b class="ae-m" data-source="summary" data-field="eth_usd">—</b> 已经涨过 <b class="ae-m" data-source="summary" data-field="range_high_max">—</b>（所有仓位区间里最高的上沿），仓位已经全部变成 USDC：只要 ETH 还在上沿以上，池子部分就不再随 ETH 涨跌，也不赚利息；钱包里的 <b class="ae-m" data-source="summary" data-field="eth_units_wallet">—</b> 个 ETH 和没卖的 AERO 还跟着价格变。</p>
+    <p class="ae-ec-lead" data-state="none" hidden>这个范围已经没有 LP 仓位，钱包里有 <b class="ae-m" data-source="summary" data-field="eth_units_wallet">—</b> 个 ETH（含 WETH）。ETH 现价 <b class="ae-m" data-source="summary" data-field="eth_usd">—</b>。</p>
+    <p class="ae-ec-lead" data-state="unknown" hidden>ETH 现价 <b class="ae-m" data-source="summary" data-field="eth_usd">—</b>。</p>
+
+    <div class="ae-ec-blocks">
+      <div class="ae-ec-block" id="ec-withdraw">
+        <h3>跌出区间后撤出、拿着 ETH 等</h3>
+        <p class="ae-ec-basis" data-state="in part gap above unknown loading">假设 ETH 跌破所有仓位区间的下沿、仓位全部变成 ETH 后，把流动性撤出来拿着，等 ETH 涨回去再卖。</p>
+        <p class="ae-ec-basis" data-state="below" hidden>ETH 已经在所有区间下方：现在把流动性撤出来拿着，就是这种情况。</p>
+        <p class="ae-ec-basis" data-state="none" hidden>已经撤出了：就是钱包现在的样子，拿着这些 ETH 等它涨回去再卖。</p>
+        <div class="ae-ec-stats">
+          <div class="ae-ec-stat">
+            <span class="ae-ec-label"><i class="ae-sw-dot" data-swatch="cost"></i>ETH 成本价</span>
+            <span class="ae-kpi-value ae-m dash-skeleton" data-source="summary" data-field="cost_eth_price">—</span>
+            <span class="ae-kpi-sub" data-gap="cost_gap_pct" data-price="cost_eth_price" data-kind="cost"><span data-pre></span><span class="ae-m" data-source="summary" data-field="cost_gap_pct">—</span><span data-post></span></span>
+            <span class="ae-ec-plain" data-state="below none" hidden>ETH 高于这个价时把 ETH 全部卖掉：投进来的本金一分不少，利息也完整赚到。</span>
+            <span class="ae-ec-plain" data-state="in part gap above unknown loading">跌出区间、撤出拿着以后，ETH 涨回这个价以上再全部卖掉：本金一分不少，利息也完整赚到。现在就卖够不够，看「如果一直留在池子里」那组。</span>
+          </div>
+          <div class="ae-ec-stat">
+            <span class="ae-ec-label">含利息回本价</span>
+            <span class="ae-kpi-value ae-m dash-skeleton" data-source="summary" data-field="breakeven_eth_price">—</span>
+            <span class="ae-kpi-sub" data-gap="breakeven_gap_pct" data-price="breakeven_eth_price" data-kind="even"><span data-pre></span><span class="ae-m" data-source="summary" data-field="breakeven_gap_pct">—</span><span data-post></span></span>
+            <span class="ae-ec-plain" data-state="below none" hidden>高于这个价卖出整体不亏，但赚到的利息只是补上了 ETH 下跌的亏损；低于它卖就亏了本金。</span>
+            <span class="ae-ec-plain" data-state="in part gap above unknown loading">跌出区间、撤出拿着以后，高于这个价卖出整体不亏，但赚到的利息只是补上了 ETH 下跌的亏损；低于它卖就亏了本金。现在就卖亏不亏，看「如果一直留在池子里」那组。</span>
+          </div>
+        </div>
+        <p class="ae-ec-basis" data-state="in part gap below above unknown loading">按 <b class="ae-m" data-source="summary" data-field="eth_units_below">—</b> 个 ETH 算：仓位变成的 <span class="ae-m" data-source="summary" data-field="eth_units_positions_below">—</span> 个，加上钱包里已有的 <span class="ae-m" data-source="summary" data-field="eth_units_wallet">—</span> 个。</p>
+        <p class="ae-ec-basis" data-state="none" hidden>按钱包里现有的 <b class="ae-m" data-source="summary" data-field="eth_units_below">—</b> 个 ETH 算。</p>
+      </div>
+
+      <div class="ae-ec-block" id="ec-hold">
+        <h3>如果一直留在池子里</h3>
+        <p class="ae-ec-basis" data-state="in part gap unknown loading">不撤出的话，ETH 上涨时池子会边涨边把 ETH 卖成 USDC，所以这组价不低于撤出拿着那组；这组是按现在的持仓算的真实价格。</p>
+        <p class="ae-ec-basis" data-state="below" hidden>不撤出的话，ETH 涨回区间时池子会边涨边卖 ETH，所以价格不低于撤出拿着那组。</p>
+        <p class="ae-ec-basis" data-state="above" hidden>池子现在全是 USDC，只有钱包里的 ETH 还跟着涨；ETH 跌回区间池子会重新买入 ETH。</p>
+        <div class="ae-ec-stats">
+          <div class="ae-ec-stat">
+            <span class="ae-ec-label"><i class="ae-sw-dot" data-swatch="hold"></i>ETH 成本价</span>
+            <span class="ae-kpi-value ae-m dash-skeleton" data-source="summary" data-field="hold_cost_eth_price">—</span>
+            <span class="ae-kpi-sub" data-gap="hold_cost_gap_pct" data-price="hold_cost_eth_price" data-kind="cost" data-case="hold"><span data-pre></span><span class="ae-m" data-source="summary" data-field="hold_cost_gap_pct">—</span><span data-post></span></span>
+          </div>
+          <div class="ae-ec-stat">
+            <span class="ae-ec-label">含利息回本价</span>
+            <span class="ae-kpi-value ae-m dash-skeleton" data-source="summary" data-field="hold_breakeven_eth_price">—</span>
+            <span class="ae-kpi-sub" data-gap="hold_breakeven_gap_pct" data-price="hold_breakeven_eth_price" data-kind="even" data-case="hold"><span data-pre></span><span class="ae-m" data-source="summary" data-field="hold_breakeven_gap_pct">—</span><span data-post></span></span>
+          </div>
+        </div>
+        <p class="ae-ec-basis">现在就全部卖出的话，累计盈亏是 <b class="ae-m dash-skeleton" data-sign="1" data-source="summary" data-field="pnl_usd">—</b>（相比净投入，已经算上赚到的利息）。</p>
+        <p class="ae-ec-basis" id="ec-hold-above" hidden>这个成本价高于区间上沿 <b class="ae-m" data-source="summary" data-field="range_high_max">—</b>：涨到那里之前池子已经全部换成 USDC，剩下的差距要靠钱包里自己的 <b class="ae-m" data-source="summary" data-field="eth_units_wallet">—</b> 个 ETH 涨价来补。</p>
+      </div>
+    </div>
+
+    <div class="ae-chart dash-skeleton" id="eth-ruler" data-source="summary" style="min-height: 120px" aria-label="ETH 价格标尺：仓位区间、现价、撤出拿着的成本价和留在池子里的成本价"></div>
+
+    <ul class="ae-note ae-ec-notes">
+      <li>没卖的 AERO（钱包里 <span class="ae-m" data-source="summary" data-field="aero_held">—</span> 个、待领 <span class="ae-m" data-source="summary" data-field="aero_pending">—</span> 个）按今天的价格算在里面：AERO 跌了，成本价会升高。</li>
+      <li>ETH 低于成本价时卖掉一部分（或者转去交易所），剩下 ETH 的成本价会升高；按成本价卖出，剩下的成本价不变。</li>
+      <li>没算卖出时的兑换手续费，大约每个 ETH 1 美元。</li>
+      <li data-only-scope="total" hidden>合计是几个钱包合在一起算的，每个人应该看自己钱包的数。</li>
+    </ul>
   </section>
 
   <section class="ae-grid" id="charts">
     <div class="ae-card" id="daily-earnings">
-      <h2>每日 LP 收益</h2>
-      <p class="ae-note">AERO 奖励按当日收盘价折算，加上未质押期间赚到的交易手续费。按北京时间切日，今天是截至目前的数。</p>
+      <h2>每日利息收益（AERO 奖励 + 手续费）</h2>
+      <p class="ae-note">做 LP 每天赚到的利息，不含任何价格涨跌：AERO 奖励按当日收盘价折算，加上未质押期间赚到的交易手续费。按北京时间切日，今天是截至目前的数（颜色浅）。</p>
       <div class="ae-legend" id="earn-legend"></div>
       <div class="ae-chart dash-skeleton" id="earn-chart" data-source="daily"></div>
     </div>
+    <div class="ae-card" id="daily-pnl">
+      <div class="ae-cardhead">
+        <h2>每日盈亏</h2>
+        <div class="ae-seg" role="group" aria-label="盈亏范围">
+          <button type="button" data-mode="pool" aria-pressed="true">池子</button>
+          <button type="button" data-mode="account" aria-pressed="false">整个账户</button>
+        </div>
+      </div>
+      <p class="ae-note" id="dpnl-note">放在池子里的那部分每天赚了或亏了多少：利息收益加上池子里的 ETH 涨跌与无常损失，圆点是池子当天的合计，0 以上是赚。</p>
+      <div class="ae-legend" id="dpnl-legend"></div>
+      <div class="ae-chart dash-skeleton" id="dpnl-chart" data-source="daily"></div>
+    </div>
+  </section>
+
+  <section class="ae-card" id="daily-table-card">
+    <h2>每日明细</h2>
+    <p class="ae-note">每天收盘（北京时间 24:00）时的数；最上面一行是今天截至数据时间的数。利息收益 + 其中 ETH 涨跌与无常损失 = 池子当日盈亏；池子当日盈亏 + 钱包闲置资产等 = 账户当日盈亏；各天的账户当日盈亏加起来等于累计盈亏。区间是收盘时仓位的状态，在区间外不赚利息。<span class="ae-only-sm">手机上左边有黄色竖条的日子，收盘时在区间外或没有仓位（这时不赚利息）；区间和拆分的几列横屏或在电脑上能看到。</span></p>
+    <div class="ae-tablewrap">
+      <table id="daily-table" data-source="daily" data-row-key="day,scope">
+        <thead><tr>
+          <th data-field="day">日期</th><th class="ae-hide-sm" data-field="range_status">区间</th><th class="n" data-field="earn_usd">利息收益</th>
+          <th class="n" data-field="lp_pnl_day_usd">池子当日盈亏</th><th class="n ae-hide-sm" data-field="lp_price_day_usd">其中 ETH 涨跌与无常损失</th>
+          <th class="n ae-hide-sm" data-field="idle_day_usd">钱包闲置资产等</th><th class="n" data-field="pnl_day_usd">账户当日盈亏</th>
+          <th class="n ae-hide-sm" data-field="pnl_usd">累计盈亏</th><th class="n ae-hide-sm" data-field="lp_eth">池子里的 ETH</th><th class="n ae-hide-sm" data-field="eth_usd">ETH 价格</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="ae-grid">
     <div class="ae-card" id="pnl-trend">
       <h2>累计盈亏走势</h2>
       <p class="ae-note">每天收盘时的累计盈亏，0 以上是赚。实线对比一直持有 USDC（现值减净投入）；虚线对比把带进来的币原样拿着不动，去掉了 ETH 本身的涨跌，只看做 LP 多赚或少赚了多少。</p>
       <div class="ae-legend" id="pnl-legend"></div>
       <div class="ae-chart dash-skeleton" id="pnl-chart" data-source="daily"></div>
     </div>
-  </section>
-
-  <section class="ae-grid">
     <div class="ae-card" id="breakdown">
       <h2>盈亏从哪来</h2>
       <p class="ae-note">从净投入到现值的拆解，单位美元。各项相加等于累计盈亏。</p>
@@ -136,51 +273,37 @@
         <div class="ae-chart dash-skeleton" id="wf-chart" data-source="attribution summary" style="min-height: 220px"></div>
       </div>
     </div>
-    <div class="ae-card" id="positions">
-      <h2>当前 LP 仓位</h2>
-      <p class="ae-note">价格区间和当前价是 1 ETH 兑多少 USDC。质押中的仓位只拿 AERO 奖励，不拿交易手续费。</p>
-      <div class="ae-tablewrap">
-        <table id="pos-table" data-source="positions" data-row-key="scope,token_id">
-          <thead><tr>
-            <th data-field="scope_label">钱包</th><th data-field="token_id">仓位</th><th data-field="status">状态</th>
-            <th class="n" data-field="range_low">区间下沿</th><th class="n" data-field="range_high">区间上沿</th><th class="n" data-field="price">当前价</th>
-            <th class="n ae-hide-sm" data-field="amount0">WETH</th><th class="n ae-hide-sm" data-field="amount1">USDC</th>
-            <th class="n" data-field="value_usd">价值</th><th class="n" data-field="pending_aero">待领 AERO</th><th class="n ae-hide-sm" data-field="pending_usd">待领价值</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
+  </section>
+
+  <section class="ae-card" id="positions">
+    <h2>当前 LP 仓位</h2>
+    <p class="ae-note">价格区间和当前价都是 1 ETH 兑多少 USDC。质押中的仓位只拿 AERO 奖励，不拿交易手续费。跌破下沿后 ETH：价格跌破这个仓位的区间下沿时，它会全部变成这么多 ETH；涨破上沿后 USDC：价格涨过区间上沿时，它会全部变成这么多 USDC（都含还没收取的部分）。卖 ETH 的价格看上面的 ETH 成本价卡片。</p>
+    <div class="ae-tablewrap">
+      <table id="pos-table" data-source="positions" data-row-key="scope,token_id">
+        <thead><tr>
+          <th data-field="scope_label">钱包</th><th data-field="token_id">仓位</th><th data-field="status">状态</th>
+          <th class="n" data-field="range_low">区间下沿</th><th class="n" data-field="range_high">区间上沿</th><th class="n" data-field="price">当前价</th>
+          <th class="n ae-hide-sm" data-field="amount0">WETH</th><th class="n ae-hide-sm" data-field="amount1">USDC</th>
+          <th class="n" data-field="value_usd">价值</th>
+          <th class="n" data-field="eth_if_below">跌破下沿后 ETH</th><th class="n" data-field="usdc_if_above">涨破上沿后 USDC</th>
+          <th class="n" data-field="pending_aero">待领 AERO</th><th class="n ae-hide-sm" data-field="pending_usd">待领价值</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
     </div>
   </section>
 
-  <section class="ae-grid">
-    <div class="ae-card" id="holdings">
-      <h2>持仓明细</h2>
-      <p class="ae-note">钱包余额、LP 仓位里的币和还没领取的奖励，按当前价估值。</p>
-      <div class="ae-tablewrap">
-        <table id="hold-table" data-source="holdings" data-row-key="scope,place,asset">
-          <thead><tr>
-            <th data-field="scope_label">钱包</th><th data-field="place">位置</th><th data-field="asset">资产</th>
-            <th class="n" data-field="amount">数量</th><th class="n" data-field="value_usd">价值</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="ae-card" id="daily-table-card">
-      <h2>每日明细</h2>
-      <p class="ae-note">每天收盘（北京时间 24:00）时的数；最上面一行是今天截至数据时间的数。</p>
-      <div class="ae-tablewrap">
-        <table id="daily-table" data-source="daily" data-row-key="day,scope">
-          <thead><tr>
-            <th data-field="day">日期</th><th class="n" data-field="earn_usd">当日收益</th><th class="n ae-hide-sm" data-field="earn_aero">AERO</th>
-            <th class="n ae-hide-sm" data-field="earn_fee_usd">手续费</th><th class="n" data-field="value_usd">现值</th>
-            <th class="n ae-hide-sm" data-field="invested_usd">净投入</th><th class="n" data-field="pnl_usd">累计盈亏</th>
-            <th class="n ae-hide-sm" data-field="eth_usd">ETH</th><th class="n ae-hide-sm" data-field="aero_usd">AERO 价</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
+  <section class="ae-card" id="holdings">
+    <h2>持仓明细</h2>
+    <p class="ae-note">钱包余额、LP 仓位里的币和还没领取的奖励，按当前价估值。</p>
+    <div class="ae-tablewrap">
+      <table id="hold-table" data-source="holdings" data-row-key="scope,place,asset">
+        <thead><tr>
+          <th data-field="scope_label">钱包</th><th data-field="place">位置</th><th data-field="asset">资产</th>
+          <th class="n" data-field="amount">数量</th><th class="n" data-field="value_usd">价值</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
     </div>
   </section>
 
@@ -207,11 +330,22 @@
       <li>累计盈亏（对比持有 USDC）= 现值 - 净投入。等于把每笔投入在到账时换成 USDC 一直拿着，现在会比实际少或多多少。</li>
       <li>现值：钱包里的 ETH、WETH、USDC、AERO，加上 LP 仓位里的币、未领取的 AERO 和未收取的手续费，全部按当前链上价格估值。空投垃圾币不计价。</li>
     </ul>
-    <h3>每日收益</h3>
+    <h3>每日利息收益和每日盈亏</h3>
     <ul>
-      <li>AERO 奖励 = 当天新增的（已领取 + 待领取），直接从 gauge 合约读取，领取时 1:1 到账，没有折损。按当天收盘时的 AERO 价格折算。</li>
-      <li>交易手续费只在仓位没质押时产生（质押期间手续费归 veAERO 投票者），按当天收盘价折算。</li>
-      <li>近 N 日年化 = 最近 N 个完整日（最多 7 天，不含今天）的收益合计 ÷ 这几天按时间加权的 LP 市值合计 × 365。按时间加权是说，仓位某天只在池子里待了一部分时间，就只按那部分时间算它的市值（待了半天就算一半），没开仓的时间不算。奖励份额随全池质押量剧烈波动，只作参考。</li>
+      <li>利息收益：做 LP 当天赚到的利息 = 当天新增的 AERO 奖励（已领取 + 待领取，直接从 gauge 合约读取，领取时 1:1 到账，没有折损）× 当天收盘时的 AERO 价格，加上当天赚到的交易手续费（只在仓位没质押时产生，质押期间手续费归 veAERO 投票者）。AERO 按赚到那天的收盘价算，之后 AERO 的涨跌算进下面的价格部分：还在池子里待领的算进“池子里的 ETH 涨跌与无常损失”，领到钱包里的算进“钱包闲置资产等”。AERO 卖掉之前，这份利息还没有真正落袋。</li>
+      <li>池子当日盈亏：只算放在池子里的那部分。= 当天收盘时池子里的价值（仓位里的币、未收取的手续费和待领 AERO）- 前一天收盘时的价值 - 当天新加进去的流动性 + 当天撤出的流动性、收取的手续费和领取的奖励（都按发生时的价格）。</li>
+      <li>池子里的 ETH 涨跌与无常损失 = 池子当日盈亏 - 利息收益。包括池子里的 ETH 跟着价格涨跌、无常损失（价格变动时仓位被动地在 ETH 和 USDC 之间换币），以及待领 AERO 的价格变动。</li>
+      <li>钱包闲置资产等 = 账户当日盈亏 - 池子当日盈亏。钱包里没放进池子的资产当天的涨跌，比如之前仓位跌出区间留下的 WETH、领出来还没卖的 AERO，再加上兑换的滑点和费用、Gas。</li>
+      <li>账户当日盈亏 = 池子当日盈亏 + 钱包闲置资产等 = 当天收盘时的累计盈亏 - 前一天收盘时的累计盈亏，当天存入和取出的钱不算盈亏。各天加起来正好等于累计盈亏；开始追踪的第一天是从开始追踪到当天收盘的盈亏。今天是截至数据时间的数。</li>
+      <li>区间：每天收盘时仓位的状态。在区间内；部分在区间内（有的仓位已经在区间外）；区间外（这时不赚利息）；无仓位（流动性已经撤出）。</li>
+      <li>近 N 日年化 = 最近 N 个完整日（最多 7 天，不含今天）的利息收益合计 ÷ 这几天按时间加权的 LP 市值合计 × 365。按时间加权是说，仓位某天只在池子里待了一部分时间，就只按那部分时间算它的市值（待了半天就算一半），没开仓的时间不算。奖励份额随全池质押量剧烈波动，只作参考。</li>
+    </ul>
+    <h3>ETH 成本价</h3>
+    <ul>
+      <li>两种情况算的都是：ETH 涨到什么价时，选中范围（一个钱包，或者合计）里钱包加池子的东西全部按市价卖掉，能拿回净投入加上累计利息收益（ETH 成本价），或者只拿回净投入（含利息回本价）。</li>
+      <li>跌出区间后撤出、拿着 ETH 等：假设 ETH 跌到所有仓位区间的下沿以下，仓位全部变成 ETH，然后把流动性撤出来，连同钱包里原有的 ETH 和 WETH 一直拿着，其余东西不动。ETH 成本价 =（净投入 + 累计利息收益 - 其余东西的价值）÷ 这些 ETH；含利息回本价 =（净投入 - 其余东西的价值）÷ 同样的 ETH。算出来小于等于 0 就是任何 ETH 价格都已覆盖；手里的 ETH 太少（不到 0.05 个）时不算。现在价格还没跌破所有区间时（在区间内、区间之间或者涨过了区间），这组价格是跌出区间并撤出以后的情况，和现价比只是看距离，不代表现在卖出不亏；现在卖出看下面“如果一直留在池子里”那组，或者累计盈亏。已经没有仓位时，就是按钱包现在的样子算。</li>
+      <li>如果一直留在池子里：不撤出，ETH 涨回区间时池子会按集中流动性的曲线边涨边卖 ETH，所以按整个持仓随 ETH 价格变化的真实曲线，求出总价值等于上面两个目标的 ETH 价格；ETH 价格再低也够的话，就是任何 ETH 价格都已覆盖。价格涨过区间上沿后池子全是 USDC，只有钱包里的 ETH 还跟着涨。这组是按现在的持仓算的，所以也是现在卖出要看的价格。</li>
+      <li>共同假设：钱包里的 AERO、待领的 AERO 和其它代币都按今天的价格，USDC 等稳定币按 1 美元，不算卖出时的兑换手续费和 Gas。</li>
     </ul>
     <h3>盈亏拆解</h3>
     <ul>
@@ -243,20 +377,38 @@
   const usd0 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
   const usd2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtUsd = (v) => (v == null ? '—' : Math.abs(v) >= 1000 ? usd0.format(v) : usd2.format(v));
+  // ETH prices keep their cents: the cost price can sit only a few dollars from the current price.
+  const fmtPrice = (v) => (v == null ? '—' : usd2.format(v));
   // One minus glyph everywhere: ASCII '-', the same one Intl puts in front of negative amounts.
   const sign = (v) => (v > 0 ? '+' : v < 0 ? '-' : '');
   const fmtSigned = (v) => (v == null ? '—' : sign(v) + fmtUsd(Math.abs(v)));
   const fmtPct = (v, signed) => (v == null ? '—' : (signed ? sign(v) : v < 0 ? '-' : '') + (Math.abs(v) * 100).toFixed(Math.abs(v) < 0.1 ? 2 : 1) + '%');
   const fmtNum = (v, d = 4) => (v == null ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: d }));
+  // Prices in tables (1 ETH in USDC): always two decimals so the column lines up.
+  const fmtFix2 = (v) => (v == null ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
   // Axis ticks: whole dollars without cents; 0 is formatted as +0 so a -0 tick never prints '-$0'.
   const fmtTick = (v) => (v === 0 ? usd0.format(0) : Number.isInteger(v) ? usd0.format(v) : fmtUsd(v));
   const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+  // A gap to the current price is shown as a size; the words around it (高 / 低) carry the direction.
+  const fmtGap = (v) => fmtPct(Math.abs(v), false);
+  // A cost price of 0 means the target is already covered whatever ETH does.
+  const fmtCover = (v) => (v === 0 ? '任何 ETH 价格都已覆盖' : fmtPrice(v));
   const FIELD_FMT = {
     invested_usd: fmtUsd, value_usd: fmtUsd, earn_total_usd: fmtUsd, fees_usd: fmtUsd, yesterday_usd: fmtUsd, today_usd: fmtUsd, earn_7d_usd: fmtUsd,
     pnl_usd: fmtSigned, vs_hodl_usd: fmtSigned, pnl_pct: (v) => fmtPct(v, true), apr_7d: (v) => fmtPct(v, false),
     aero_earned: (v) => fmtNum(v, 2), apr_days: (v) => String(v), as_of_block: (v) => Number(v).toLocaleString('en-US'), as_of_cst: (v) => v, scope_label: (v) => v,
+    eth_usd: fmtPrice, range_low_min: fmtPrice, range_high_max: fmtPrice,
+    cost_eth_price: fmtCover, breakeven_eth_price: fmtCover, hold_cost_eth_price: fmtCover, hold_breakeven_eth_price: fmtCover,
+    cost_gap_pct: fmtGap, breakeven_gap_pct: fmtGap, hold_cost_gap_pct: fmtGap, hold_breakeven_gap_pct: fmtGap,
+    eth_units_now: (v) => fmtNum(v, 4), eth_units_below: (v) => fmtNum(v, 4), eth_units_wallet: (v) => fmtNum(v, 4), eth_units_positions_below: (v) => fmtNum(v, 4),
+    aero_held: (v) => fmtNum(v, 2), aero_pending: (v) => fmtNum(v, 2),
   };
   const tone = (el, v) => { el.classList.toggle('ae-pos', v > 0); el.classList.toggle('ae-neg', v < 0); };
+
+  // Marker colours shared by the ETH cost card's swatches and its price ruler.
+  const markerColors = () => ({ now: 'var(--color-fg)', cost: dash.colors[0], hold: dash.colors[1 % dash.colors.length] });
+  // Range status at a day's close (daily rows), in words.
+  const RANGE = { in: ['在区间内', 'ok'], part: ['部分在区间内', 'warn'], out: ['区间外', 'warn'], none: ['无仓位', 'mute'] };
 
   // ---------- scope switch ----------
   const scopeBox = root.querySelector('.ae-scope');
@@ -272,6 +424,13 @@
   }
 
   // ---------- tooltip ----------
+  const swatch = (it) => {
+    const s = document.createElement('i'); s.className = it.dot ? 'ae-sw-dot' : it.line ? 'ae-sw-line' : it.strip ? 'ae-sw-strip' : 'ae-sw'; s.style.background = it.color;
+    if (it.dash) { s.style.background = 'none'; s.style.borderTop = `2px dashed ${it.color}`; s.style.height = '0'; }
+    // A dotted strip: the mark under the bars for days with no position.
+    if (it.dotted) { s.style.background = `repeating-linear-gradient(90deg, ${it.color} 0 3px, transparent 3px 5px)`; }
+    return s;
+  };
   function tipFor(box) {
     let t = box.querySelector('.ae-tip');
     if (!t) { t = document.createElement('div'); t.className = 'ae-tip'; box.appendChild(t); }
@@ -281,11 +440,7 @@
         const h = document.createElement('div'); h.className = 't'; h.textContent = title; t.appendChild(h);
         for (const r of rows) {
           const line = document.createElement('div'); line.className = 'r';
-          if (r.color) {
-            const s = document.createElement('span'); s.className = r.line ? 'ae-sw-line' : 'ae-sw'; s.style.background = r.color;
-            if (r.dash) { s.style.background = 'none'; s.style.borderTop = `2px dashed ${r.color}`; s.style.height = '0'; }
-            line.appendChild(s);
-          }
+          if (r.color) line.appendChild(swatch(r));
           const n = document.createElement('span'); n.textContent = r.name; line.appendChild(n);
           const v = document.createElement('b'); v.textContent = r.value; line.appendChild(v);
           t.appendChild(line);
@@ -299,12 +454,7 @@
     };
   }
   const legend = (el, items) => {
-    el.replaceChildren(...items.map((it) => {
-      const s = document.createElement('span');
-      const sw = document.createElement('i'); sw.className = it.line ? 'ae-sw-line' : 'ae-sw'; sw.style.background = it.color;
-      if (it.dash) { sw.style.background = 'none'; sw.style.borderTop = `2px dashed ${it.color}`; sw.style.height = '0'; }
-      s.append(sw, document.createTextNode(it.name)); return s;
-    }));
+    el.replaceChildren(...items.map((it) => { const s = document.createElement('span'); s.append(swatch(it), document.createTextNode(it.name)); return s; }));
   };
   const parseDay = (d) => new Date(d + 'T00:00:00Z');
   const dayLabel = d3.utcFormat('%-m/%-d');
@@ -321,10 +471,17 @@
     g.selectAll('.domain').attr('stroke', 'var(--cds-chart-axis)');
     g.selectAll('line').attr('stroke', 'var(--cds-chart-grid)');
   };
-  const measure = (svg, texts) => {
-    const t = svg.append('text').style('font-size', 'var(--cds-font-size-caption)');
+  const measure = (svg, texts, weight) => {
+    const t = svg.append('text').style('font-size', 'var(--cds-font-size-caption)').style('font-weight', weight ?? null);
     let w = 0; for (const s of texts) { t.text(s); w = Math.max(w, t.node().getComputedTextLength()); }
     t.remove(); return w;
+  };
+  // A bar from top to bottom (pixels) with rounded corners only at the given ends: data ends are
+  // rounded, the end on the zero line stays square.
+  const barPath = (x, w, top, bot, rTop, rBot) => {
+    const h = Math.max(1, bot - top); bot = top + h;
+    const a = Math.min(rTop, w / 2, h / 2), b = Math.min(rBot, w / 2, h / 2);
+    return `M${x},${top + a}a${a},${a} 0 0 1 ${a},${-a}h${w - 2 * a}a${a},${a} 0 0 1 ${a},${a}V${bot - b}a${b},${b} 0 0 1 ${-b},${b}h${-(w - 2 * b)}a${b},${b} 0 0 1 ${-b},${-b}Z`;
   };
 
   // Whole-day x ticks: every n-th day counted back from the last one, so the latest day is always labelled.
@@ -332,6 +489,88 @@
     const every = Math.max(1, Math.ceil(list.length / Math.max(2, Math.floor(width / 48))));
     return list.filter((d, i) => (list.length - 1 - i) % every === 0);
   };
+
+  // ---------- ETH price ruler: the scope's range, the current price and the two cost prices ----------
+  function drawRuler(srow) {
+    const box = document.getElementById('eth-ruler');
+    box.replaceChildren();
+    // Prices of 0 (already covered) and null (not enough ETH, or no position) have no place on the ruler.
+    const pos = (v) => isNum(v) && v > 0;
+    const lo = pos(srow?.range_low_min) ? srow.range_low_min : null, hi = pos(srow?.range_high_max) ? srow.range_high_max : null;
+    const C = markerColors();
+    // The withdraw-and-hold cost price is today's situation only below every range (or with no position left);
+    // otherwise it is the price that applies after a fall, and its label says so.
+    const real = srow?.range_state === 'below' || srow?.range_state === 'none';
+    const items = [
+      { k: 'now', name: '现价', v: srow?.eth_usd, side: 1 },
+      { k: 'cost', name: real ? '成本价（撤出拿着）' : '跌出后撤出的成本价', v: srow?.cost_eth_price, side: 1 },
+      { k: 'hold', name: '成本价（留在池子）', v: srow?.hold_cost_eth_price, side: 1 },
+      { k: 'low', name: '区间下沿', v: lo, side: -1 },
+      { k: 'high', name: '区间上沿', v: hi, side: -1 },
+    ].filter((m) => pos(m.v));
+    if (!items.length) return;
+    const W = box.clientWidth || 600;
+    const svg = d3.select(box).append('svg').attr('width', '100%');
+    for (const m of items) { m.price = fmtPrice(m.v); m.w = Math.ceil(Math.max(measure(svg, [m.name]), measure(svg, [m.price], 600))) + 2; }
+    const vals = items.map((m) => m.v), vmin = d3.min(vals), vmax = d3.max(vals);
+    const pad = Math.max((vmax - vmin) * 0.08, vmax * 0.004);
+    const x = d3.scaleLinear([vmin - pad, vmax + pad], [6, W - 6]);
+    // Labels sit in a row above the axis (current price and the two cost prices) and a row below it (the range
+    // bounds), in the same left-to-right order as their markers: each starts centred over its marker and is
+    // pushed sideways just enough to keep 8px from its neighbours and stay inside the chart. A leader runs
+    // from each marker to its label, so close prices fan out instead of overlapping, and since labels keep
+    // the markers' order no leader crosses another leader or label. If a row would not fit even packed
+    // edge to edge (very narrow screens), its labels alternate between two rows.
+    const LANE = 32, GAP = 8;
+    const dodge = (list) => {
+      if (d3.sum(list, (m) => m.w) + GAP * (list.length - 1) > W) return false;
+      let prev = -Infinity;
+      for (const m of list) { m.x0 = Math.max(m.x - m.w / 2, prev + GAP, 0); prev = m.x0 + m.w; }
+      let next = W + GAP;
+      for (const m of [...list].reverse()) { m.x0 = Math.min(m.x0, next - GAP - m.w); next = m.x0; }
+      for (const m of list) m.x1 = m.x0 + m.w;
+      return true;
+    };
+    const lanes = {};
+    for (const side of [1, -1]) {
+      const list = items.filter((m) => m.side === side).map((m) => Object.assign(m, { x: x(m.v) })).sort((a, b) => a.x - b.x || a.w - b.w);
+      if (dodge(list)) { for (const m of list) m.lane = 0; lanes[side] = list.length ? 1 : 0; continue; }
+      const rows = [list.filter((m, i) => i % 2 === 0), list.filter((m, i) => i % 2 === 1)];
+      rows.forEach((row, lane) => { if (!dodge(row)) for (const m of row) { m.x0 = Math.max(0, Math.min(W - m.w, m.x - m.w / 2)); m.x1 = m.x0 + m.w; } for (const m of row) m.lane = lane; });
+      lanes[side] = 2;
+    }
+    const up = lanes[1], down = lanes[-1];
+    // Leaders get more room when a label had to move away from its marker, so the slant stays readable.
+    for (const m of items) m.ex = Math.max(m.x0 + 3, Math.min(m.x1 - 3, m.x));
+    const LEAD = items.some((m) => Math.abs((m.x0 + m.x1) / 2 - m.x) > 8) ? 28 : 16;
+    const axisY = 4 + up * LANE + (up ? LEAD : 8), H = axisY + (down ? LEAD + down * LANE : 12);
+    svg.attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+    // Axis line and the price range the positions cover.
+    svg.append('line').attr('x1', x.range()[0]).attr('x2', x.range()[1]).attr('y1', axisY).attr('y2', axisY).attr('stroke', 'var(--cds-chart-axis)').attr('stroke-width', 1.5);
+    if (lo != null && hi != null) {
+      svg.append('rect').attr('x', x(lo)).attr('width', Math.max(2, x(hi) - x(lo))).attr('y', axisY - 5).attr('height', 10).attr('rx', 5)
+        .attr('fill', 'var(--cds-chart-muted)').attr('opacity', 0.35);
+    }
+    // Leaders and labels.
+    for (const m of items) {
+      // A label is two lines (name, price) about 28px tall; row 0 is the one next to the axis.
+      const boxTop = m.side > 0 ? axisY - LEAD - 28 - m.lane * LANE : axisY + LEAD + m.lane * LANE;
+      const tx = (m.x0 + m.x1) / 2;
+      const end = m.side > 0 ? boxTop + 30 : boxTop - 1, start = m.side > 0 ? axisY - 9 : axisY + 9;
+      svg.append('line').attr('class', 'ae-ruler-lead').attr('data-k', m.k).attr('x1', m.x).attr('y1', start).attr('x2', m.ex).attr('y2', end).attr('stroke', 'var(--cds-chart-axis)');
+      const g = svg.append('g').attr('class', 'ae-ruler-label').attr('data-k', m.k);
+      g.append('text').attr('x', tx).attr('y', boxTop + 11).attr('text-anchor', 'middle').attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)').text(m.name);
+      g.append('text').attr('x', tx).attr('y', boxTop + 25).attr('text-anchor', 'middle').attr('fill', 'var(--color-fg)').style('font-size', 'var(--cds-font-size-caption)').style('font-weight', 600).text(m.price);
+    }
+    // Price markers on the axis, with a ring in the panel colour so they stay apart from the range band.
+    for (const k of ['hold', 'cost']) {
+      const m = items.find((i) => i.k === k); if (!m) continue;
+      svg.append('line').attr('x1', m.x).attr('x2', m.x).attr('y1', axisY - 8).attr('y2', axisY + 8).attr('stroke', 'var(--color-panel)').attr('stroke-width', 7).attr('stroke-linecap', 'round');
+      svg.append('line').attr('x1', m.x).attr('x2', m.x).attr('y1', axisY - 8).attr('y2', axisY + 8).attr('stroke', C[k]).attr('stroke-width', 3).attr('stroke-linecap', 'round');
+    }
+    const now = items.find((i) => i.k === 'now');
+    if (now) svg.append('circle').attr('cx', now.x).attr('cy', axisY).attr('r', 5).attr('fill', C.now).attr('stroke', 'var(--color-panel)').attr('stroke-width', 2);
+  }
 
   // ---------- daily earnings: bars stacked by wallet on the combined view, gains up and losses down ----------
   function drawEarn(rowsAll, sc) {
@@ -389,13 +628,140 @@
         g.selectAll('.ae-bar').attr('opacity', function () { return this.dataset.day === d.day ? 1 : 0.35; });
         const rows = keys.length > 1
           ? [...keys.map((k) => ({ name: labelOf(k), color: colorOf(k), value: fmtUsd(byKey[d.day]?.[k]?.earn_usd ?? 0) })), { name: '合计', value: fmtUsd(d.row.earn_usd) }]
-          : [{ name: '当日收益', value: fmtUsd(d.row.earn_usd) }];
+          : [{ name: '利息收益', value: fmtUsd(d.row.earn_usd) }];
         rows.push({ name: 'AERO 数量', value: isNum(d.row.earn_aero) ? fmtNum(d.row.earn_aero, 2) + ' AERO' : '—' });
         if (d.row.earn_fee_usd) rows.push({ name: '手续费', value: fmtUsd(d.row.earn_fee_usd) });
         const [mx, my] = d3.pointer(ev, box);
         tip.show(mx, my, d.day + (d.row.partial ? '（今日至今）' : ''), rows);
       })
       .on('mouseleave', () => { tip.hide(); g.selectAll('.ae-bar').attr('opacity', function () { const r = data.find((q) => q.day === this.dataset.day); return r?.row.partial ? 0.55 : 1; }); });
+  }
+
+  // ---------- daily P&L: interest and the price parts as diverging bars, the day's total as a dot ----------
+  // 池子: the pool's own result (interest + ETH price and impermanent loss inside the pool). 整个账户: the
+  // whole account, which adds what the wallet's idle assets, swaps and gas did that day.
+  // The view is a page parameter (pnl=pool|account): a click only sets it, and dash.onData redraws.
+  const pnlModeOf = () => (dash.params().pnl === 'account' ? 'account' : 'pool');
+  const segBox = document.querySelector('#daily-pnl .ae-seg');
+  segBox.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (b && b.dataset.mode !== pnlModeOf()) dash.setParams({ pnl: b.dataset.mode });
+  });
+  // Days whose close found the scope out of range (no interest) or with no position, marked under the bars.
+  const DAY_MARKS = [
+    { k: 'out', name: '收盘时在区间外（不赚利息）', color: 'var(--color-warn)' },
+    { k: 'none', name: '收盘时没有仓位', color: 'var(--color-fg-muted)', dotted: true },
+  ];
+  const RANGE_TIP = { in: '在区间内', part: '部分在区间内', out: '区间外（不赚利息）', none: '没有仓位' };
+  function drawDayPnl(rowsAll, sc, mode) {
+    const box = document.getElementById('dpnl-chart');
+    box.replaceChildren();
+    const acct = mode === 'account';
+    const fTot = acct ? 'pnl_day_usd' : 'lp_pnl_day_usd';
+    const totName = acct ? '账户当日盈亏' : '池子当日盈亏';
+    const C_TOT = 'var(--color-fg)';
+    const parts = [
+      { f: 'earn_usd', name: '利息收益', color: dash.colors[2 % dash.colors.length] },
+      { f: 'lp_price_day_usd', name: '池子里的 ETH 涨跌与无常损失', color: 'var(--cds-chart-muted)' },
+      ...(acct ? [{ f: 'idle_day_usd', name: '钱包闲置资产等', color: dash.colors[0] }] : []),
+    ];
+    document.getElementById('dpnl-note').textContent = acct
+      ? '整个账户每天赚了或亏了多少：池子之外，还有钱包里闲置的资产（比如之前跌出区间留下的 WETH、领出来还没卖的 AERO）的涨跌，以及兑换和 Gas。圆点是账户当天的合计，各天加起来等于累计盈亏。'
+      : '放在池子里的那部分每天赚了或亏了多少：利息收益加上池子里的 ETH 涨跌与无常损失，圆点是池子当天的合计，0 以上是赚。';
+    const rows = rowsAll.filter((r) => r.scope === sc);
+    const marks = DAY_MARKS.filter((mk) => rows.some((r) => r.range_status === mk.k));
+    legend(document.getElementById('dpnl-legend'), [
+      ...parts.map((p) => ({ name: p.name, color: p.color })), { name: totName, color: C_TOT, dot: true },
+      ...marks.map((mk) => ({ name: mk.name, color: mk.color, strip: true, dotted: mk.dotted })),
+    ]);
+    if (!rows.length) return;
+    const days = rows.map((r) => r.day);
+    // Same diverging stack as the earnings chart: gains stack up from zero in legend order, losses down.
+    const data = rows.map((row) => {
+      let up = 0, down = 0;
+      const segs = parts.map((p) => {
+        const v = row[p.f];
+        if (!isNum(v) || v === 0) return null;
+        const s = v > 0 ? { p, y0: up, y1: up + v } : { p, y0: down + v, y1: down };
+        if (v > 0) up += v; else down += v;
+        return s;
+      }).filter(Boolean);
+      return { day: row.day, row, segs, up, down, tot: row[fTot] };
+    });
+    // The bottom margin holds the day-mark strip (4px, just under the plot) and the day labels.
+    const W = box.clientWidth || 600, H = 240, m = { t: 10, r: 8, b: 34 };
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+    const ext = data.flatMap((d) => [d.up, d.down, isNum(d.tot) ? d.tot : 0]);
+    let lo = Math.min(0, d3.min(ext)) * 1.08, hi = Math.max(0, d3.max(ext)) * 1.08;
+    if (lo === hi) hi = 1;
+    const y = d3.scaleLinear([lo, hi], [H - m.b, m.t]).nice();
+    const ticks = y.ticks(5);
+    m.l = Math.ceil(measure(svg, ticks.map(fmtTick))) + 10;
+    const x = d3.scaleBand(days, [m.l, W - m.r]).paddingInner(0.25).paddingOuter(0.1);
+    svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).tickValues(ticks).tickFormat(fmtTick).tickSize(-(W - m.l - m.r))).call(axisStyle).call((g) => g.select('.domain').remove());
+    svg.append('g').attr('transform', `translate(0,${H - m.b + 8})`).call(d3.axisBottom(x).tickValues(thinDays(days, W - m.l)).tickFormat((d) => dayLabel(parseDay(d))).tickSizeOuter(0)).call(axisStyle).call((g) => g.select('.domain').remove());
+    // Day marks: one strip per day across its whole step, so runs of days read as one band.
+    const gm = svg.append('g');
+    for (const d of data) {
+      const mk = marks.find((q) => q.k === d.row.range_status);
+      if (!mk) continue;
+      const x0 = x(d.day) - (x.step() * x.paddingInner()) / 2;
+      if (mk.dotted) {
+        gm.append('line').attr('class', 'ae-daymark').attr('data-day', d.day).attr('data-k', mk.k).attr('x1', x0).attr('x2', x0 + x.step()).attr('y1', H - m.b + 4).attr('y2', H - m.b + 4)
+          .attr('stroke', mk.color).attr('stroke-width', 4).attr('stroke-dasharray', '3 2');
+      } else {
+        gm.append('rect').attr('class', 'ae-daymark').attr('data-day', d.day).attr('data-k', mk.k).attr('x', x0).attr('width', x.step()).attr('y', H - m.b + 2).attr('height', 4).attr('fill', mk.color);
+      }
+    }
+    const bw = Math.min(28, x.bandwidth());
+    const g = svg.append('g');
+    const restOpacity = (d) => (d.row.partial ? 0.55 : 1);
+    for (const d of data) {
+      const cx = x(d.day) + (x.bandwidth() - bw) / 2;
+      const col = g.append('g').attr('class', 'ae-col').attr('data-day', d.day).attr('opacity', restOpacity(d));
+      for (const side of [1, -1]) {
+        const ss = d.segs.filter((s) => (side > 0 ? s.y1 > 0 : s.y0 < 0));
+        ss.forEach((s, i) => {
+          let top = y(s.y1), bot = y(s.y0);
+          // A 2px gap between stacked segments, taken from the inner end so the outer end stays on the value;
+          // segments of 3px or less get no gap. The segment on the zero line stays square there.
+          if (i > 0 && bot - top > 3) { if (side > 0) bot -= 2; else top += 2; }
+          // At least 1px. A segment stacked on another grows inwards, so the bar still ends exactly on the
+          // value, but never past the zero line; the segment on the zero line (or a whole stack thinner than
+          // 1px) grows away from zero, so a tiny gain never dips below it.
+          if (bot - top < 1) {
+            if (i > 0) { if (side > 0) bot = Math.min(top + 1, y(0)); else top = Math.max(bot - 1, y(0)); }
+            if (bot - top < 1) { if (side > 0) top = bot - 1; else bot = top + 1; }
+          }
+          const outer = i === ss.length - 1;
+          col.append('path').attr('class', 'ae-seg-bar').attr('data-f', s.p.f).attr('d', barPath(cx, bw, top, bot, side > 0 && outer ? 4 : 0, side < 0 && outer ? 4 : 0)).attr('fill', s.p.color);
+        });
+      }
+    }
+    svg.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(0)).attr('y2', y(0)).attr('stroke', 'var(--cds-chart-axis)');
+    // Totals on top of the zero line, ringed in the panel colour so they stand out on the bars.
+    const gd = svg.append('g');
+    for (const d of data) {
+      if (!isNum(d.tot)) continue;
+      gd.append('circle').attr('class', 'ae-dot').attr('data-day', d.day).attr('opacity', restOpacity(d))
+        .attr('cx', x(d.day) + x.bandwidth() / 2).attr('cy', y(d.tot)).attr('r', 4.5).attr('fill', C_TOT).attr('stroke', 'var(--color-panel)').attr('stroke-width', 2);
+    }
+    const tip = tipFor(box);
+    const dim = (day) => svg.selectAll('.ae-col, .ae-dot').attr('opacity', function () { const d = data.find((q) => q.day === this.dataset.day); return day == null ? restOpacity(d) : this.dataset.day === day ? 1 : 0.3; });
+    svg.append('rect').attr('x', m.l).attr('y', 0).attr('width', W - m.l - m.r).attr('height', H - m.b + 8).attr('fill', 'transparent')
+      .on('mousemove', (ev) => {
+        const [px] = d3.pointer(ev); const i = Math.max(0, Math.min(days.length - 1, Math.floor((px - m.l - x.step() * x.paddingOuter()) / x.step())));
+        const d = data[i]; if (!d) return;
+        dim(d.day);
+        const [mx, my] = d3.pointer(ev, box);
+        tip.show(mx, my, d.day + (d.row.partial ? '（今日至今）' : ''), [
+          ...parts.map((p) => ({ name: p.name, color: p.color, value: fmtSigned(d.row[p.f]) })),
+          { name: totName, color: C_TOT, dot: true, value: fmtSigned(d.tot) },
+          { name: d.row.partial ? '现在' : '收盘时', value: RANGE_TIP[d.row.range_status] ?? '—' },
+          { name: d.row.partial ? 'ETH 现价' : 'ETH 收盘价', value: fmtPrice(d.row.eth_usd) },
+        ]);
+      })
+      .on('mouseleave', () => { tip.hide(); dim(null); });
   }
 
   // ---------- cumulative P&L: two lines around zero ----------
@@ -488,6 +854,7 @@
 
   // ---------- tables ----------
   const td = (text, cls) => { const c = document.createElement('td'); c.textContent = text; if (cls) c.className = cls; return c; };
+  const signedTd = (v, cls) => { const c = td(fmtSigned(v), cls); tone(c, v); return c; };
   const enc = (s) => encodeURIComponent(String(s));
   function fillTable(id, rows, cols, keyOf, rowClass) {
     const tb = document.querySelector(`#${id} tbody`);
@@ -500,9 +867,51 @@
     }));
   }
 
+  // ---------- ETH cost card: driven by where the price sits now (summary.range_state) ----------
+  // below / none: the withdraw-and-hold case is the situation as it is, so its distance to the current
+  // price is real. in / part / gap / above: it is what happens after a fall, so a cost price under the
+  // current price must not read as "already above cost", and one above it is not "only x% away". The
+  // stay-in-pool case follows the holdings' real curve, so its distance is real in every state.
+  const STATES = ['in', 'part', 'gap', 'below', 'above', 'none'];
+  const GAP_NAME = { cost: '成本价', even: '回本价' };
+  function drawEthCost(S, srow, sc) {
+    const C = markerColors();
+    root.querySelectorAll('#eth-cost [data-swatch]').forEach((el) => { el.style.background = C[el.dataset.swatch]; });
+    const st = S.status === 'loading' ? 'loading' : STATES.includes(srow?.range_state) ? srow.range_state : 'unknown';
+    root.querySelectorAll('#eth-cost [data-state]').forEach((el) => { el.hidden = !el.dataset.state.split(' ').includes(st); });
+    const real = st === 'below' || st === 'none';
+    // A price of 0 reads as a phrase in the value slot, set smaller than a number.
+    root.querySelectorAll('#eth-cost .ae-kpi-value[data-field]').forEach((el) => el.classList.toggle('ae-ec-word', srow?.[el.dataset.field] === 0));
+    root.querySelectorAll('#eth-cost [data-gap]').forEach((line) => {
+      const p = srow?.[line.dataset.price], g = srow?.[line.dataset.gap], kind = line.dataset.kind, hold = line.dataset.case === 'hold';
+      let pre = '', post = '', num = false;
+      // No line for a price of 0 (the value says it all) or a field the data does not have.
+      if (!srow || p === 0 || p === undefined) { line.hidden = true; return; }
+      if (!isNum(p)) pre = hold ? '这种情况算不出这个价' : '手里的 ETH 太少，不按 ETH 价格算';
+      else if (!isNum(g)) { line.hidden = true; return; }
+      else if (g > 0 && (hold || real)) { num = true; pre = 'ETH 还要涨 '; post = ` 才到${GAP_NAME[kind]}`; }
+      else if (g > 0) { num = true; pre = '比现价高 '; post = '（跌出区间并撤出以后才适用）'; }
+      else if (hold) pre = kind === 'cost' ? '现价已经高于它：现在全部卖出，本金不亏、利息全拿' : '现价已经高于它：现在全部卖出，整体不亏';
+      else if (real) pre = kind === 'cost' ? '现价已经高于成本价：现在卖出，本金不亏、利息全拿' : '现价已经高于回本价：现在卖出，整体不亏';
+      else { num = true; pre = '低于现价 '; post = '，这是跌出区间并撤出以后才适用的价，不代表现在卖出不亏'; }
+      line.hidden = false;
+      line.querySelector('[data-pre]').textContent = pre;
+      line.querySelector('[data-post]').textContent = post;
+      line.querySelector('[data-field]').hidden = !num;
+    });
+    // Staying in the pool needs a position; past the top of the range only the wallet's own ETH still moves,
+    // which is only worth saying while the cost price is still ahead of the current price.
+    document.getElementById('ec-hold').hidden = st === 'none' || (srow != null && !('hold_cost_eth_price' in srow));
+    const hc = srow?.hold_cost_eth_price, top = srow?.range_high_max;
+    document.getElementById('ec-hold-above').hidden = !(isNum(hc) && isNum(top) && hc > top && isNum(srow.hold_cost_gap_pct) && srow.hold_cost_gap_pct > 0);
+    root.querySelectorAll('#eth-cost [data-only-scope]').forEach((el) => { el.hidden = el.dataset.onlyScope !== sc; });
+  }
+
   // ---------- draw ----------
   dash.onData(() => {
     const sc = scope();
+    const pnlMode = pnlModeOf();
+    segBox.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.mode === pnlMode)));
     drawScopes(sc);
     const S = dash.data('summary'), D = dash.data('daily'), A = dash.data('attribution'), P = dash.data('positions'), H = dash.data('holdings'), E = dash.data('events');
 
@@ -520,6 +929,18 @@
       if (el.dataset.sign) tone(el, v);
     });
 
+    // Yesterday's pool and account results and today's pool result so far, from the scope's daily rows.
+    const dRows = D.status === 'ok' ? D.data.filter((r) => r.scope === sc) : [];
+    const dayRow = { last: dRows.filter((r) => !r.partial).at(-1) ?? null, today: dRows.at(-1)?.partial ? dRows.at(-1) : null };
+    root.querySelectorAll('.ae-kpi [data-source="daily"]').forEach((el) => {
+      const r = dayRow[el.dataset.day], v = r?.[el.dataset.field];
+      el.setAttribute('data-where', `day=${r?.day ?? ''}&scope=${sc}`);
+      if (D.status !== 'loading') el.classList.remove('dash-skeleton');
+      el.textContent = isNum(v) ? fmtSigned(v) : '—';
+      tone(el, v);
+    });
+    document.getElementById('kpi-day-pnl').title = dayRow.last ? `${dayRow.last.day} 全天` : '';
+
     root.querySelectorAll('[data-source="attribution"].ae-a').forEach((el) => {
       el.setAttribute('data-where', `scope=${sc}&step=${el.dataset.step}`);
       if (A.status !== 'loading') el.classList.remove('dash-skeleton');
@@ -530,11 +951,17 @@
       if (signed) tone(el, r?.usd);
     });
 
+    // Rows of the chosen wallet; the combined view lists both.
+    const inScope = (r) => sc === 'total' || r.scope === sc;
+    drawEthCost(S, srow, sc);
+
     // Charts.
     // The breakdown's total bar is summary.pnl_usd: wait for summary, and draw the steps alone if it failed.
     const wfStatus = A.status === 'ok' && S.status === 'loading' ? 'loading' : A.status;
     const charts = [
+      ['eth-ruler', S.status, () => drawRuler(srow)],
       ['earn-chart', D.status, () => drawEarn(D.data, sc)],
+      ['dpnl-chart', D.status, () => drawDayPnl(D.data, sc, pnlMode)],
       ['pnl-chart', D.status, () => drawPnl(D.data, sc)],
       ['wf-chart', wfStatus, () => drawWaterfall(A.data, sc, srow)],
     ];
@@ -545,25 +972,28 @@
       else { el.classList.remove('dash-skeleton'); failed(el); }
     }
 
-    // Tables (rows of the chosen wallet; the combined view lists both).
-    const inScope = (r) => sc === 'total' || r.scope === sc;
+    // Tables.
     if (P.status === 'ok') fillTable('pos-table', P.data.filter(inScope), [
       [(r) => td(r.scope_label)], [(r) => td(r.token_id)],
       [(r) => { const c = td(''); const s = document.createElement('span'); s.className = 'ae-chip ' + (r.in_range ? 'ok' : 'warn'); s.textContent = r.status; c.appendChild(s); c.title = r.in_range ? '价格在区间内' : '价格在区间外'; return c; }],
-      [(r) => td(fmtNum(r.range_low, 2), 'n')], [(r) => td(fmtNum(r.range_high, 2), 'n')], [(r) => td(fmtNum(r.price, 2), 'n')],
+      [(r) => td(fmtFix2(r.range_low), 'n')], [(r) => td(fmtFix2(r.range_high), 'n')], [(r) => td(fmtFix2(r.price), 'n')],
       [(r) => td(fmtNum(r.amount0, 4), 'n ae-hide-sm')], [(r) => td(fmtNum(r.amount1, 2), 'n ae-hide-sm')],
-      [(r) => td(fmtUsd(r.value_usd), 'n')], [(r) => td(fmtNum(r.pending_aero, 2), 'n')], [(r) => td(fmtUsd(r.pending_usd), 'n ae-hide-sm')],
+      [(r) => td(fmtUsd(r.value_usd), 'n')],
+      [(r) => td(fmtNum(r.eth_if_below, 4), 'n')], [(r) => td(fmtNum(r.usdc_if_above, 2), 'n')],
+      [(r) => td(fmtNum(r.pending_aero, 2), 'n')], [(r) => td(fmtUsd(r.pending_usd), 'n ae-hide-sm')],
     ], (r) => `${enc(r.scope)},${enc(r.token_id)}`);
     if (H.status === 'ok') fillTable('hold-table', H.data.filter(inScope), [
       [(r) => td(r.scope_label)], [(r) => td(r.place)], [(r) => td(r.asset)],
       [(r) => td(fmtNum(r.amount, r.asset === 'USDC' ? 2 : 6), 'n')], [(r) => td(fmtUsd(r.value_usd), 'n')],
     ], (r) => `${enc(r.scope)},${enc(r.place)},${enc(r.asset)}`);
-    if (D.status === 'ok') fillTable('daily-table', D.data.filter((r) => r.scope === sc).slice().reverse(), [
-      [(r) => { const c = td(r.day); if (r.partial) c.title = '今天截至数据时间'; return c; }], [(r) => td(fmtUsd(r.earn_usd), 'n')], [(r) => td(fmtNum(r.earn_aero, 2), 'n ae-hide-sm')], [(r) => td(fmtUsd(r.earn_fee_usd), 'n ae-hide-sm')],
-      [(r) => td(fmtUsd(r.value_usd), 'n')], [(r) => td(fmtUsd(r.invested_usd), 'n ae-hide-sm')],
-      [(r) => { const c = td(fmtSigned(r.pnl_usd), 'n'); tone(c, r.pnl_usd); return c; }],
-      [(r) => td(fmtNum(r.eth_usd, 2), 'n ae-hide-sm')], [(r) => td(r.aero_usd == null ? '—' : fmtNum(r.aero_usd, 4), 'n ae-hide-sm')],
-    ], (r) => `${enc(r.day)},${enc(r.scope)}`, (r) => (r.partial ? 'ae-partial' : ''));
+    if (D.status === 'ok') fillTable('daily-table', dRows.slice().reverse(), [
+      [(r) => { const c = td(r.day); if (r.partial) c.title = '今天截至数据时间'; return c; }],
+      [(r) => { const c = td('', 'ae-hide-sm'); const k = RANGE[r.range_status]; if (!k) { c.textContent = '—'; return c; } const s = document.createElement('span'); s.className = 'ae-chip ' + k[1]; s.textContent = k[0]; c.appendChild(s); return c; }],
+      [(r) => td(fmtUsd(r.earn_usd), 'n')],
+      [(r) => signedTd(r.lp_pnl_day_usd, 'n ae-strong')], [(r) => signedTd(r.lp_price_day_usd, 'n ae-hide-sm')],
+      [(r) => signedTd(r.idle_day_usd, 'n ae-hide-sm')], [(r) => signedTd(r.pnl_day_usd, 'n ae-strong')],
+      [(r) => signedTd(r.pnl_usd, 'n ae-hide-sm')], [(r) => td(fmtNum(r.lp_eth, 4), 'n ae-hide-sm')], [(r) => td(fmtFix2(r.eth_usd), 'n ae-hide-sm')],
+    ], (r) => `${enc(r.day)},${enc(r.scope)}`, (r) => [r.partial && 'ae-partial', (r.range_status === 'out' || r.range_status === 'none') && 'ae-out'].filter(Boolean).join(' '));
     if (E.status === 'ok') fillTable('events-table', E.data.filter(inScope), [
       [(r) => td(r.time_cst)], [(r) => td(r.scope_label)], [(r) => td(r.kind)], [(r) => td(r.detail)],
       [(r) => { const c = td(r.kind === '资金转出' ? fmtSigned(r.usd) : fmtUsd(r.usd), 'n'); return c; }],

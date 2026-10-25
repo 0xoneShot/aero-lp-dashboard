@@ -299,7 +299,9 @@ function ethCurve(keys) {
     for (const x of s.positions) {
       const extra0 = x.fees0, extra1 = x.fees1 // owed principal plus fees, both paid by collect()
       if (x.token0 === WETH && x.token1 === TOKEN_USDC) {
-        curves.push({ L: Number(x.liquidity), sa: Math.sqrt(1.0001 ** x.tickLower), sb: Math.sqrt(1.0001 ** x.tickUpper), low: priceAtTick(x.tickLower, 18, 6) })
+        // Only live positions follow a curve and set the lowest bound: one whose liquidity was all
+        // removed but not burned holds nothing, and must not keep the scope looking "in a range".
+        if (x.liquidity > 0n) curves.push({ L: Number(x.liquidity), sa: Math.sqrt(1.0001 ** x.tickLower), sb: Math.sqrt(1.0001 ** x.tickUpper), low: priceAtTick(x.tickLower, 18, 6) })
         ethUnits += units(extra0, 18); fixedUsd += units(extra1, 6)
       } else {
         fixedUsd += valueOf(x.token0, x.amount0 + extra0, pNowCurve) + valueOf(x.token1, x.amount1 + extra1, pNowCurve)
@@ -314,10 +316,12 @@ function ethCurve(keys) {
   }
   const value = (P) => fixedUsd + ethUnits * P + curves.reduce((a, c) => { const [e, u] = amounts(c, P); return a + e * P + u }, 0)
   const ethAt = (P) => ethUnits + curves.reduce((a, c) => a + amounts(c, P)[0], 0)
-  // ETH price at which the holdings are worth `target`; null when no ETH price gets there.
+  // ETH price at which the holdings are worth `target`; 0 when any ETH price already gets there (as the
+  // withdraw-and-hold prices), null when no ETH price does.
   const solve = (target) => {
     let lo = 1, hi = 1e7
-    if (value(lo) >= target || value(hi) < target) return null
+    if (value(lo) >= target) return 0
+    if (value(hi) < target) return null
     for (let i = 0; i < 200; i++) { const mid = Math.sqrt(lo * hi); if (value(mid) < target) lo = mid; else hi = mid }
     return hi
   }
@@ -412,11 +416,12 @@ function ethPrices(keys, invested, interest, value) {
   const wallEth = keys.reduce((a, k) => a + units((snaps[k][head].balances.ETH ?? 0n) + (snaps[k][head].balances[WETH] ?? 0n), 18), 0)
   const highest = Math.max(...keys.flatMap((k) => snaps[k][head].positions.filter((x) => x.liquidity > 0n).map((x) => priceAtTick(x.tickUpper, 18, 6))), -Infinity)
   return {
-    range_state: c.lowest == null ? 'none' : now < c.lowest ? 'below' : Number.isFinite(highest) && now >= highest ? 'above' : combineRange(rs) === 'in' ? 'in' : 'part',
+    // 'gap': the price sits between the lowest and the highest bound but every position is out of its own range.
+    range_state: c.lowest == null ? 'none' : now < c.lowest ? 'below' : Number.isFinite(highest) && now >= highest ? 'above' : combineRange(rs) === 'in' ? 'in' : combineRange(rs) === 'out' ? 'gap' : 'part',
     cost_eth_price: cost, cost_gap_pct: gap(cost || null),
     breakeven_eth_price: even, breakeven_gap_pct: gap(even || null),
-    hold_cost_eth_price: holdCost == null ? null : r2(holdCost), hold_cost_gap_pct: gap(holdCost),
-    hold_breakeven_eth_price: holdEven == null ? null : r2(holdEven), hold_breakeven_gap_pct: gap(holdEven),
+    hold_cost_eth_price: holdCost == null ? null : r2(holdCost), hold_cost_gap_pct: gap(holdCost || null),
+    hold_breakeven_eth_price: holdEven == null ? null : r2(holdEven), hold_breakeven_gap_pct: gap(holdEven || null),
     eth_units_now: r6(c.ethAt(now)), eth_units_below: r6(eth), eth_units_wallet: r6(wallEth), eth_units_positions_below: r6(Math.max(0, eth - wallEth)),
     range_low_min: c.lowest == null ? null : r2(c.lowest), range_high_max: Number.isFinite(highest) ? r2(highest) : null,
     rest_usd: r2(rest),
