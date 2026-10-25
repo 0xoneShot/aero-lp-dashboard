@@ -1,0 +1,12 @@
+node_modules/
+scratch/
+data/cache/
+data/*.log
+.DS_Store
+out/
+public/
+config/wallets.local.json
+test/local/
+data/research/
+data/seed/
+cache.enc

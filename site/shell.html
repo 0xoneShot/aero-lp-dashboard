@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>Aero LP 收益看板</title>
+<style>
+  /* Tokens the dashboard page is written against (same names as the Claude Dashboard type). */
+  :root {
+    --font-anthropic-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    --font-anthropic-serif: "Iowan Old Style", "Songti SC", "Noto Serif SC", Georgia, serif;
+    --color-bg: #f3f4f6;
+    --color-panel: #ffffff;
+    --color-fg: #1c2026;
+    --color-fg-muted: #5e6672;
+    --color-border-line: #dfe3e8;
+    --color-ok: #17784a;
+    --color-bad: #c0362c;
+    --color-warn: #a86a12;
+    --series-1: #2c63d6;
+    --series-2: #d9822b;
+    --series-3: #2a9d8f;
+    --cds-gap-xs: 4px; --cds-gap-sm: 8px; --cds-gap-md: 12px; --cds-gap-lg: 16px; --cds-gap-xl: 24px;
+    --cds-pad-xs: 4px; --cds-pad-sm: 8px; --cds-pad-md: 12px; --cds-pad-lg: 16px; --cds-pad-xl: 24px;
+    --cds-radius: 10px;
+    --cds-font-size-caption: 12px; --cds-font-size-body: 14px; --cds-font-size-heading: 16px; --cds-font-size-title: 28px;
+    --cds-font-weight-medium: 600;
+    --cds-chart-grid: #edf0f3;
+    --cds-chart-axis: #c9ced5;
+    --cds-chart-muted: #9aa3ae;
+    --cds-chart-reference: #8b95a1;
+    --cds-surface-popover: #ffffff;
+    --cds-border: #dfe3e8;
+    --cds-shadow-popover: 0 6px 20px rgba(20, 30, 45, 0.12);
+    --cds-text-secondary: #5e6672;
+    --cds-dur-slow: 300ms;
+    --cds-ease-out: cubic-bezier(.2, .8, .2, 1);
+    --skeleton: #e7eaee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg: #0f1215;
+      --color-panel: #171b20;
+      --color-fg: #e6eaef;
+      --color-fg-muted: #98a2ae;
+      --color-border-line: #2a3038;
+      --color-ok: #4cc38a;
+      --color-bad: #f2756a;
+      --color-warn: #e0a43a;
+      --series-1: #6d9bff;
+      --series-2: #f0a35a;
+      --series-3: #4fc1b3;
+      --cds-chart-grid: #222830;
+      --cds-chart-axis: #3a424c;
+      --cds-chart-muted: #6b7581;
+      --cds-chart-reference: #7c8792;
+      --cds-surface-popover: #1d2228;
+      --cds-border: #2f363f;
+      --cds-shadow-popover: 0 6px 20px rgba(0, 0, 0, 0.45);
+      --cds-text-secondary: #98a2ae;
+      --skeleton: #232a31;
+    }
+  }
+  html { -webkit-text-size-adjust: 100%; }
+  [hidden] { display: none !important; }
+  #gate:not([hidden]) ~ .site-foot { max-width: 560px; }
+  body {
+    margin: 0; background: var(--color-bg); color: var(--color-fg);
+    font: 14px/1.5 var(--font-anthropic-sans);
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: max(20px, env(safe-area-inset-top, 0px)) max(32px, env(safe-area-inset-bottom, 0px));
+  }
+  #dash-root { max-width: 1200px; margin-inline: auto; }
+  .site-foot { max-width: 1200px; margin: 24px auto 0; font-size: 12px; color: var(--color-fg-muted); }
+  .gate { max-width: 560px; margin: 12vh auto 0; display: flex; flex-direction: column; gap: 12px; }
+  .gate-title { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: 28px; margin: 0; }
+  .gate-note, .gate-fine { margin: 0; color: var(--color-fg-muted); line-height: 1.6; }
+  .gate-fine { font-size: 12px; }
+  .gate-form { display: flex; flex-direction: column; gap: 8px; background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: 16px; }
+  .gate-form label { font-size: 12px; color: var(--color-fg-muted); }
+  .gate-form textarea { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--color-fg); background: var(--color-bg); border: 1px solid var(--color-border-line); border-radius: 8px; padding: 10px; resize: vertical; min-width: 0; }
+  .gate-form textarea:focus-visible, .gate-form button:focus-visible, .site-bar button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .gate-form button { align-self: flex-start; font: inherit; font-weight: 600; color: #fff; background: var(--series-1); border: 0; border-radius: 8px; padding: 8px 20px; cursor: pointer; }
+  .gate-form button:disabled { opacity: .6; cursor: progress; }
+  .gate-msg { margin: 0; min-height: 1.5em; font-size: 13px; color: var(--color-fg-muted); }
+  .site-bar { display: flex; justify-content: flex-end; align-items: center; gap: 10px; font-size: 12px; color: var(--color-fg-muted); margin-bottom: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .site-bar button { font: 12px var(--font-anthropic-sans); color: var(--color-fg); background: transparent; border: 1px solid var(--color-border-line); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+  .dash-skeleton { color: transparent !important; background: var(--skeleton); border-radius: 6px; }
+  .ae-chart.dash-skeleton { min-height: 240px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .dash-skeleton { animation: skel 1.2s ease-in-out infinite alternate; }
+    @keyframes skel { from { opacity: .6 } to { opacity: 1 } }
+  }
+</style>
+<script src="vendor/d3.min.js"></script>
+<script>
+  // A small stand-in for the Claude Dashboard runtime the page was written for. Nothing is shown
+  // until someone enters wallet address(es): the matching data file's name and key are derived
+  // from the addresses (PBKDF2, same parameters as lib/views.mjs), then it is fetched and decrypted.
+  window.dash = (() => {
+    const IDS = ['summary', 'daily', 'attribution', 'positions', 'holdings', 'events']
+    const ITERATIONS = 200000, SALT = 'aero-lp-dashboard/v1'
+    const enc = new TextEncoder()
+    let store = Object.fromEntries(IDS.map((id) => [id, { status: 'loading', data: [] }]))
+    const subs = []
+    let params = { scope: 'total' }
+    let current = null
+    const fire = () => { for (const fn of subs) { try { fn() } catch (e) { console.error(e) } } }
+    const norm = (list) => [...new Set(list.map((a) => a.trim().toLowerCase()))].sort().join(',')
+    const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
+    async function derive(list) {
+      const base = await crypto.subtle.importKey('raw', enc.encode(norm(list)), 'PBKDF2', false, ['deriveBits'])
+      const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(SALT), iterations: ITERATIONS }, base, 384))
+      const key = await crypto.subtle.importKey('raw', bits.slice(0, 32), 'AES-GCM', false, ['decrypt'])
+      const name = [...bits.slice(32, 48)].map((b) => b.toString(16).padStart(2, '0')).join('')
+      return { name, key }
+    }
+    // Resolves to the view's datasets, or null when no data file exists for these addresses.
+    async function openView(list) {
+      const { name, key } = await derive(list)
+      const r = await fetch(`data/${name}.json`, { cache: 'no-cache' })
+      if (r.status === 404) return null
+      if (!r.ok) throw new Error(String(r.status))
+      const { iv, ct } = await r.json()
+      const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, key, unb64(ct))
+      return JSON.parse(new TextDecoder().decode(pt))
+    }
+    function show(view, fresh) {
+      store = Object.fromEntries(IDS.map((id) => [id, { status: 'ok', data: view[id] ?? [] }]))
+      const keys = view.summary.map((r) => r.scope)
+      // A newly entered set of addresses opens on its combined view; a periodic reload keeps the choice.
+      if (fresh || !keys.includes(params.scope)) params.scope = keys.includes('total') ? 'total' : keys[0]
+      fire()
+    }
+    async function load(list) {
+      const view = await openView(list)
+      if (!view) return false
+      const fresh = norm(list) !== (current && norm(current))
+      current = list
+      show(view, fresh)
+      return true
+    }
+    setInterval(() => { if (current) load(current).catch(() => {}) }, 10 * 60 * 1000) // pick up the hourly refresh
+    let t
+    addEventListener('resize', () => { clearTimeout(t); t = setTimeout(fire, 150) })
+    return {
+      load,
+      data: (id) => store[id] ?? { status: 'missing', data: [] },
+      onData(fn) { subs.push(fn); try { fn() } catch (e) { console.error(e) } },
+      params: () => ({ ...params }),
+      setParams(p) { params = { ...params, ...p }; fire() },
+      resetParams() { fire() },
+      scopes: () => (store.summary.status === 'ok' ? store.summary.data.map((r) => ({ key: r.scope, label: r.scope_label })) : []),
+      colors: ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'],
+      refresh() { if (current) load(current) },
+      setLink() {},
+    }
+  })()
+</script>
+</head>
+<body>
+<main id="gate" class="gate" hidden>
+  <h1 class="gate-title">Aero LP 收益看板</h1>
+  <p class="gate-note">输入钱包地址，查看它在 Aero 做流动性质押的每日收益和整体盈亏。输入多个地址（用空格、逗号或换行隔开）查看合计。</p>
+  <form id="gate-form" class="gate-form" novalidate>
+    <label for="gate-input">钱包地址</label>
+    <textarea id="gate-input" rows="3" placeholder="0x…" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+    <button type="submit" id="gate-go">查看</button>
+    <p id="gate-msg" class="gate-msg" role="status" aria-live="polite"></p>
+  </form>
+  <p class="gate-fine">这个网站只追踪少数几个钱包。输入的地址只保存在你自己的设备上。</p>
+</main>
+<div id="dash-root" hidden>
+  <div class="site-bar"><span id="site-addrs"></span><button type="button" id="site-switch">换地址</button></div>
+<!-- DASHBOARD -->
+</div>
+<p class="site-foot">数据全部来自 Base 链上，每小时自动更新一次。</p>
+<script>
+  (() => {
+    const gate = document.getElementById('gate'), root = document.getElementById('dash-root')
+    const form = document.getElementById('gate-form'), input = document.getElementById('gate-input')
+    const msg = document.getElementById('gate-msg'), go = document.getElementById('gate-go')
+    const KEY = 'aero-addresses'
+    const save = (list) => { try { localStorage.setItem(KEY, JSON.stringify(list)) } catch {} }
+    const saved = () => { try { return JSON.parse(localStorage.getItem(KEY) ?? 'null') } catch { return null } }
+    const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`
+    const showGate = (text = '') => { root.hidden = true; gate.hidden = false; msg.textContent = text; go.disabled = false }
+    const showDash = (list) => { gate.hidden = true; root.hidden = false; document.getElementById('site-addrs').textContent = list.map(short).join(' + '); dispatchEvent(new Event('resize')) }
+    async function open(list, fromSaved) {
+      go.disabled = true
+      msg.textContent = '正在查找…'
+      try {
+        if (await dash.load(list)) { save(list); showDash(list); return }
+        showGate(list.length > 1 ? '这几个地址合在一起没有数据，试试分别输入。' : '没有找到这个地址的数据。')
+      } catch {
+        showGate('数据加载失败，请稍后再试。')
+      }
+      if (fromSaved) input.value = list.join('\n')
+    }
+    form.addEventListener('submit', (e) => {
+      e.preventDefault()
+      const list = [...new Set((input.value.match(/0x[0-9a-fA-F]{40}/g) ?? []).map((a) => a.toLowerCase()))]
+      if (!list.length) { msg.textContent = '请输入以 0x 开头的 42 位钱包地址。'; return }
+      open(list, false)
+    })
+    document.getElementById('site-switch').addEventListener('click', () => { try { localStorage.removeItem(KEY) } catch {}; input.value = ''; showGate() })
+    const list = saved()
+    if (Array.isArray(list) && list.length) open(list, true)
+    else showGate()
+  })()
+</script>
+</body>
+</html>

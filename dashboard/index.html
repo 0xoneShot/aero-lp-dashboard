@@ -1,0 +1,575 @@
+<style>
+  .ae { font-family: var(--font-anthropic-sans); display: flex; flex-direction: column; gap: var(--cds-gap-xl); font-variant-numeric: tabular-nums; }
+  .ae h1, .ae h2, .ae h3, .ae p { margin: 0; }
+  .ae-head { display: flex; flex-direction: column; gap: var(--cds-gap-sm); }
+  .ae-titlebar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cds-gap-md); }
+  .ae-title { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); text-wrap: balance; }
+  .ae-asof { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+  .ae-take { font-size: var(--cds-font-size-body); line-height: 1.6; max-width: 70ch; }
+  .ae-take b, .ae .ae-strong { font-weight: 600; }
+  .ae-take .ae-m, .ae-take .ae-a { white-space: nowrap; }
+  .ae-scope { display: inline-flex; border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: 2px; gap: 2px; }
+  .ae-scope button { font: inherit; font-size: var(--cds-font-size-caption); border: 0; background: transparent; color: var(--color-fg-muted); padding: var(--cds-pad-xs) var(--cds-pad-md); border-radius: calc(var(--cds-radius) - 2px); cursor: pointer; }
+  .ae-scope button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
+  .ae-scope button:focus-visible { outline: 2px solid var(--color-fg); outline-offset: 1px; }
+
+  .ae-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: var(--cds-gap-md); }
+  .ae-kpi { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-md) var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-xs); min-width: 0; }
+  .ae-kpi-label { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ae-kpi-value { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); line-height: 1.15; }
+  .ae-kpi-sub { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ae-pos { color: var(--color-ok); }
+  .ae-neg { color: var(--color-bad); }
+
+  .ae-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: var(--cds-gap-md); }
+  .ae-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-sm); min-width: 0; }
+  .ae-card h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); }
+  .ae-note { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); line-height: 1.5; }
+  .ae-legend { display: flex; flex-wrap: wrap; gap: var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ae-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .ae-sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .ae-sw-line { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+  .ae-chart { position: relative; min-height: 240px; }
+  .ae-chart svg { display: block; overflow: visible; }
+  .ae-tip { position: absolute; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); white-space: nowrap; z-index: 2; display: none; }
+  .ae-tip .t { color: var(--cds-text-secondary); margin-bottom: 2px; }
+  .ae-tip .r { display: flex; align-items: center; gap: 6px; }
+  .ae-tip .r b { margin-left: auto; padding-left: var(--cds-pad-sm); font-weight: 600; }
+
+  .ae-wf { display: flex; flex-direction: column; gap: var(--cds-gap-sm); }
+  .ae-wf-ends { display: flex; justify-content: space-between; gap: var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ae-wf-ends b { display: block; font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-heading); color: var(--color-fg); }
+
+  .ae-tablewrap { overflow: auto; max-height: 28rem; }
+  .ae table { border-collapse: collapse; width: 100%; font-size: var(--cds-font-size-caption); }
+  .ae th, .ae td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--color-border-line); white-space: nowrap; }
+  .ae th { position: sticky; top: 0; background: var(--color-panel); color: var(--color-fg-muted); font-weight: 500; z-index: 1; }
+  .ae td.n, .ae th.n { text-align: right; }
+  .ae tr.ae-flag td { background: color-mix(in srgb, var(--color-warn) 10%, transparent); }
+  .ae tr.ae-partial td { font-style: italic; color: var(--color-fg-muted); }
+  .ae tr.ae-partial td.ae-pos { color: var(--color-ok); }
+  .ae tr.ae-partial td.ae-neg { color: var(--color-bad); }
+  .ae .ae-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--color-border-line); }
+  .ae .ae-chip.ok { color: var(--color-ok); }
+  .ae .ae-chip.warn { color: var(--color-warn); }
+  .ae a { color: inherit; }
+  @media (max-width: 640px) { .ae .ae-hide-sm { display: none; } }
+
+  .ae-method { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); line-height: 1.7; max-width: 80ch; display: flex; flex-direction: column; gap: var(--cds-gap-xs); }
+  .ae-method h3 { font-size: var(--cds-font-size-body); color: var(--color-fg); font-weight: var(--cds-font-weight-medium); }
+  .ae-method ul { margin: 0; padding-left: 1.2em; }
+
+  [data-dash-source-state=empty] { color: transparent; }
+  [data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
+</style>
+
+<div class="ae">
+  <header class="ae-head" id="overview">
+    <div class="ae-titlebar">
+      <h1 class="ae-title">Aero LP 收益看板</h1>
+      <div class="ae-scope" role="group" aria-label="查看范围" hidden></div>
+    </div>
+    <p class="ae-asof">数据截至 <span class="ae-m dash-skeleton" data-source="summary" data-field="as_of_cst">—</span>（北京时间）· Base 区块 <span class="ae-m dash-skeleton" data-source="summary" data-field="as_of_block">—</span></p>
+    <p class="ae-take" id="takeaway">
+      <span class="ae-m" data-source="summary" data-field="scope_label">—</span>净投入
+      <b class="ae-m dash-skeleton" data-source="summary" data-field="invested_usd">—</b>，现值
+      <b class="ae-m dash-skeleton" data-source="summary" data-field="value_usd">—</b>，相比一直持有 USDC 累计盈亏
+      <b class="ae-m dash-skeleton" data-sign="1" data-source="summary" data-field="pnl_usd">—</b>（<span class="ae-m" data-sign="1" data-source="summary" data-field="pnl_pct">—</span>）。其中 LP 累计收益
+      <b class="ae-m dash-skeleton" data-sign="1" data-source="summary" data-field="earn_total_usd">—</b>，带入资产（主要是 ETH）的价格变动
+      <b class="ae-a" data-step="market" data-source="attribution" data-field="usd">—</b>，无常损失与调仓
+      <b class="ae-a" data-step="residual" data-source="attribution" data-field="usd">—</b>，其余是 AERO 价格变动和 Gas。
+    </p>
+  </header>
+
+  <section class="ae-kpis" id="kpis" aria-label="主要指标">
+    <div class="ae-kpi">
+      <span class="ae-kpi-label">现值</span>
+      <span class="ae-kpi-value ae-m dash-skeleton" data-k="value_usd" data-source="summary" data-field="value_usd">—</span>
+      <span class="ae-kpi-sub">净投入 <span class="ae-m" data-k="invested_usd" data-source="summary" data-field="invested_usd">—</span></span>
+    </div>
+    <div class="ae-kpi">
+      <span class="ae-kpi-label">累计盈亏 · 对比持有 USDC</span>
+      <span class="ae-kpi-value ae-m dash-skeleton" data-k="pnl_usd" data-sign="1" data-source="summary" data-field="pnl_usd">—</span>
+      <span class="ae-kpi-sub"><span class="ae-m" data-k="pnl_pct" data-sign="1" data-source="summary" data-field="pnl_pct">—</span> · 对比拿着原币不动 <span class="ae-m" data-k="vs_hodl_usd" data-sign="1" data-source="summary" data-field="vs_hodl_usd">—</span></span>
+    </div>
+    <div class="ae-kpi">
+      <span class="ae-kpi-label">累计 LP 收益</span>
+      <span class="ae-kpi-value ae-m dash-skeleton" data-k="earn_total_usd" data-source="summary" data-field="earn_total_usd">—</span>
+      <span class="ae-kpi-sub"><span class="ae-m" data-k="aero_earned" data-source="summary" data-field="aero_earned">—</span> AERO · 手续费 <span class="ae-m" data-k="fees_usd" data-source="summary" data-field="fees_usd">—</span></span>
+    </div>
+    <div class="ae-kpi">
+      <span class="ae-kpi-label">昨日收益</span>
+      <span class="ae-kpi-value ae-m dash-skeleton" data-k="yesterday_usd" data-source="summary" data-field="yesterday_usd">—</span>
+      <span class="ae-kpi-sub">今日至今 <span class="ae-m" data-k="today_usd" data-source="summary" data-field="today_usd">—</span></span>
+    </div>
+    <div class="ae-kpi">
+      <span class="ae-kpi-label">近 <span class="ae-m" data-source="summary" data-field="apr_days">—</span> 日年化</span>
+      <span class="ae-kpi-value ae-m dash-skeleton" data-k="apr_7d" data-source="summary" data-field="apr_7d">—</span>
+      <span class="ae-kpi-sub">这几天收益 <span class="ae-m" data-k="earn_7d_usd" data-source="summary" data-field="earn_7d_usd">—</span>，按时间加权的 LP 市值</span>
+    </div>
+  </section>
+
+  <section class="ae-grid" id="charts">
+    <div class="ae-card" id="daily-earnings">
+      <h2>每日 LP 收益</h2>
+      <p class="ae-note">AERO 奖励按当日收盘价折算，加上未质押期间赚到的交易手续费。按北京时间切日，今天是截至目前的数。</p>
+      <div class="ae-legend" id="earn-legend"></div>
+      <div class="ae-chart dash-skeleton" id="earn-chart" data-source="daily"></div>
+    </div>
+    <div class="ae-card" id="pnl-trend">
+      <h2>累计盈亏走势</h2>
+      <p class="ae-note">每天收盘时的累计盈亏，0 以上是赚。实线对比一直持有 USDC（现值减净投入）；虚线对比把带进来的币原样拿着不动，去掉了 ETH 本身的涨跌，只看做 LP 多赚或少赚了多少。</p>
+      <div class="ae-legend" id="pnl-legend"></div>
+      <div class="ae-chart dash-skeleton" id="pnl-chart" data-source="daily"></div>
+    </div>
+  </section>
+
+  <section class="ae-grid">
+    <div class="ae-card" id="breakdown">
+      <h2>盈亏从哪来</h2>
+      <p class="ae-note">从净投入到现值的拆解，单位美元。各项相加等于累计盈亏。</p>
+      <div class="ae-wf">
+        <div class="ae-wf-ends">
+          <span>净投入<b class="ae-a dash-skeleton" data-step="invested" data-source="attribution" data-field="usd">—</b></span>
+          <span style="text-align:right">现值<b class="ae-a dash-skeleton" data-step="value" data-source="attribution" data-field="usd">—</b></span>
+        </div>
+        <div class="ae-chart dash-skeleton" id="wf-chart" data-source="attribution summary" style="min-height: 220px"></div>
+      </div>
+    </div>
+    <div class="ae-card" id="positions">
+      <h2>当前 LP 仓位</h2>
+      <p class="ae-note">价格区间和当前价是 1 ETH 兑多少 USDC。质押中的仓位只拿 AERO 奖励，不拿交易手续费。</p>
+      <div class="ae-tablewrap">
+        <table id="pos-table" data-source="positions" data-row-key="scope,token_id">
+          <thead><tr>
+            <th data-field="scope_label">钱包</th><th data-field="token_id">仓位</th><th data-field="status">状态</th>
+            <th class="n" data-field="range_low">区间下沿</th><th class="n" data-field="range_high">区间上沿</th><th class="n" data-field="price">当前价</th>
+            <th class="n ae-hide-sm" data-field="amount0">WETH</th><th class="n ae-hide-sm" data-field="amount1">USDC</th>
+            <th class="n" data-field="value_usd">价值</th><th class="n" data-field="pending_aero">待领 AERO</th><th class="n ae-hide-sm" data-field="pending_usd">待领价值</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="ae-grid">
+    <div class="ae-card" id="holdings">
+      <h2>持仓明细</h2>
+      <p class="ae-note">钱包余额、LP 仓位里的币和还没领取的奖励，按当前价估值。</p>
+      <div class="ae-tablewrap">
+        <table id="hold-table" data-source="holdings" data-row-key="scope,place,asset">
+          <thead><tr>
+            <th data-field="scope_label">钱包</th><th data-field="place">位置</th><th data-field="asset">资产</th>
+            <th class="n" data-field="amount">数量</th><th class="n" data-field="value_usd">价值</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="ae-card" id="daily-table-card">
+      <h2>每日明细</h2>
+      <p class="ae-note">每天收盘（北京时间 24:00）时的数；最上面一行是今天截至数据时间的数。</p>
+      <div class="ae-tablewrap">
+        <table id="daily-table" data-source="daily" data-row-key="day,scope">
+          <thead><tr>
+            <th data-field="day">日期</th><th class="n" data-field="earn_usd">当日收益</th><th class="n ae-hide-sm" data-field="earn_aero">AERO</th>
+            <th class="n ae-hide-sm" data-field="earn_fee_usd">手续费</th><th class="n" data-field="value_usd">现值</th>
+            <th class="n ae-hide-sm" data-field="invested_usd">净投入</th><th class="n" data-field="pnl_usd">累计盈亏</th>
+            <th class="n ae-hide-sm" data-field="eth_usd">ETH</th><th class="n ae-hide-sm" data-field="aero_usd">AERO 价</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="ae-card" id="ledger">
+    <h2>资金流水</h2>
+    <p class="ae-note">链上自动识别：跨链和交易所提现算作投入，钱包之间互转在合计里相互抵消；兑换、开仓加仓、领取奖励是钱在策略内部的移动。黄色行是系统核对时对不上的交易，需要人工确认。</p>
+    <div class="ae-tablewrap" style="max-height: 32rem">
+      <table id="events-table" data-source="events" data-row-key="id">
+        <thead><tr>
+          <th data-field="time_cst">时间</th><th data-field="scope_label">钱包</th><th data-field="kind">类型</th>
+          <th data-field="detail">明细</th><th class="n" data-field="usd">美元</th><th class="ae-hide-sm" data-field="tx">交易</th>
+          <th class="ae-hide-sm" data-field="id">#</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="ae-card ae-method" id="method">
+    <h2>口径</h2>
+    <h3>投入和盈亏</h3>
+    <ul>
+      <li>净投入：从外部进到钱包的钱（跨链转入、交易所提现、别人转入），按到账那一刻的价格折成美元，减去转出去的钱。开始追踪那天之前钱包里已有的东西按当时价格算作期初投入。</li>
+      <li>累计盈亏（对比持有 USDC）= 现值 - 净投入。等于把每笔投入在到账时换成 USDC 一直拿着，现在会比实际少或多多少。</li>
+      <li>现值：钱包里的 ETH、WETH、USDC、AERO，加上 LP 仓位里的币、未领取的 AERO 和未收取的手续费，全部按当前链上价格估值。空投垃圾币不计价。</li>
+    </ul>
+    <h3>每日收益</h3>
+    <ul>
+      <li>AERO 奖励 = 当天新增的（已领取 + 待领取），直接从 gauge 合约读取，领取时 1:1 到账，没有折损。按当天收盘时的 AERO 价格折算。</li>
+      <li>交易手续费只在仓位没质押时产生（质押期间手续费归 veAERO 投票者），按当天收盘价折算。</li>
+      <li>近 N 日年化 = 最近 N 个完整日（最多 7 天，不含今天）的收益合计 ÷ 这几天按时间加权的 LP 市值合计 × 365。按时间加权是说，仓位某天只在池子里待了一部分时间，就只按那部分时间算它的市值（待了半天就算一半），没开仓的时间不算。奖励份额随全池质押量剧烈波动，只作参考。</li>
+    </ul>
+    <h3>盈亏拆解</h3>
+    <ul>
+      <li>带入资产涨跌：如果把带进来的币（ETH、USDC）原样拿着不动，现在值多少减去净投入，几乎全部来自 ETH 价格。</li>
+      <li>AERO 价格变动：AERO 奖励从赚到时到现在（或卖出时）的价格变化。</li>
+      <li>无常损失与调仓：集中流动性仓位随价格被动换币（无常损失），加上自己兑换改变了持币结构后在价格变动中的盈亏，以及兑换的滑点和费用。由其余各项倒推得出，可正可负。</li>
+    </ul>
+    <h3>数据来源</h3>
+    <ul>
+      <li>全部来自 Base 链上数据：钱包与仓位用存档节点读取每天收盘区块的状态；ETH 价格取 Uniswap v3 WETH/USDC 0.05% 池，AERO 价格取 Aero 上三个 AERO 池（vAMM AERO/USDC、CL200 AERO/USDC、CL200 AERO/WETH）的中位数，USDC 按 1 美元。</li>
+      <li>流水由程序扫描钱包的全部链上交易得到，包括别人代发的交易（例如启用了 EIP-7702 的地址）；ETH 余额逐块核对到 1 wei。</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+(() => {
+  const root = document.querySelector('.ae');
+  // The views on offer (each wallet, and 合计 when there are several) come from the summary rows.
+  const scopeList = () => { const S = dash.data('summary'); return S.status === 'ok' ? S.data.map((r) => ({ key: r.scope, label: r.scope_label })) : []; };
+  const walletKeys = () => scopeList().map((s) => s.key).filter((k) => k !== 'total');
+  const labelOf = (k) => scopeList().find((s) => s.key === k)?.label ?? k;
+  const scope = () => {
+    const keys = scopeList().map((s) => s.key), p = dash.params().scope;
+    return keys.includes(p) ? p : keys.includes('total') ? 'total' : keys[0] ?? 'total';
+  };
+
+  // ---------- formatting ----------
+  const usd0 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  const usd2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtUsd = (v) => (v == null ? '—' : Math.abs(v) >= 1000 ? usd0.format(v) : usd2.format(v));
+  // One minus glyph everywhere: ASCII '-', the same one Intl puts in front of negative amounts.
+  const sign = (v) => (v > 0 ? '+' : v < 0 ? '-' : '');
+  const fmtSigned = (v) => (v == null ? '—' : sign(v) + fmtUsd(Math.abs(v)));
+  const fmtPct = (v, signed) => (v == null ? '—' : (signed ? sign(v) : v < 0 ? '-' : '') + (Math.abs(v) * 100).toFixed(Math.abs(v) < 0.1 ? 2 : 1) + '%');
+  const fmtNum = (v, d = 4) => (v == null ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: d }));
+  // Axis ticks: whole dollars without cents; 0 is formatted as +0 so a -0 tick never prints '-$0'.
+  const fmtTick = (v) => (v === 0 ? usd0.format(0) : Number.isInteger(v) ? usd0.format(v) : fmtUsd(v));
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+  const FIELD_FMT = {
+    invested_usd: fmtUsd, value_usd: fmtUsd, earn_total_usd: fmtUsd, fees_usd: fmtUsd, yesterday_usd: fmtUsd, today_usd: fmtUsd, earn_7d_usd: fmtUsd,
+    pnl_usd: fmtSigned, vs_hodl_usd: fmtSigned, pnl_pct: (v) => fmtPct(v, true), apr_7d: (v) => fmtPct(v, false),
+    aero_earned: (v) => fmtNum(v, 2), apr_days: (v) => String(v), as_of_block: (v) => Number(v).toLocaleString('en-US'), as_of_cst: (v) => v, scope_label: (v) => v,
+  };
+  const tone = (el, v) => { el.classList.toggle('ae-pos', v > 0); el.classList.toggle('ae-neg', v < 0); };
+
+  // ---------- scope switch ----------
+  const scopeBox = root.querySelector('.ae-scope');
+  scopeBox.addEventListener('click', (e) => { const b = e.target.closest('button[data-scope]'); if (b) dash.setParams({ scope: b.dataset.scope }); });
+  function drawScopes(sc) {
+    const list = [...scopeList()].sort((a, b) => (a.key === 'total' ? -1 : b.key === 'total' ? 1 : 0));
+    scopeBox.hidden = list.length < 2;
+    if (scopeBox.dataset.keys !== list.map((s) => s.key).join(',')) {
+      scopeBox.dataset.keys = list.map((s) => s.key).join(',');
+      scopeBox.replaceChildren(...list.map((s) => { const b = document.createElement('button'); b.type = 'button'; b.dataset.scope = s.key; b.textContent = s.label; return b; }));
+    }
+    scopeBox.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.scope === sc)));
+  }
+
+  // ---------- tooltip ----------
+  function tipFor(box) {
+    let t = box.querySelector('.ae-tip');
+    if (!t) { t = document.createElement('div'); t.className = 'ae-tip'; box.appendChild(t); }
+    return {
+      show(x, y, title, rows) {
+        t.replaceChildren();
+        const h = document.createElement('div'); h.className = 't'; h.textContent = title; t.appendChild(h);
+        for (const r of rows) {
+          const line = document.createElement('div'); line.className = 'r';
+          if (r.color) {
+            const s = document.createElement('span'); s.className = r.line ? 'ae-sw-line' : 'ae-sw'; s.style.background = r.color;
+            if (r.dash) { s.style.background = 'none'; s.style.borderTop = `2px dashed ${r.color}`; s.style.height = '0'; }
+            line.appendChild(s);
+          }
+          const n = document.createElement('span'); n.textContent = r.name; line.appendChild(n);
+          const v = document.createElement('b'); v.textContent = r.value; line.appendChild(v);
+          t.appendChild(line);
+        }
+        t.style.display = 'block';
+        const bw = box.clientWidth, tw = t.offsetWidth, th = t.offsetHeight;
+        t.style.left = Math.max(0, Math.min(bw - tw, x + 12)) + 'px';
+        t.style.top = Math.max(0, y - th - 8) + 'px';
+      },
+      hide() { t.style.display = 'none'; },
+    };
+  }
+  const legend = (el, items) => {
+    el.replaceChildren(...items.map((it) => {
+      const s = document.createElement('span');
+      const sw = document.createElement('i'); sw.className = it.line ? 'ae-sw-line' : 'ae-sw'; sw.style.background = it.color;
+      if (it.dash) { sw.style.background = 'none'; sw.style.borderTop = `2px dashed ${it.color}`; sw.style.height = '0'; }
+      s.append(sw, document.createTextNode(it.name)); return s;
+    }));
+  };
+  const parseDay = (d) => new Date(d + 'T00:00:00Z');
+  const dayLabel = d3.utcFormat('%-m/%-d');
+  const failed = (el) => {
+    el.replaceChildren();
+    const line = document.createElement('div');
+    line.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;min-height:inherit;height:100%;color:var(--color-fg-muted);font-size:var(--cds-font-size-caption)';
+    const dot = document.createElement('span'); dot.style.cssText = 'width:.375rem;height:.375rem;border-radius:50%;background:var(--color-bad)';
+    line.append(dot, document.createTextNode('Failed to load')); el.appendChild(line);
+  };
+  const axisStyle = (g) => {
+    g.attr('font-size', null).attr('font-family', null);
+    g.selectAll('text').attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)');
+    g.selectAll('.domain').attr('stroke', 'var(--cds-chart-axis)');
+    g.selectAll('line').attr('stroke', 'var(--cds-chart-grid)');
+  };
+  const measure = (svg, texts) => {
+    const t = svg.append('text').style('font-size', 'var(--cds-font-size-caption)');
+    let w = 0; for (const s of texts) { t.text(s); w = Math.max(w, t.node().getComputedTextLength()); }
+    t.remove(); return w;
+  };
+
+  // Whole-day x ticks: every n-th day counted back from the last one, so the latest day is always labelled.
+  const thinDays = (list, width) => {
+    const every = Math.max(1, Math.ceil(list.length / Math.max(2, Math.floor(width / 48))));
+    return list.filter((d, i) => (list.length - 1 - i) % every === 0);
+  };
+
+  // ---------- daily earnings: bars stacked by wallet on the combined view, gains up and losses down ----------
+  function drawEarn(rowsAll, sc) {
+    const box = document.getElementById('earn-chart');
+    box.replaceChildren();
+    const wallets = walletKeys();
+    const keys = sc === 'total' ? wallets : [sc];
+    const colorOf = (k) => dash.colors[Math.max(0, wallets.indexOf(k)) % dash.colors.length];
+    legend(document.getElementById('earn-legend'), keys.map((k) => ({ name: labelOf(k), color: colorOf(k) })));
+    const scopeRows = rowsAll.filter((r) => r.scope === sc);
+    if (!scopeRows.length) return;
+    const days = scopeRows.map((r) => r.day);
+    const byKey = {};
+    for (const r of rowsAll) if (keys.includes(r.scope)) (byKey[r.day] ??= {})[r.scope] = r;
+    // Diverging stack: positive segments stack up from zero, negative ones down from zero. The stack heights
+    // only set the scale; every number shown comes from a row.
+    const data = scopeRows.map((row) => {
+      let up = 0, down = 0;
+      const segs = keys.map((k) => {
+        const v = byKey[row.day]?.[k]?.earn_usd;
+        if (!isNum(v) || v === 0) return null;
+        const s = v > 0 ? { k, y0: up, y1: up + v } : { k, y0: down + v, y1: down };
+        if (v > 0) up += v; else down += v;
+        return s;
+      }).filter(Boolean);
+      const top = segs.filter((s) => s.y1 > 0).at(-1), bottom = segs.filter((s) => s.y0 < 0).at(-1);
+      for (const s of segs) s.end = s === top || s === bottom;
+      return { day: row.day, up, down, segs, row };
+    });
+    const W = box.clientWidth || 600, H = 240, m = { t: 10, r: 8, b: 26 };
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+    let lo = Math.min(0, d3.min(data, (d) => d.down)) * 1.08, hi = Math.max(0, d3.max(data, (d) => d.up)) * 1.08;
+    if (lo === hi) hi = 1;
+    const y = d3.scaleLinear([lo, hi], [H - m.b, m.t]).nice();
+    const ticks = y.ticks(4);
+    m.l = Math.ceil(measure(svg, ticks.map(fmtTick))) + 10;
+    const x = d3.scaleBand(days, [m.l, W - m.r]).paddingInner(0.25).paddingOuter(0.1);
+    svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).tickValues(ticks).tickFormat(fmtTick).tickSize(-(W - m.l - m.r))).call(axisStyle).call((g) => g.select('.domain').remove());
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickValues(thinDays(days, W - m.l)).tickFormat((d) => dayLabel(parseDay(d))).tickSizeOuter(0)).call(axisStyle).call((g) => g.select('.domain').remove());
+    const bw = Math.min(32, x.bandwidth());
+    const g = svg.append('g');
+    for (const d of data) {
+      const cx = x(d.day) + (x.bandwidth() - bw) / 2;
+      for (const s of d.segs) {
+        g.append('rect').attr('x', cx).attr('width', bw).attr('y', y(s.y1)).attr('height', Math.max(0.5, y(s.y0) - y(s.y1)))
+          .attr('rx', s.end ? 4 : 0).attr('fill', colorOf(s.k)).attr('opacity', d.row.partial ? 0.55 : 1).attr('class', 'ae-bar').attr('data-day', d.day);
+      }
+    }
+    svg.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(0)).attr('y2', y(0)).attr('stroke', 'var(--cds-chart-axis)');
+    const tip = tipFor(box);
+    svg.append('rect').attr('x', m.l).attr('y', 0).attr('width', W - m.l - m.r).attr('height', H - m.b).attr('fill', 'transparent')
+      .on('mousemove', (ev) => {
+        const [px] = d3.pointer(ev); const i = Math.max(0, Math.min(days.length - 1, Math.floor((px - m.l - x.step() * x.paddingOuter()) / x.step())));
+        const d = data[i]; if (!d) return;
+        g.selectAll('.ae-bar').attr('opacity', function () { return this.dataset.day === d.day ? 1 : 0.35; });
+        const rows = keys.length > 1
+          ? [...keys.map((k) => ({ name: labelOf(k), color: colorOf(k), value: fmtUsd(byKey[d.day]?.[k]?.earn_usd ?? 0) })), { name: '合计', value: fmtUsd(d.row.earn_usd) }]
+          : [{ name: '当日收益', value: fmtUsd(d.row.earn_usd) }];
+        rows.push({ name: 'AERO 数量', value: isNum(d.row.earn_aero) ? fmtNum(d.row.earn_aero, 2) + ' AERO' : '—' });
+        if (d.row.earn_fee_usd) rows.push({ name: '手续费', value: fmtUsd(d.row.earn_fee_usd) });
+        const [mx, my] = d3.pointer(ev, box);
+        tip.show(mx, my, d.day + (d.row.partial ? '（今日至今）' : ''), rows);
+      })
+      .on('mouseleave', () => { tip.hide(); g.selectAll('.ae-bar').attr('opacity', function () { const r = data.find((q) => q.day === this.dataset.day); return r?.row.partial ? 0.55 : 1; }); });
+  }
+
+  // ---------- cumulative P&L: two lines around zero ----------
+  function drawPnl(rowsAll, sc) {
+    const box = document.getElementById('pnl-chart');
+    box.replaceChildren();
+    const rows = rowsAll.filter((r) => r.scope === sc).map((r) => ({ ...r, date: parseDay(r.day) }));
+    // vs_hodl_usd is a newer daily column; its line is left out until the data has it.
+    const series = [
+      { k: 'pnl_usd', name: '对比持有 USDC', color: dash.colors[0], fg: 'var(--color-fg)' },
+      { k: 'vs_hodl_usd', name: '对比拿着原币不动', color: 'var(--cds-chart-reference)', fg: 'var(--color-fg-muted)', dash: true },
+    ].filter((s) => rows.some((r) => isNum(r[s.k])));
+    legend(document.getElementById('pnl-legend'), series.map((s) => ({ name: s.name, color: s.color, line: true, dash: s.dash })));
+    if (!rows.length || !series.length) return;
+    const W = box.clientWidth || 600, H = 240, m = { t: 12, b: 26 };
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+    const vals = rows.flatMap((r) => series.map((s) => r[s.k])).filter(isNum);
+    const lo = Math.min(0, d3.min(vals)), hi = Math.max(0, d3.max(vals)), pad = (hi - lo) * 0.08 || 1;
+    const y = d3.scaleLinear([lo - pad, hi + pad], [H - m.b, m.t]).nice();
+    const ticks = y.ticks(4);
+    m.l = Math.ceil(measure(svg, ticks.map(fmtTick))) + 10;
+    // End labels: the last value of each line, pushed apart when they would touch.
+    const ends = series.map((s) => { const r = rows.findLast((q) => isNum(q[s.k])); return r && { s, r, v: r[s.k], text: fmtSigned(r[s.k]) }; }).filter(Boolean);
+    const single = rows.length === 1;
+    m.r = single ? 8 : Math.ceil(measure(svg, ends.map((e) => e.text))) + 12;
+    const x = d3.scaleUtc(d3.extent(rows, (r) => r.date), [m.l, W - m.r]);
+    svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).tickValues(ticks).tickFormat(fmtTick).tickSize(-(W - m.l - m.r))).call(axisStyle).call((g) => g.select('.domain').remove());
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickValues(thinDays(rows.map((r) => r.date), W - m.l - m.r)).tickFormat(dayLabel).tickSizeOuter(0)).call(axisStyle);
+    svg.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(0)).attr('y2', y(0)).attr('stroke', 'var(--cds-chart-axis)').attr('stroke-width', 1.5);
+    for (const s of series) {
+      svg.append('path').datum(rows).attr('fill', 'none').attr('stroke', s.color).attr('stroke-width', 2)
+        .attr('stroke-linecap', s.dash ? 'butt' : 'round').attr('stroke-linejoin', 'round').attr('stroke-dasharray', s.dash ? '5 4' : null)
+        .attr('d', d3.line().defined((r) => isNum(r[s.k])).x((r) => x(r.date)).y((r) => y(r[s.k])));
+    }
+    for (const e of ends) { e.y = y(e.v); svg.append('circle').attr('cx', x(e.r.date)).attr('cy', e.y).attr('r', 3.5).attr('fill', e.s.color); }
+    if (ends.length === 2 && Math.abs(ends[0].y - ends[1].y) < 14) {
+      const mid = (ends[0].y + ends[1].y) / 2, dir = ends[0].y <= ends[1].y ? -1 : 1;
+      ends[0].y = mid + dir * 7; ends[1].y = mid - dir * 7;
+    }
+    for (const e of ends) {
+      svg.append('text').attr('x', single ? x(e.r.date) + 8 : W - m.r + 6).attr('y', Math.max(6, Math.min(H - 6, e.y))).attr('dy', '0.35em')
+        .attr('fill', e.s.fg).style('font-size', 'var(--cds-font-size-caption)').text(e.text);
+    }
+    const tip = tipFor(box);
+    const rule = svg.append('line').attr('y1', m.t).attr('y2', H - m.b).attr('stroke', 'var(--cds-chart-axis)').style('display', 'none');
+    const dots = series.map((s) => svg.append('circle').attr('r', 4).attr('fill', s.color).style('display', 'none'));
+    const bis = d3.bisector((r) => r.date).center;
+    svg.append('rect').attr('x', m.l).attr('y', 0).attr('width', W - m.l - m.r).attr('height', H - m.b).attr('fill', 'transparent')
+      .on('mousemove', (ev) => {
+        const [px] = d3.pointer(ev); const r = rows[single ? 0 : bis(rows, x.invert(px))];
+        rule.style('display', null).attr('x1', x(r.date)).attr('x2', x(r.date));
+        series.forEach((s, i) => dots[i].style('display', isNum(r[s.k]) ? null : 'none').attr('cx', x(r.date)).attr('cy', isNum(r[s.k]) ? y(r[s.k]) : 0));
+        const [mx, my] = d3.pointer(ev, box);
+        tip.show(mx, my, r.day + (r.partial ? '（今日至今）' : ''), [
+          ...series.map((s) => ({ name: s.name, color: s.color, line: true, dash: s.dash, value: fmtSigned(r[s.k]) })),
+          { name: '现值', value: fmtUsd(r.value_usd) },
+          { name: '净投入', value: fmtUsd(r.invested_usd) },
+        ]);
+      })
+      .on('mouseleave', () => { tip.hide(); rule.style('display', 'none'); for (const d of dots) d.style('display', 'none'); });
+  }
+
+  // ---------- breakdown: diverging bars around zero; the total bar is the summary row's pnl_usd ----------
+  function drawWaterfall(rowsAll, sc, srow) {
+    const box = document.getElementById('wf-chart');
+    box.replaceChildren();
+    const rows = rowsAll.filter((r) => r.scope === sc && r.step !== 'invested' && r.step !== 'value').sort((a, b) => a.order - b.order);
+    const items = [...rows];
+    if (isNum(srow?.pnl_usd)) items.push({ label: '累计盈亏', usd: srow.pnl_usd, total: true });
+    if (!items.length) return;
+    const W = box.clientWidth || 600, rowH = 28, H = items.length * rowH + 8;
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+    const labW = Math.ceil(measure(svg, items.map((i) => i.label))) + 12;
+    const valW = Math.ceil(measure(svg, items.map((i) => fmtSigned(i.usd)))) + 12;
+    const ext = d3.max(items, (i) => Math.abs(i.usd)) || 1;
+    const x = d3.scaleLinear([-ext, ext], [labW + valW, W - valW]);
+    svg.append('line').attr('x1', x(0)).attr('x2', x(0)).attr('y1', 0).attr('y2', H).attr('stroke', 'var(--cds-chart-axis)');
+    items.forEach((it, i) => {
+      const yy = 4 + i * rowH, v = it.usd, color = v >= 0 ? 'var(--color-ok)' : 'var(--color-bad)';
+      svg.append('text').attr('x', 0).attr('y', yy + rowH / 2).attr('dy', '0.35em').attr('fill', it.total ? 'var(--color-fg)' : 'var(--color-fg-muted)')
+        .style('font-size', 'var(--cds-font-size-caption)').style('font-weight', it.total ? 600 : 400).text(it.label);
+      const x0 = Math.min(x(0), x(v)), w = Math.max(1, Math.abs(x(v) - x(0)));
+      svg.append('rect').attr('x', x0).attr('y', yy + 6).attr('width', w).attr('height', rowH - 12).attr('rx', 4)
+        .attr('fill', color).attr('opacity', it.total ? 1 : 0.8);
+      const tx = v >= 0 ? x(v) + 6 : x(v) - 6;
+      svg.append('text').attr('x', tx).attr('y', yy + rowH / 2).attr('dy', '0.35em').attr('text-anchor', v >= 0 ? 'start' : 'end')
+        .attr('fill', 'var(--color-fg)').style('font-size', 'var(--cds-font-size-caption)').style('font-weight', it.total ? 600 : 400).text(fmtSigned(v));
+    });
+  }
+
+  // ---------- tables ----------
+  const td = (text, cls) => { const c = document.createElement('td'); c.textContent = text; if (cls) c.className = cls; return c; };
+  const enc = (s) => encodeURIComponent(String(s));
+  function fillTable(id, rows, cols, keyOf, rowClass) {
+    const tb = document.querySelector(`#${id} tbody`);
+    tb.replaceChildren(...rows.map((r) => {
+      const tr = document.createElement('tr');
+      tr.dataset.key = keyOf(r);
+      if (rowClass) { const c = rowClass(r); if (c) tr.className = c; }
+      for (const [f, cls] of cols) tr.appendChild(f(r, cls));
+      return tr;
+    }));
+  }
+
+  // ---------- draw ----------
+  dash.onData(() => {
+    const sc = scope();
+    drawScopes(sc);
+    const S = dash.data('summary'), D = dash.data('daily'), A = dash.data('attribution'), P = dash.data('positions'), H = dash.data('holdings'), E = dash.data('events');
+
+    // Headline figures from the summary row of the chosen scope.
+    const srow = S.status === 'ok' ? S.data.find((r) => r.scope === sc) : null;
+    root.querySelectorAll('[data-source="summary"]').forEach((el) => {
+      el.setAttribute('data-where', `scope=${sc}`);
+      const f = el.dataset.field, v = srow?.[f];
+      if (S.status !== 'loading') el.classList.remove('dash-skeleton');
+      if (!srow) { el.textContent = '—'; return; }
+      // data-sign: shown with a sign and coloured; a plain dollar amount then goes through fmtSigned too.
+      const base = FIELD_FMT[f] ?? ((x) => String(x));
+      const fmt = el.dataset.sign && base === fmtUsd ? fmtSigned : base;
+      el.textContent = v == null ? '—' : fmt(v);
+      if (el.dataset.sign) tone(el, v);
+    });
+
+    root.querySelectorAll('[data-source="attribution"].ae-a').forEach((el) => {
+      el.setAttribute('data-where', `scope=${sc}&step=${el.dataset.step}`);
+      if (A.status !== 'loading') el.classList.remove('dash-skeleton');
+      const r = A.status === 'ok' ? A.data.find((x) => x.scope === sc && x.step === el.dataset.step) : null;
+      // Start and end amounts are plain; every step in between is a signed, coloured contribution.
+      const signed = el.dataset.step !== 'invested' && el.dataset.step !== 'value';
+      el.textContent = r ? (signed ? fmtSigned(r.usd) : fmtUsd(r.usd)) : '—';
+      if (signed) tone(el, r?.usd);
+    });
+
+    // Charts.
+    // The breakdown's total bar is summary.pnl_usd: wait for summary, and draw the steps alone if it failed.
+    const wfStatus = A.status === 'ok' && S.status === 'loading' ? 'loading' : A.status;
+    const charts = [
+      ['earn-chart', D.status, () => drawEarn(D.data, sc)],
+      ['pnl-chart', D.status, () => drawPnl(D.data, sc)],
+      ['wf-chart', wfStatus, () => drawWaterfall(A.data, sc, srow)],
+    ];
+    for (const [id, status, draw] of charts) {
+      const el = document.getElementById(id);
+      if (status === 'ok') { el.classList.remove('dash-skeleton'); draw(); }
+      else if (status === 'loading') { el.replaceChildren(); el.classList.add('dash-skeleton'); }
+      else { el.classList.remove('dash-skeleton'); failed(el); }
+    }
+
+    // Tables (rows of the chosen wallet; the combined view lists both).
+    const inScope = (r) => sc === 'total' || r.scope === sc;
+    if (P.status === 'ok') fillTable('pos-table', P.data.filter(inScope), [
+      [(r) => td(r.scope_label)], [(r) => td(r.token_id)],
+      [(r) => { const c = td(''); const s = document.createElement('span'); s.className = 'ae-chip ' + (r.in_range ? 'ok' : 'warn'); s.textContent = r.status; c.appendChild(s); c.title = r.in_range ? '价格在区间内' : '价格在区间外'; return c; }],
+      [(r) => td(fmtNum(r.range_low, 2), 'n')], [(r) => td(fmtNum(r.range_high, 2), 'n')], [(r) => td(fmtNum(r.price, 2), 'n')],
+      [(r) => td(fmtNum(r.amount0, 4), 'n ae-hide-sm')], [(r) => td(fmtNum(r.amount1, 2), 'n ae-hide-sm')],
+      [(r) => td(fmtUsd(r.value_usd), 'n')], [(r) => td(fmtNum(r.pending_aero, 2), 'n')], [(r) => td(fmtUsd(r.pending_usd), 'n ae-hide-sm')],
+    ], (r) => `${enc(r.scope)},${enc(r.token_id)}`);
+    if (H.status === 'ok') fillTable('hold-table', H.data.filter(inScope), [
+      [(r) => td(r.scope_label)], [(r) => td(r.place)], [(r) => td(r.asset)],
+      [(r) => td(fmtNum(r.amount, r.asset === 'USDC' ? 2 : 6), 'n')], [(r) => td(fmtUsd(r.value_usd), 'n')],
+    ], (r) => `${enc(r.scope)},${enc(r.place)},${enc(r.asset)}`);
+    if (D.status === 'ok') fillTable('daily-table', D.data.filter((r) => r.scope === sc).slice().reverse(), [
+      [(r) => { const c = td(r.day); if (r.partial) c.title = '今天截至数据时间'; return c; }], [(r) => td(fmtUsd(r.earn_usd), 'n')], [(r) => td(fmtNum(r.earn_aero, 2), 'n ae-hide-sm')], [(r) => td(fmtUsd(r.earn_fee_usd), 'n ae-hide-sm')],
+      [(r) => td(fmtUsd(r.value_usd), 'n')], [(r) => td(fmtUsd(r.invested_usd), 'n ae-hide-sm')],
+      [(r) => { const c = td(fmtSigned(r.pnl_usd), 'n'); tone(c, r.pnl_usd); return c; }],
+      [(r) => td(fmtNum(r.eth_usd, 2), 'n ae-hide-sm')], [(r) => td(r.aero_usd == null ? '—' : fmtNum(r.aero_usd, 4), 'n ae-hide-sm')],
+    ], (r) => `${enc(r.day)},${enc(r.scope)}`, (r) => (r.partial ? 'ae-partial' : ''));
+    if (E.status === 'ok') fillTable('events-table', E.data.filter(inScope), [
+      [(r) => td(r.time_cst)], [(r) => td(r.scope_label)], [(r) => td(r.kind)], [(r) => td(r.detail)],
+      [(r) => { const c = td(r.kind === '资金转出' ? fmtSigned(r.usd) : fmtUsd(r.usd), 'n'); return c; }],
+      [(r) => { const c = td('', 'ae-hide-sm'); const a = document.createElement('a'); a.href = 'https://basescan.org/tx/' + r.tx; a.target = '_blank'; a.rel = 'noopener'; a.textContent = r.tx.slice(0, 10) + '…'; c.appendChild(a); return c; }],
+      [(r) => td(String(r.id), 'ae-hide-sm')],
+    ], (r) => enc(r.id), (r) => (r.flagged ? 'ae-flag' : ''));
+  });
+})();
+</script>

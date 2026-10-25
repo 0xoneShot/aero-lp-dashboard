@@ -1,0 +1,22 @@
+{
+  "name": "aero-lp-dashboard",
+  "version": "1.0.0",
+  "description": "Daily Aero LP earnings and overall P&L for two Base wallets",
+  "scripts": {
+    "update": "node src/update.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build:site": "node scripts/build-site.mjs",
+    "serve": "node scripts/serve.mjs",
+    "test:local": "node --test test/local/*.test.mjs"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "d3": "^7.9.0",
+    "viem": "^2.57.11"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  }
+}
