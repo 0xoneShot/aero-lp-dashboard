@@ -301,7 +301,7 @@ function ethCurve(keys) {
       if (x.token0 === WETH && x.token1 === TOKEN_USDC) {
         // Only live positions follow a curve and set the lowest bound: one whose liquidity was all
         // removed but not burned holds nothing, and must not keep the scope looking "in a range".
-        if (x.liquidity > 0n) curves.push({ key: k, L: Number(x.liquidity), sa: Math.sqrt(1.0001 ** x.tickLower), sb: Math.sqrt(1.0001 ** x.tickUpper), low: priceAtTick(x.tickLower, 18, 6), high: priceAtTick(x.tickUpper, 18, 6) })
+        if (x.liquidity > 0n) curves.push({ key: k, L: Number(x.liquidity), sa: Math.sqrt(1.0001 ** x.tickLower), sb: Math.sqrt(1.0001 ** x.tickUpper), low: priceAtTick(x.tickLower, 18, 6), high: priceAtTick(x.tickUpper, 18, 6), pool: priceFromSqrt(x.sqrtP, 18, 6), inRange: x.inRange })
         ethUnits += units(extra0, 18); fixedUsd += units(extra1, 6)
       } else {
         fixedUsd += valueOf(x.token0, x.amount0 + extra0, pNowCurve) + valueOf(x.token1, x.amount1 + extra1, pNowCurve)
@@ -325,7 +325,7 @@ function ethCurve(keys) {
     for (let i = 0; i < 200; i++) { const mid = Math.sqrt(lo * hi); if (value(mid) < target) lo = mid; else hi = mid }
     return hi
   }
-  return { value, ethAt, solve, ethUnits, fixedUsd, curves, lowest: curves.length ? Math.min(...curves.map((c) => c.low)) : null }
+  return { value, ethAt, solve, amounts, ethUnits, fixedUsd, curves, lowest: curves.length ? Math.min(...curves.map((c) => c.low)) : null }
 }
 
 // ---------- datasets ----------
@@ -417,7 +417,9 @@ function ethPrices(keys, invested, interest, value) {
   const rs = keys.map((k) => valueSnapshot(snaps[k][head], pNow).range)
   const wallEth = keys.reduce((a, k) => a + units((snaps[k][head].balances.ETH ?? 0n) + (snaps[k][head].balances[WETH] ?? 0n), 18), 0)
   const highest = Math.max(...keys.flatMap((k) => snaps[k][head].positions.filter((x) => x.liquidity > 0n).map((x) => priceAtTick(x.tickUpper, 18, 6))), -Infinity)
-  const ethNow = c.ethAt(now), restNow = c.value(now) - ethNow * now
+  // Withdrawing now pays each position out at its own pool's price, which can differ a little from
+  // the reference price the rest is valued at.
+  const [ethNow, restNow] = c.curves.reduce(([e, u], x) => { const [a, b] = c.amounts(x, x.pool); return [e + a, u + b] }, [c.ethUnits, c.fixedUsd])
   const priceNow = (target) => {
     if (ethNow < 0.05) return null
     const x = (target - restNow) / ethNow
@@ -431,13 +433,13 @@ function ethPrices(keys, invested, interest, value) {
     breakeven_eth_price: even, breakeven_gap_pct: gap(even || null),
     hold_cost_eth_price: holdCost == null ? null : r2(holdCost), hold_cost_gap_pct: gap(holdCost || null),
     hold_breakeven_eth_price: holdEven == null ? null : r2(holdEven), hold_breakeven_gap_pct: gap(holdEven || null),
-    eth_units_now: r6(c.ethAt(now)), eth_units_below: r6(eth), eth_units_wallet: r6(wallEth), eth_units_positions_below: r6(Math.max(0, eth - wallEth)),
+    eth_units_now: r6(ethNow), eth_units_below: r6(eth), eth_units_wallet: r6(wallEth), eth_units_positions_below: r6(Math.max(0, eth - wallEth)),
     range_low_min: c.lowest == null ? null : r2(c.lowest), range_high_max: Number.isFinite(highest) ? r2(highest) : null,
     rest_usd: r2(rest),
     now_cost_eth_price: priceNow(invested + interest), now_breakeven_eth_price: priceNow(invested), rest_now_usd: r2(restNow),
     curve: {
       eth: c.ethUnits, usd: c.fixedUsd,
-      positions: [...c.curves].sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key) || a.low - b.low).map((x) => ({ wallet: label(x.key), low: r2(x.low), high: r2(x.high), L: x.L, sa: x.sa, sb: x.sb })),
+      positions: [...c.curves].sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key) || a.low - b.low).map((x) => ({ wallet: label(x.key), low: r2(x.low), high: r2(x.high), pool: r6(x.pool), in_range: x.inRange, L: x.L, sa: x.sa, sb: x.sb })),
     },
   }
 }
