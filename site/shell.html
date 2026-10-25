@@ -110,12 +110,17 @@
     const fire = () => { for (const fn of subs) { try { fn() } catch (e) { console.error(e) } } }
     const norm = (list) => [...new Set(list.map((a) => a.trim().toLowerCase()))].sort().join(',')
     const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
+    // Deriving takes a noticeable moment on a phone; the periodic reloads reuse the last result.
+    let derived = null
     async function derive(list) {
+      const id = norm(list)
+      if (derived?.id === id) return derived
       const base = await crypto.subtle.importKey('raw', enc.encode(norm(list)), 'PBKDF2', false, ['deriveBits'])
       const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(SALT), iterations: ITERATIONS }, base, 384))
       const key = await crypto.subtle.importKey('raw', bits.slice(0, 32), 'AES-GCM', false, ['decrypt'])
       const name = [...bits.slice(32, 48)].map((b) => b.toString(16).padStart(2, '0')).join('')
-      return { name, key }
+      derived = { id, name, key }
+      return derived
     }
     // Resolves to the view's datasets, or null when no data file exists for these addresses.
     async function openView(list) {
@@ -142,7 +147,10 @@
       show(view, fresh)
       return true
     }
-    setInterval(() => { if (current) load(current).catch(() => {}) }, 10 * 60 * 1000) // pick up the hourly refresh
+    // Pick up the hourly refresh soon after it lands, and at once when the page comes back into view.
+    const reload = () => (current ? load(current).catch(() => false) : Promise.resolve(false))
+    setInterval(() => { if (!document.hidden) reload() }, 3 * 60 * 1000)
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reload() })
     let t
     addEventListener('resize', () => { clearTimeout(t); t = setTimeout(fire, 150) })
     return {
@@ -154,7 +162,7 @@
       resetParams() { fire() },
       scopes: () => (store.summary.status === 'ok' ? store.summary.data.map((r) => ({ key: r.scope, label: r.scope_label })) : []),
       colors: ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'],
-      refresh() { if (current) load(current) },
+      refresh: reload,
       setLink() {},
     }
   })()

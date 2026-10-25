@@ -8,7 +8,7 @@ import { buildLedger, isExternal, owedPrincipal } from '../lib/ledger.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf } from '../lib/prices.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, TOPIC } from '../lib/abi.mjs'
-import { WALLETS, START_DAY, TOKENS, NPMS, WETH, AERO, USDC as TOKEN_USDC, LABELS, GAUGE_IMPLS, STRATEGY, BRIDGES, OVERRIDES_FILE } from '../lib/config.mjs'
+import { WALLETS, START_DAY, TOKENS, NPMS, WETH, AERO, USDC as TOKEN_USDC, LABELS, GAUGE_IMPLS, STRATEGY, BRIDGES, OVERRIDES_FILE, PRICE } from '../lib/config.mjs'
 import { daysBetween, dayEndBlock, cstDay, tsOfBlock } from '../lib/time.mjs'
 import { priceAtTick, priceFromSqrt, amountsForLiquidity } from '../lib/univ3.mjs'
 
@@ -301,7 +301,7 @@ function ethCurve(keys) {
       if (x.token0 === WETH && x.token1 === TOKEN_USDC) {
         // Only live positions follow a curve and set the lowest bound: one whose liquidity was all
         // removed but not burned holds nothing, and must not keep the scope looking "in a range".
-        if (x.liquidity > 0n) curves.push({ key: k, L: Number(x.liquidity), sa: Math.sqrt(1.0001 ** x.tickLower), sb: Math.sqrt(1.0001 ** x.tickUpper), low: priceAtTick(x.tickLower, 18, 6), high: priceAtTick(x.tickUpper, 18, 6), pool: priceFromSqrt(x.sqrtP, 18, 6), inRange: x.inRange })
+        if (x.liquidity > 0n) curves.push({ key: k, L: Number(x.liquidity), sa: Math.sqrt(1.0001 ** x.tickLower), sb: Math.sqrt(1.0001 ** x.tickUpper), low: priceAtTick(x.tickLower, 18, 6), high: priceAtTick(x.tickUpper, 18, 6), pool: priceFromSqrt(x.sqrtP, 18, 6), inRange: x.inRange, address: x.pool, tickLower: x.tickLower, tickUpper: x.tickUpper })
         ethUnits += units(extra0, 18); fixedUsd += units(extra1, 6)
       } else {
         fixedUsd += valueOf(x.token0, x.amount0 + extra0, pNowCurve) + valueOf(x.token1, x.amount1 + extra1, pNowCurve)
@@ -434,7 +434,7 @@ function ethPrices(keys, invested, interest, value) {
     now_cost_eth_price: priceNow(invested + interest), now_breakeven_eth_price: priceNow(invested), rest_now_usd: r2(restNow),
     curve: {
       eth: c.ethUnits, usd: c.fixedUsd,
-      positions: [...c.curves].sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key) || a.low - b.low).map((x) => ({ wallet: label(x.key), low: r2(x.low), high: r2(x.high), pool: r6(x.pool), in_range: x.inRange, L: x.L, sa: x.sa, sb: x.sb })),
+      positions: [...c.curves].sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key) || a.low - b.low).map((x) => ({ wallet: label(x.key), low: r2(x.low), high: r2(x.high), pool: r6(x.pool), in_range: x.inRange, pool_address: x.address, tick_lower: x.tickLower, tick_upper: x.tickUpper, L: x.L, sa: x.sa, sb: x.sb })),
     },
   }
 }
@@ -465,6 +465,7 @@ for (const sc of SCOPES) {
     apr_days: finished.length, earn_7d_usd: r2(earnN), apr_7d: twLp > 0 ? r6((earnN / twLp) * 365) : null,
     lp_usd: last?.lp_usd ?? r2(n.lp), wallet_usd: last?.wallet_usd ?? r2(n.wallet), pending_usd: r2(n.pending), fees_unclaimed_usd: r2(n.feesNow),
     gas_eth: r6(gasEth), gas_usd: gasUsd, eth_usd: r2(pNow.eth), aero_usd: pNow.aero == null ? null : r6(pNow.aero),
+    eth_ref_pool: PRICE.ethPool, // the page reads it live; a public pool, not a wallet
     flagged: sum(sc.wallets, (k) => walletData[k].flagged.length + walletData[k].warnings.length),
     ...ethPrices(sc.wallets, invested, r2(rewards + fees), value),
   })

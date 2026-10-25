@@ -5,7 +5,11 @@
   .lp h1, .lp h2, .lp p { margin: 0; }
   .lp-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
   .lp-title { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: 28px; }
-  .lp-asof { width: 100%; font-size: 12px; color: var(--color-fg-muted); }
+  .lp-asof { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--color-fg-muted); }
+  .lp-live-on { color: var(--color-ok); }
+  .lp-refresh { font: inherit; font-size: 12px; border: 1px solid var(--color-border-line); background: transparent; color: var(--color-fg); padding: 2px 10px; border-radius: 8px; cursor: pointer; }
+  .lp-refresh:disabled { color: var(--color-fg-muted); cursor: default; }
+  .lp-refresh:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
   .lp-scope { display: inline-flex; border: 1px solid var(--color-border-line); border-radius: 10px; padding: 2px; gap: 2px; }
   .lp-scope button { font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--color-fg-muted); padding: 4px 14px; border-radius: 8px; cursor: pointer; }
   .lp-scope button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
@@ -84,7 +88,7 @@
   <header class="lp-head">
     <h1 class="lp-title">Aero LP 收益看板</h1>
     <div class="lp-scope" role="group" aria-label="查看范围" hidden></div>
-    <p class="lp-asof" id="lp-asof">—</p>
+    <p class="lp-asof"><span id="lp-asof">—</span><span id="lp-live"></span><button type="button" class="lp-refresh" id="lp-refresh">刷新</button></p>
   </header>
 
   <section class="lp-kpis" aria-label="主要数字">
@@ -140,7 +144,7 @@
   <section class="lp-about" id="about">
     <ul>
       <li>投入：从外面转进钱包的钱，按到账时的价格算美元。现值：钱包里的币、池子里的币和没领的奖励，按现在的价格算。</li>
-      <li>数据来自 Base 链上，大约每小时自动更新一次；按北京时间切日。</li>
+      <li>数据来自 Base 链上：利息和投入大约每小时更新一次；ETH 价格和跟着它变的数字（现值、盈亏、区间位置、撤出成本价）每 15 秒直接从链上读一次。按北京时间切日。</li>
       <li>ETH 成本价：把流动性撤出来，拿着手里所有的 ETH（撤出来的加上钱包里原有的），等 ETH 涨到成本价以上再全部卖出，投入的钱一分不少、目前为止的利息全部到手。按现在的持仓算；之后再赚的利息会同时算进手里的资产，所以成本价不变、回本价会更低。没卖的 AERO 按今天的价格算，卖出手续费没算。</li>
     </ul>
   </section>
@@ -459,16 +463,95 @@
     }));
   }
 
+  // ---------- live prices ----------
+  // Interest changes by the hour, the ETH price by the second. Between the hourly updates the page
+  // reads the current price of the reference pool and of each position's pool straight from Base
+  // (pool contracts only: no wallet address is sent) and redoes the price-driven figures from the
+  // published curve, the same way src/run.mjs values them. AERO stays at the hourly price.
+  const RPCS = ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'];
+  const LIVE_EVERY = 15000, LIVE_STALE = 120000;
+  let live = null, liveFailed = false, liveBusy = false, rpcFirst = 0;
+  async function rpcBatch(calls) {
+    let err;
+    for (let k = 0; k < RPCS.length; k++) {
+      const i = (rpcFirst + k) % RPCS.length, ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 6000);
+      try {
+        const r = await fetch(RPCS[i], { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(calls), signal: ctl.signal });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const out = await r.json();
+        if (!Array.isArray(out) || out.length !== calls.length || out.some((x) => x.error || typeof x.result !== 'string' || x.result.length < 130)) throw new Error('bad reply');
+        rpcFirst = i;
+        return out.sort((a, b) => a.id - b.id).map((x) => x.result);
+      } catch (e) { err = e; } finally { clearTimeout(t); }
+    }
+    throw err;
+  }
+  const slot0 = (hex) => {
+    const w = hex.slice(2), x = Number(BigInt('0x' + w.slice(0, 64))) / 2 ** 96;
+    return { price: x * x * 1e12, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) }; // WETH/USDC: 18 and 6 decimals
+  };
+  async function readLive() {
+    const S = dash.data('summary');
+    if (liveBusy || S.status !== 'ok' || !S.data.length) return;
+    const ref = S.data[0].eth_ref_pool;
+    if (!ref) return;
+    const pools = [...new Set(S.data.flatMap((r) => (r.curve?.positions ?? []).map((p) => p.pool_address)).filter(Boolean))];
+    const addrs = [ref, ...pools.filter((a) => a !== ref)];
+    liveBusy = true;
+    try {
+      const res = (await rpcBatch(addrs.map((to, id) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to, data: '0x3850c7bd' }, 'latest'] })))).map(slot0);
+      const hourly = S.data[0].eth_usd;
+      if (res.some((x) => !(x.price > hourly / 2 && x.price < hourly * 2))) throw new Error('implausible price');
+      live = { ref: res[0].price, pools: Object.fromEntries(addrs.map((a, i) => [a, res[i]])), at: Date.now() };
+      liveFailed = false;
+    } catch (e) {
+      liveFailed = true;
+      if (live && Date.now() - live.at > LIVE_STALE) live = null;
+    } finally { liveBusy = false; }
+    drawLive();
+  }
+  setInterval(() => { if (!document.hidden) readLive(); }, LIVE_EVERY);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) readLive(); });
+  const refreshBtn = $('lp-refresh');
+  refreshBtn.addEventListener('click', async () => {
+    refreshBtn.disabled = true; refreshBtn.textContent = '刷新中…';
+    try { await Promise.all([dash.refresh?.(), readLive()]); } finally { refreshBtn.disabled = false; refreshBtn.textContent = '刷新'; }
+  });
+
+  // A summary row as of the live prices; the row itself when there are none.
+  function applyLive(s) {
+    if (!live || !s?.curve) return s;
+    const ps = s.curve.positions.map((p) => {
+      const q = live.pools[p.pool_address];
+      return q ? { ...p, pool: q.price, in_range: q.tick >= p.tick_lower && q.tick < p.tick_upper } : p;
+    });
+    let value = s.curve.usd + s.curve.eth * live.ref;
+    for (const p of ps) { const [e, u] = amountsAt(p, p.pool); value += e * live.ref + u; }
+    const sides = ps.map((p) => (p.in_range ? 'in' : p.pool < (p.low + p.high) / 2 ? 'below' : 'above'));
+    const range_state = !sides.length ? 'none' : sides.every((x) => x === 'in') ? 'in' : sides.some((x) => x === 'in') ? 'part'
+      : sides.every((x) => x === 'below') ? 'below' : sides.every((x) => x === 'above') ? 'above' : 'gap';
+    const pnl = value - s.invested_usd;
+    return { ...s, eth_usd: live.ref, value_usd: value, pnl_usd: pnl, pnl_pct: s.invested_usd ? pnl / s.invested_usd : null, range_state, curve: { ...s.curve, positions: ps }, live_at: live.at };
+  }
+  const cstDay = (t) => new Date(t + 8 * 3600e3).toISOString().slice(0, 10);
+  // Today's row follows the live P&L too (its interest stays hourly).
+  function liveRows(rows, s) {
+    if (!s?.live_at) return rows;
+    return rows.map((r) => (r.scope === s.scope && r.partial && r.day === cstDay(s.live_at)
+      ? { ...r, pnl_usd: s.pnl_usd, pnl_day_usd: s.pnl_usd - (r.pnl_usd - r.pnl_day_usd), value_usd: s.value_usd, eth_usd: s.eth_usd } : r));
+  }
+
   // ---------- draw ----------
-  const current = () => { const S = dash.data('summary'); return S.status === 'ok' ? S.data.find((r) => r.scope === scope()) ?? null : null; };
-  dash.onData(() => {
-    const D = dash.data('daily');
-    const sc = scope();
-    drawScopes(sc);
-    const s = current();
-    $('lp-asof').textContent = s ? `数据截至 ${s.as_of_cst}（北京时间），大约每小时自动更新` : '—';
-    drawRange(s);
-    drawExit(s);
+  const current = () => { const S = dash.data('summary'); return applyLive(S.status === 'ok' ? S.data.find((r) => r.scope === scope()) ?? null : null); };
+  function drawHead(s) {
+    $('lp-asof').textContent = s ? `数据截至 ${s.as_of_cst}（北京时间），利息大约每小时更新` : '—';
+    const note = $('lp-live');
+    note.className = s?.live_at ? 'lp-live-on' : '';
+    note.textContent = !s ? '' : s.live_at
+      ? `价格实时 ${new Date(s.live_at).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}${liveFailed ? '（最新一次没取到）' : ''}`
+      : liveFailed ? '实时价格暂时取不到，用的是整点的价格' : '';
+  }
+  function drawNumbers(s) {
     const put = (id, text, v) => { const el = $(id); el.textContent = text; if (v !== undefined) tone(el, v); };
     put('k-value', s ? fmtUsd(s.value_usd) : '—');
     put('k-invested', s ? `投入 ${fmtUsd(s.invested_usd)}` : '—');
@@ -478,7 +561,28 @@
     put('k-earn-sub', s ? `${fmtNum(s.aero_earned, 2)} 个 AERO + 手续费 ${fmtUsd(s.fees_usd)}` : '—');
     put('k-yday', s ? fmtUsd(s.yesterday_usd) : '—');
     put('k-today', s ? `今日至今 ${fmtUsd(s.today_usd)}` : '—');
-    if (D.status === 'ok') { drawInterest(D.data, sc); drawPnl(D.data, sc); drawDays(D.data, sc); }
+  }
+  const tipOpen = (id) => [...document.querySelectorAll(`#${id} .lp-tip`)].some((t) => t.style.display === 'block');
+  function draw() {
+    const D = dash.data('daily');
+    const sc = scope();
+    drawScopes(sc);
+    const s = current();
+    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s);
+    if (D.status === 'ok') { const rows = liveRows(D.data, s); drawInterest(rows, sc); drawPnl(rows, sc); drawDays(rows, sc); }
+  }
+  // A live price changes only the price-driven parts; leave a chart alone while its tooltip is open.
+  function drawLive() {
+    const D = dash.data('daily');
+    const sc = scope();
+    const s = current();
+    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s);
+    if (D.status === 'ok') { const rows = liveRows(D.data, s); if (!tipOpen('pnl-chart')) drawPnl(rows, sc); drawDays(rows, sc); }
+  }
+  let liveStarted = false;
+  dash.onData(() => {
+    draw();
+    if (!liveStarted && dash.data('summary').status === 'ok') { liveStarted = true; readLive(); }
   });
 })();
 </script>

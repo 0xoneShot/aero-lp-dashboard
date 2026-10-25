@@ -38,7 +38,8 @@ test('the published ETH curve gives the same value and cost prices', { skip: !fs
     const [eb, ub] = holdAt(c, low * 0.999)
     close(eb, s.eth_units_below, 1e-4, `${s.scope} ETH below the range`)
     close(needed(eb, ub, target), s.cost_eth_price, 0.02, `${s.scope} cost price below the range`)
-    for (const p of c.positions) assert.ok(p.low < p.high && p.L > 0 && p.wallet && typeof p.in_range === 'boolean', `${s.scope}: position fields`)
+    for (const p of c.positions) assert.ok(p.low < p.high && p.L > 0 && p.wallet && typeof p.in_range === 'boolean' && /^0x[0-9a-f]{40}$/.test(p.pool_address) && p.tick_lower < p.tick_upper, `${s.scope}: position fields`)
+    assert.match(s.eth_ref_pool, /^0x[0-9a-f]{40}$/, `${s.scope}: reference pool`)
     // The state follows the positions' own pools.
     const inside = c.positions.filter((p) => p.in_range).length
     if (s.range_state === 'in') assert.equal(inside, c.positions.length, `${s.scope}: in`)
