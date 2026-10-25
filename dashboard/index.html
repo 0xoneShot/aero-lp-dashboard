@@ -74,7 +74,8 @@
   .lp th { color: var(--color-fg-muted); font-weight: 500; font-size: 12px; }
   .lp tr.lp-today td { font-style: italic; }
   .lp tr.lp-today td:not(.lp-pos):not(.lp-neg) { color: var(--color-fg-muted); }
-  .lp-chip { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-style: normal; color: var(--color-warn); border: 1px solid currentColor; }
+  .lp td.lp-wrap { white-space: normal; }
+  .lp-chip { display: inline-block; white-space: nowrap; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-style: normal; color: var(--color-warn); border: 1px solid currentColor; }
   @media (max-width: 560px) {
     .lp .lp-hide-sm { display: none; }
     .lp th, .lp td { padding: 8px 5px; }
@@ -388,7 +389,8 @@
     const days = rows.map((r) => r.day);
     const x = d3.scaleBand(days, [m.l, W - m.r]).paddingInner(0.3).paddingOuter(0.1);
     svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).tickValues(ticks).tickFormat(fmtTick).tickSize(-(W - m.l - m.r))).call(axisStyle);
-    const tickText = (d) => (period === 'month' ? `${Number(d.slice(5, 7))}月` : dayLabel(parseDay(d)));
+    const firstOf = Object.fromEntries(rows.map((r) => [r.day, r.first ?? r.day]));
+    const tickText = (d) => (period === 'month' ? `${Number(d.slice(5, 7))}月` : dayLabel(parseDay(period === 'week' ? firstOf[d] : d)));
     svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickValues(thinDays(days, W - m.l)).tickFormat(tickText).tickSize(0).tickPadding(8)).call(axisStyle);
     const bw = Math.min(28, x.bandwidth());
     for (const r of rows) {
@@ -469,6 +471,7 @@
       const day = cell(periodLabel(r, period) + (isNow ? { day: ' 今天', week: ' 本周', month: ' 本月' }[period] : ''));
       const chip = period === 'day' ? { out: '区间外', none: '无仓位' }[r.range_status] : r.out_days ? `区间外 ${r.out_days} 天` : r.none_days === r.n ? '无仓位' : '';
       if (chip) { const c = document.createElement('span'); c.className = 'lp-chip'; c.textContent = chip; day.appendChild(c); }
+      if (period !== 'day') day.classList.add('lp-wrap');
       tr.append(day, cell(fmtUsd(r.earn_usd)), cell(fmtSigned(r.pnl_day_usd), r.pnl_day_usd), cell(fmtSigned(r.pnl_usd), r.pnl_usd), cell(fmtUsd(r.eth_usd), undefined, 'lp-hide-sm'));
       return tr;
     }));
@@ -582,14 +585,18 @@
   const addDays = (d, n) => new Date(parseDay(d).getTime() + n * 864e5).toISOString().slice(0, 10);
   const periodOf = (d, period) => (period === 'month' ? d.slice(0, 7) : period === 'week' ? addDays(d, -((parseDay(d).getUTCDay() + 6) % 7)) : d);
   const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
-  const periodLabel = (r, period) => (period === 'month' ? r.day : period === 'week' ? (r.first === r.last ? md(r.first) : `${md(r.first)}–${md(r.last)}`) : r.day.slice(5));
+  // A week as its days (10/19–25, 9/28–10/4); a month cut short at its start says from when.
+  const weekLabel = (r) => (r.first === r.last ? md(r.first) : r.first.slice(5, 7) === r.last.slice(5, 7) ? `${md(r.first)}–${Number(r.last.slice(8, 10))}` : `${md(r.first)}–${md(r.last)}`);
+  const periodLabel = (r, period) => (period === 'month' ? (r.first.endsWith('-01') ? r.day : `${r.day}（${md(r.first)} 起）`) : period === 'week' ? weekLabel(r) : r.day.slice(5));
   const periodTitle = (r, period) => (period === 'day' ? r.day : periodLabel(r, period)) + (r.partial ? '（至今）' : '');
   const dayCount = (rows) => new Set(rows.map((r) => r.day)).size;
+  // The range in effect: one the data is too short for means all of it.
+  const rangeFor = (n) => (view.range !== 'all' && n > Number(view.range) ? view.range : 'all');
   // The last N days of the data (counted back from its newest day).
-  function lastDays(rows) {
-    if (view.range === 'all') return rows;
+  function lastDays(rows, range) {
+    if (range === 'all') return rows;
     const newest = rows.reduce((m, r) => (r.day > m ? r.day : m), '');
-    const from = addDays(newest, -(Number(view.range) - 1));
+    const from = addDays(newest, -(Number(range) - 1));
     return rows.filter((r) => r.day >= from);
   }
   // Rows grouped by week (Monday to Sunday) or month, per scope: interest and the period's P&L add
@@ -609,11 +616,10 @@
     }
     return out;
   }
-  function drawViewbar(all) {
-    const n = dayCount(all);
+  function drawViewbar(n, range) {
     $('viewbar').querySelectorAll('button[data-period]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.period === view.period)));
     $('range-switch').hidden = n <= 30;
-    $('range-switch').querySelectorAll('button').forEach((b) => { b.hidden = b.dataset.range === '90' && n <= 90; b.setAttribute('aria-pressed', String(b.dataset.range === view.range)); });
+    $('range-switch').querySelectorAll('button').forEach((b) => { b.hidden = b.dataset.range === '90' && n <= 90; b.setAttribute('aria-pressed', String(b.dataset.range === range)); });
     const word = { day: '日', week: '周', month: '月' }[view.period];
     $('interest-title').textContent = `每${word}利息收益`;
     $('days-title').textContent = `每${word}明细`;
@@ -621,9 +627,9 @@
     $('th-pnl-day').textContent = `当${word}盈亏`;
   }
   // The rows each part draws: live, cut to the chosen days, grouped for the bars and the table.
-  function viewRows(D, s) {
-    const all = liveRows(D.data, s), rows = lastDays(all);
-    return { all, rows, grouped: byPeriod(rows, view.period) };
+  function viewRows(D, s, sc) {
+    const all = liveRows(D.data, s), n = dayCount(all.filter((r) => r.scope === sc)), range = rangeFor(n), rows = lastDays(all, range);
+    return { n, range, rows, grouped: byPeriod(rows, view.period) };
   }
 
   // ---------- draw ----------
@@ -663,8 +669,8 @@
     const s = current();
     drawHead(s); drawRange(s); drawExit(s); drawNumbers(s);
     if (D.status === 'ok') {
-      const v = viewRows(D, s);
-      drawViewbar(v.all); drawInterest(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period);
+      const v = viewRows(D, s, sc);
+      drawViewbar(v.n, v.range); drawInterest(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period);
     }
   }
   // A live price changes only the price-driven parts; leave a chart alone while its tooltip is open.
@@ -673,7 +679,13 @@
     const sc = scope();
     const s = current();
     drawHead(s); drawRange(s); drawExit(s); drawNumbers(s);
-    if (D.status === 'ok') { const v = viewRows(D, s); if (!tipOpen('pnl-chart')) drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period); }
+    if (D.status === 'ok') {
+      const v = viewRows(D, s, sc);
+      drawViewbar(v.n, v.range);
+      if (!tipOpen('interest-chart')) drawInterest(v.grouped, sc, view.period);
+      if (!tipOpen('pnl-chart')) drawPnl(v.rows, sc);
+      drawDays(v.grouped, sc, view.period);
+    }
   }
   let liveStarted = false;
   dash.onData(() => {

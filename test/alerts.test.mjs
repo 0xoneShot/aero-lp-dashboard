@@ -36,6 +36,11 @@ test('near is re-armed only once the price is well away from the bound', () => {
   assert.deepEqual(out, [[], ['near'], [], [], [], ['near']])
 })
 
+test('a price hovering at a bound does not send out-and-back every hour', () => {
+  const { out } = run(null, [row(2200), row(2015), row(1999), row(2001), row(1999.5), row(2004), row(1998), row(2015), row(1999)])
+  assert.deepEqual(out, [[], ['near'], ['below'], [], [], [], [], ['back'], ['below']])
+})
+
 test('the cost alert fires when ETH held below the range rises past the cost price', () => {
   // Below the range the pool price and ETH price move together; a cost price under the range low.
   const below = (p) => row(p, { now_cost_eth_price: 1900, cost_eth_price: 1900 })

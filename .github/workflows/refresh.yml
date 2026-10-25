@@ -42,10 +42,12 @@ jobs:
       - run: npm ci
       - name: Mask wallet addresses in the logs
         run: node scripts/mask.mjs
+      # Keyed by run and attempt: a re-run then restores the newest cache through restore-keys, not
+      # its own first attempt's, so it neither rescans nor resends alerts later runs already sent.
       - uses: actions/cache/restore@v4
         with:
           path: cache.enc
-          key: scan-cache-${{ github.run_id }}
+          key: scan-cache-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: scan-cache-
       - run: node scripts/cache-crypt.mjs open
       - run: npm run update
@@ -58,10 +60,10 @@ jobs:
         run: node scripts/alerts.mjs
       - run: node scripts/cache-crypt.mjs seal
       - uses: actions/cache/save@v4
-        continue-on-error: true # a re-run of the same run id cannot save under its key again
+        continue-on-error: true # a lost save only means the next run rescans a little more
         with:
           path: cache.enc
-          key: scan-cache-${{ github.run_id }}
+          key: scan-cache-${{ github.run_id }}-${{ github.run_attempt }}
       - run: npm run build:site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

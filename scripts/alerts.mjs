@@ -26,7 +26,9 @@ if (process.argv[2] === '--test') {
 }
 
 const summary = JSON.parse(fs.readFileSync('out/summary.json', 'utf8'))
-const prev = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : null
+// An unreadable state starts over (records only), rather than stopping the alerts for good.
+let prev = null
+try { if (fs.existsSync(STATE)) prev = JSON.parse(fs.readFileSync(STATE, 'utf8')) } catch { console.log('alerts: state unreadable, starting over') }
 const { messages, state } = evaluate(summary, prev)
 let sent = 0
 if (topic) {
