@@ -129,7 +129,7 @@ const pNowCurve = prices[head]
 
 // A snapshot's static collect pays principal still owed first; only the rest is fees.
 function valueSnapshot(s, p) {
-  let wallet = 0, lp = 0, fees = 0
+  let wallet = 0, lp = 0, fees = 0, owedUsd = 0, lpEth = 0
   const tokens = {}, feeTok = {}
   for (const [asset, raw] of Object.entries(s.balances)) wallet += valueOf(asset, raw, p)
   for (const x of s.positions) {
@@ -138,12 +138,16 @@ function valueSnapshot(s, p) {
     const a0 = x.amount0 + o0, a1 = x.amount1 + o1, f0 = x.fees0 - o0, f1 = x.fees1 - o1
     lp += valueOf(x.token0, a0, p) + valueOf(x.token1, a1, p)
     fees += valueOf(x.token0, f0, p) + valueOf(x.token1, f1, p)
+    owedUsd += valueOf(x.token0, o0, p) + valueOf(x.token1, o1, p)
+    if (hodlKey(x.token0) === 'ETH') lpEth += units(a0, 18)
     tokens[x.token0] = (tokens[x.token0] ?? 0n) + a0; tokens[x.token1] = (tokens[x.token1] ?? 0n) + a1
     feeTok[x.token0] = (feeTok[x.token0] ?? 0n) + f0; feeTok[x.token1] = (feeTok[x.token1] ?? 0n) + f1
   }
   const pendingAero = units(s.positions.reduce((a, x) => a + x.pending, 0n) + s.deferred, 18)
   const pending = pendingAero * (p.aero ?? 0)
-  return { wallet, lp, fees, pending, pendingAero, total: wallet + lp + fees + pending, lpTokens: tokens, feeTok }
+  const live = s.positions.filter((x) => x.liquidity > 0n)
+  const range = !live.length ? 'none' : live.every((x) => x.inRange) ? 'in' : live.some((x) => x.inRange) ? 'part' : 'out'
+  return { wallet, lp, fees, pending, pendingAero, total: wallet + lp + fees + pending, lpTokens: tokens, feeTok, owedUsd, lpEth, range }
 }
 
 // ---------- per-wallet accounting ----------
@@ -247,6 +251,7 @@ function scopeAt(keys, b) {
   return {
     b, p, c, feeAccrued, hodl, pendingAero, aeroHeld,
     value: sum(vs, (v) => v.total), lp: sum(vs, (v) => v.lp), wallet: sum(vs, (v) => v.wallet), pending: sum(vs, (v) => v.pending), feesNow: sum(vs, (v) => v.fees),
+    owedUsd: sum(vs, (v) => v.owedUsd), lpEth: sum(vs, (v) => v.lpEth), range: vs.map((v) => v.range),
     aeroAccrued: units(c.claimed, 18) + pendingAero,
   }
 }
@@ -348,14 +353,17 @@ for (const w of WALLETS) {
       // The day's result: change in cumulative P&L, and the LP bundle's own result (its value change
       // after taking out what was added or removed); both include the day's interest.
       const pnlDay = r2(pnl - prevPnl)
-      const lpDay = r2((cur.lp + cur.feesNow + cur.pending) - (prev.lp + prev.feesNow + prev.pending) - lpNetFlow(w.key, prev.b, b))
+      // Principal removed but not yet collected counts as gone from the pool, as lpNetFlow books it.
+      const bundle = (x) => x.lp - x.owedUsd + x.feesNow + x.pending
+      const lpDay = r2(bundle(cur) - bundle(prev) - lpNetFlow(w.key, prev.b, b))
       prevPnl = pnl
       walletRows[w.key].push({
         day: d, scope: w.key, scope_label: w.label, partial: d === today,
         earn_aero: r6(earnAero), earn_aero_usd: r2(earnAeroUsd), earn_fee_usd: r2(feeUsd), earn_usd: r2(r2(earnAeroUsd) + r2(feeUsd)), earn_cum_usd: r2(cum),
         value_usd: value, invested_usd: invested, pnl_usd: r2(value - invested), hodl_usd: hodl, vs_hodl_usd: r2(value - hodl),
         lp_usd: r2(cur.lp), lp_tw_usd: r2(lpTimeWeighted(w.key, prev.b, b)), wallet_usd: r2(cur.wallet),
-        pnl_day_usd: pnlDay, price_day_usd: r2(pnlDay - earn), lp_pnl_day_usd: lpDay, lp_price_day_usd: r2(lpDay - earn),
+        pnl_day_usd: pnlDay, price_day_usd: r2(pnlDay - earn), lp_pnl_day_usd: lpDay, lp_price_day_usd: r2(lpDay - earn), idle_day_usd: r2(pnlDay - lpDay),
+        range_status: cur.range[0], lp_eth: r6(cur.lpEth),
         eth_usd: r2(cur.p.eth), aero_usd: cur.p.aero == null ? null : r6(cur.p.aero), block: b,
       })
     }
@@ -363,7 +371,8 @@ for (const w of WALLETS) {
   }
 }
 const daily = WALLETS.flatMap((w) => walletRows[w.key])
-const MONEY = ['earn_aero_usd', 'earn_fee_usd', 'earn_usd', 'earn_cum_usd', 'value_usd', 'invested_usd', 'hodl_usd', 'lp_usd', 'lp_tw_usd', 'wallet_usd', 'pnl_day_usd', 'price_day_usd', 'lp_pnl_day_usd', 'lp_price_day_usd']
+const MONEY = ['earn_aero_usd', 'earn_fee_usd', 'earn_usd', 'earn_cum_usd', 'value_usd', 'invested_usd', 'hodl_usd', 'lp_usd', 'lp_tw_usd', 'wallet_usd', 'pnl_day_usd', 'price_day_usd', 'lp_pnl_day_usd', 'lp_price_day_usd', 'idle_day_usd']
+const combineRange = (xs) => { const live = xs.filter((x) => x !== 'none'); return !live.length ? 'none' : live.every((x) => x === 'in') ? 'in' : live.every((x) => x === 'out') ? 'out' : 'part' }
 for (const d of days) {
   const rows = WALLETS.map((w) => walletRows[w.key].find((r) => r.day === d)).filter(Boolean)
   if (!rows.length) continue
@@ -374,28 +383,43 @@ for (const d of days) {
   t.pnl_usd = r2(t.value_usd - t.invested_usd)
   t.vs_hodl_usd = r2(t.value_usd - t.hodl_usd)
   t.eth_usd = rows[0].eth_usd; t.aero_usd = rows[0].aero_usd; t.block = rows[0].block
+  t.range_status = combineRange(rows.map((r) => r.range_status)); t.lp_eth = r6(sum(rows, (r) => r.lp_eth))
   daily.push(t)
 }
 
-// For the case the owners plan around: ETH falls below every range, the positions turn entirely
-// into ETH, and they hold that ETH until selling it. Then the holdings are a fixed amount of ETH
-// plus everything else, so
-//   ETH cost price  = price at which selling returns the money put in plus the interest earned;
-//   break-even      = price at which everything is worth exactly the money put in.
+// The ETH prices the owners decide sales by. Two cases:
+//  - after a fall below every range, liquidity withdrawn and the ETH held (their plan): a fixed amount
+//    of ETH plus everything else, so price = (target - everything else) / ETH;
+//  - liquidity left in the pool: the holdings follow the positions' curve back up, so the price is
+//    solved on that curve (as ETH recovers, the pool sells ETH again).
+// Targets: money put in plus the interest earned (cost price), or just the money put in (break-even).
+// With no position left (already withdrawn) the first case is simply the wallet as it is.
 function ethPrices(keys, invested, interest, value) {
   const c = ethCurve(keys)
   const now = pNow.eth
   if (Math.abs(c.value(now) - value) > 1) log(`ETH curve check off by ${(c.value(now) - value).toFixed(2)} USD`)
-  let cost = null, even = null
-  if (c.lowest != null) {
-    const p0 = c.lowest * 0.999, eth = c.ethAt(p0), rest = c.value(p0) - eth * p0
-    if (eth > 0) { cost = (invested + interest - rest) / eth; even = (invested - rest) / eth }
+  const p0 = c.lowest != null ? Math.min(c.lowest * 0.999, now) : now
+  const eth = c.ethAt(p0), rest = c.value(p0) - eth * p0
+  const price = (target) => {
+    if (eth < 0.05) return null
+    const x = (target - rest) / eth
+    return x > 0 ? r2(x) : 0 // 0: any ETH price already covers it
   }
+  const gap = (x) => (x == null ? null : r6(x / now - 1))
+  const cost = price(invested + interest), even = price(invested)
+  const holdCost = c.lowest != null ? c.solve(invested + interest) : null, holdEven = c.lowest != null ? c.solve(invested) : null
+  const rs = keys.map((k) => valueSnapshot(snaps[k][head], pNow).range)
+  const wallEth = keys.reduce((a, k) => a + units((snaps[k][head].balances.ETH ?? 0n) + (snaps[k][head].balances[WETH] ?? 0n), 18), 0)
+  const highest = Math.max(...keys.flatMap((k) => snaps[k][head].positions.filter((x) => x.liquidity > 0n).map((x) => priceAtTick(x.tickUpper, 18, 6))), -Infinity)
   return {
-    cost_eth_price: cost == null ? null : r2(cost), cost_gap_pct: cost == null ? null : r6(cost / now - 1),
-    breakeven_eth_price: even == null ? null : r2(even), breakeven_gap_pct: even == null ? null : r6(even / now - 1),
-    eth_units_now: r6(c.ethAt(now)), eth_units_below: c.lowest == null ? null : r6(c.ethAt(c.lowest * 0.999)),
-    range_low_min: c.lowest == null ? null : r2(c.lowest),
+    range_state: c.lowest == null ? 'none' : now < c.lowest ? 'below' : Number.isFinite(highest) && now >= highest ? 'above' : combineRange(rs) === 'in' ? 'in' : 'part',
+    cost_eth_price: cost, cost_gap_pct: gap(cost || null),
+    breakeven_eth_price: even, breakeven_gap_pct: gap(even || null),
+    hold_cost_eth_price: holdCost == null ? null : r2(holdCost), hold_cost_gap_pct: gap(holdCost),
+    hold_breakeven_eth_price: holdEven == null ? null : r2(holdEven), hold_breakeven_gap_pct: gap(holdEven),
+    eth_units_now: r6(c.ethAt(now)), eth_units_below: r6(eth), eth_units_wallet: r6(wallEth), eth_units_positions_below: r6(Math.max(0, eth - wallEth)),
+    range_low_min: c.lowest == null ? null : r2(c.lowest), range_high_max: Number.isFinite(highest) ? r2(highest) : null,
+    rest_usd: r2(rest),
   }
 }
 
