@@ -1,5 +1,5 @@
-# Every hour (and on every push to main): scan the tracked wallets, rebuild the datasets, check
-# them, build the website and publish it to GitHub Pages.
+# About every hour (started by tick.yml, and on every push to main): scan the tracked wallets,
+# rebuild the datasets, check them, build the website and publish it to GitHub Pages.
 # Which wallets are tracked comes from the AERO_CONFIG secret and never appears in this public
 # repository or its logs; the scan cache is encrypted before it goes into the Actions cache.
 name: Refresh and publish
@@ -13,6 +13,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write # to restart the hourly tick
   contents: write # only for the keep-alive commit below
   pages: write
   id-token: write
@@ -73,3 +74,12 @@ jobs:
             git commit --allow-empty -m "chore: keep the hourly refresh enabled"
             git push origin HEAD:main
           fi
+      # tick.yml starts these runs every hour; restart its chain if it has stopped.
+      - name: Keep the hourly tick going
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          open=$(gh run list --workflow tick.yml --limit 20 --json status --jq '[.[] | select(.status != "completed")] | length')
+          if [ "$open" = 0 ]; then gh workflow run tick.yml --ref main; fi

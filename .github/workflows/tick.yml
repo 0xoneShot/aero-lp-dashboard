@@ -1,0 +1,46 @@
+# GitHub's own hourly schedule has not fired for this repository, so this workflow keeps a chain of
+# its own. Each run waits in the "hourly" environment, whose wait timer (59 minutes) holds no runner,
+# then queues the next tick and starts the refresh. The refresh workflow restarts the chain when no
+# tick is queued or waiting.
+name: Hourly tick
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_wait:
+        description: Minutes this run must have waited before it continues the chain
+        default: '30'
+
+permissions:
+  actions: write
+
+concurrency:
+  group: tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: hourly
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      MIN_WAIT: ${{ inputs.min_wait || '30' }}
+    steps:
+      # Without the environment's wait timer the chain would spin; stop it instead.
+      - name: Check that this run waited
+        run: |
+          case "$MIN_WAIT" in ''|*[!0-9]*) echo "::error::min_wait must be a number"; exit 1 ;; esac
+          created=$(gh api "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+          waited=$(( ($(date +%s) - $(date -d "$created" +%s)) / 60 ))
+          echo "waited $waited minutes"
+          if [ "$waited" -lt "$MIN_WAIT" ]; then
+            echo "::error::the hourly environment's wait timer is missing or too short; the chain stops here"
+            exit 1
+          fi
+      - name: Queue the next tick, then start the refresh
+        run: |
+          retry() { for i in 1 2 3 4; do "$@" && return 0; sleep $(( i * 15 )); done; return 1; }
+          retry gh workflow run tick.yml --ref main
+          retry gh workflow run refresh.yml --ref main
