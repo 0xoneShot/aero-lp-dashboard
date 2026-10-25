@@ -453,6 +453,9 @@ for (const sc of SCOPES) {
   const rewards = r2(sum(rows, (r) => r.earn_aero_usd)), fees = r2(sum(rows, (r) => r.earn_fee_usd))
   const gasEth = units(n.c.gasWei, 18), gasUsd = r2(gasEth * pNow.eth)
   const pnl = r2(value - invested)
+  // What the earned AERO is worth now (held or unclaimed at today's price, sold or sent at the price
+  // then) against what it was worth when earned.
+  const aeroNow = (n.aeroHeld + n.pendingAero - units(n.c.aeroInUnits, 18)) * (pNow.aero ?? 0) + n.c.aeroOutUsd
   summary.push({
     scope: sc.key, scope_label: sc.label,
     as_of: new Date(tsOfBlock(head) * 1000).toISOString(), as_of_cst: cstTime(tsOfBlock(head)), as_of_block: head,
@@ -461,6 +464,7 @@ for (const sc of SCOPES) {
     hodl_usd: hodl, vs_hodl_usd: r2(value - hodl),
     earn_total_usd: r2(rewards + fees), rewards_usd: rewards, fees_usd: fees,
     aero_earned: r6(n.aeroAccrued), aero_claimed: r6(units(n.c.claimed, 18)), aero_pending: r6(n.pendingAero), aero_held: r6(n.aeroHeld),
+    aero_unsold_usd: r2((n.aeroHeld + n.pendingAero) * (pNow.aero ?? 0)), aero_drift_usd: r2(aeroNow - rewards),
     today_usd: last?.partial ? last.earn_usd : null, yesterday_usd: (last?.partial ? prevRow : last)?.earn_usd ?? null,
     apr_days: finished.length, earn_7d_usd: r2(earnN), apr_7d: twLp > 0 ? r6((earnN / twLp) * 365) : null,
     lp_usd: last?.lp_usd ?? r2(n.lp), wallet_usd: last?.wallet_usd ?? r2(n.wallet), pending_usd: r2(n.pending), fees_unclaimed_usd: r2(n.feesNow),
@@ -469,9 +473,7 @@ for (const sc of SCOPES) {
     flagged: sum(sc.wallets, (k) => walletData[k].flagged.length + walletData[k].warnings.length),
     ...ethPrices(sc.wallets, invested, r2(rewards + fees), value),
   })
-  // From money put in to value now. The AERO step is what the earned AERO is worth now (held or
-  // unclaimed at today's price, sold or sent at the price then) minus what it was worth when earned.
-  const aeroNow = (n.aeroHeld + n.pendingAero - units(n.c.aeroInUnits, 18)) * (pNow.aero ?? 0) + n.c.aeroOutUsd
+  // From money put in to value now; the AERO step is aeroNow minus what it was worth when earned.
   const steps = { market: r2(hodl - invested), rewards, fees, aero_drift: r2(aeroNow - rewards), gas: -gasUsd }
   steps.residual = r2(pnl - sum(Object.values(steps)))
   const order = [['invested', '净投入', invested], ['market', '带入资产涨跌', steps.market], ['rewards', 'AERO 奖励', steps.rewards], ['fees', '交易手续费', steps.fees],

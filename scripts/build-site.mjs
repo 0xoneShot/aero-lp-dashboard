@@ -19,7 +19,8 @@ fs.mkdirSync('public/vendor', { recursive: true })
 const shell = fs.readFileSync('site/shell.html', 'utf8')
 const page = fs.readFileSync('dashboard/index.html', 'utf8')
 if (!shell.includes('<!-- DASHBOARD -->')) throw new Error('site/shell.html has no <!-- DASHBOARD --> slot')
-fs.writeFileSync('public/index.html', shell.replace('<!-- DASHBOARD -->', page))
+// A function, so `$` sequences in the page are not read as replacement patterns.
+fs.writeFileSync('public/index.html', shell.replace('<!-- DASHBOARD -->', () => page))
 fs.copyFileSync('node_modules/d3/dist/d3.min.js', 'public/vendor/d3.min.js')
 fs.writeFileSync('public/robots.txt', 'User-agent: *\nDisallow: /\n')
 

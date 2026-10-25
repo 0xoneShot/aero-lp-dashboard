@@ -5,7 +5,7 @@ data/*.log
 .DS_Store
 out/
 public/
-config/wallets.local.json
+config/*.local.*
 test/local/
 data/research/
 data/seed/

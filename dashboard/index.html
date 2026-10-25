@@ -10,10 +10,12 @@
   .lp-refresh { font: inherit; font-size: 12px; border: 1px solid var(--color-border-line); background: transparent; color: var(--color-fg); padding: 2px 10px; border-radius: 8px; cursor: pointer; }
   .lp-refresh:disabled { color: var(--color-fg-muted); cursor: default; }
   .lp-refresh:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
-  .lp-scope { display: inline-flex; border: 1px solid var(--color-border-line); border-radius: 10px; padding: 2px; gap: 2px; }
-  .lp-scope button { font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--color-fg-muted); padding: 4px 14px; border-radius: 8px; cursor: pointer; }
-  .lp-scope button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
-  .lp-scope button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+  .lp-scope, .lp-switch { display: inline-flex; border: 1px solid var(--color-border-line); border-radius: 10px; padding: 2px; gap: 2px; }
+  .lp-scope button, .lp-switch button { font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--color-fg-muted); padding: 4px 14px; border-radius: 8px; cursor: pointer; }
+  .lp-scope button[aria-pressed="true"], .lp-switch button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
+  .lp-scope button:focus-visible, .lp-switch button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+  .lp-viewbar { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+  .lp-switch button { font-size: 12px; padding: 3px 12px; }
 
   .lp-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   @media (max-width: 860px) { .lp-pair { grid-template-columns: minmax(0, 1fr); } }
@@ -43,7 +45,7 @@
   .lp-exit-input input { font: inherit; width: 7.5em; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--color-border-line); background: var(--color-bg); color: var(--color-fg); }
   .lp-exit-input input:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
 
-  .lp-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .lp-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   @media (max-width: 760px) { .lp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .lp-kpi { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .lp-kpi-label { font-size: 12px; color: var(--color-fg-muted); }
@@ -96,6 +98,8 @@
     <div class="lp-kpi"><span class="lp-kpi-label">对比一直持有 USDC</span><span class="lp-kpi-value" id="k-pnl">—</span><span class="lp-kpi-sub" id="k-pnl-pct">—</span></div>
     <div class="lp-kpi"><span class="lp-kpi-label">累计利息收益</span><span class="lp-kpi-value" id="k-earn">—</span><span class="lp-kpi-sub" id="k-earn-sub">—</span></div>
     <div class="lp-kpi"><span class="lp-kpi-label">昨日利息收益</span><span class="lp-kpi-value" id="k-yday">—</span><span class="lp-kpi-sub" id="k-today">—</span></div>
+    <div class="lp-kpi"><span class="lp-kpi-label" id="k-apr-label">近 7 日年化</span><span class="lp-kpi-value" id="k-apr">—</span><span class="lp-kpi-sub" id="k-apr-sub">—</span></div>
+    <div class="lp-kpi"><span class="lp-kpi-label">没卖的 AERO</span><span class="lp-kpi-value" id="k-aero">—</span><span class="lp-kpi-sub" id="k-aero-sub">—</span><span class="lp-kpi-sub" id="k-aero-drift"></span></div>
   </section>
 
   <div class="lp-pair">
@@ -117,9 +121,14 @@
     </section>
   </div>
 
+  <div class="lp-viewbar" id="viewbar">
+    <div class="lp-switch" role="group" aria-label="按什么时间看"><button type="button" data-period="day">按天</button><button type="button" data-period="week">按周</button><button type="button" data-period="month">按月</button></div>
+    <div class="lp-switch" role="group" aria-label="看多长时间" id="range-switch"><button type="button" data-range="30">近 30 天</button><button type="button" data-range="90">近 90 天</button><button type="button" data-range="all">全部</button></div>
+  </div>
+
   <section class="lp-card" id="interest">
-    <h2>每日利息收益</h2>
-    <p class="lp-note">每天领到和待领的 AERO 奖励（按当天收盘价）加上交易手续费。今天是截至目前的数，颜色浅一些。</p>
+    <h2 id="interest-title">每日利息收益</h2>
+    <p class="lp-note">每天领到和待领的 AERO 奖励（按当天收盘价）加上交易手续费；按周、按月时是这些天加起来。今天是截至目前的数，颜色浅一些。</p>
     <div class="lp-legend" id="interest-legend"></div>
     <div class="lp-chart" id="interest-chart"></div>
   </section>
@@ -131,14 +140,14 @@
   </section>
 
   <section class="lp-card" id="days">
-    <h2>每日明细</h2>
+    <h2 id="days-title">每日明细</h2>
     <div class="lp-tablewrap">
       <table>
-        <thead><tr><th>日期</th><th>利息收益</th><th>当日盈亏</th><th>累计盈亏</th><th class="lp-hide-sm">ETH 价格</th></tr></thead>
+        <thead><tr><th id="th-day">日期</th><th>利息收益</th><th id="th-pnl-day">当日盈亏</th><th>累计盈亏</th><th class="lp-hide-sm">ETH 价格</th></tr></thead>
         <tbody id="days-body"></tbody>
       </table>
     </div>
-    <p class="lp-note">当日盈亏 = 当天累计盈亏的变化（利息加上 ETH 涨跌）；累计盈亏是对比一直持有 USDC。标“区间外”是当天收盘时价格不在仓位区间内；不在区间内的那段时间没有利息。</p>
+    <p class="lp-note">当日（当周、当月）盈亏 = 这段时间累计盈亏的变化（利息加上 ETH 涨跌）；累计盈亏是对比一直持有 USDC，按这段时间最后一天算。标“区间外”是当天收盘时价格不在仓位区间内；不在区间内的那段时间没有利息。</p>
   </section>
 
   <section class="lp-about" id="about">
@@ -356,7 +365,7 @@
   const toBox = (box, W, v) => (v / W) * box.clientWidth;
 
   // ---------- interest: bars, stacked by wallet on the combined view ----------
-  function drawInterest(rowsAll, sc) {
+  function drawInterest(rowsAll, sc, period) {
     const box = $('interest-chart');
     box.replaceChildren();
     const wallets = walletKeys();
@@ -379,7 +388,8 @@
     const days = rows.map((r) => r.day);
     const x = d3.scaleBand(days, [m.l, W - m.r]).paddingInner(0.3).paddingOuter(0.1);
     svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).tickValues(ticks).tickFormat(fmtTick).tickSize(-(W - m.l - m.r))).call(axisStyle);
-    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickValues(thinDays(days, W - m.l)).tickFormat((d) => dayLabel(parseDay(d))).tickSize(0).tickPadding(8)).call(axisStyle);
+    const tickText = (d) => (period === 'month' ? `${Number(d.slice(5, 7))}月` : dayLabel(parseDay(d)));
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickValues(thinDays(days, W - m.l)).tickFormat(tickText).tickSize(0).tickPadding(8)).call(axisStyle);
     const bw = Math.min(28, x.bandwidth());
     for (const r of rows) {
       let y0 = 0;
@@ -400,7 +410,7 @@
         const lines = keys.length > 1 ? keys.map((k) => [labelOf(k), fmtUsd(by[r.day]?.[k]?.earn_usd ?? 0)]) : [];
         lines.push(['利息收益', fmtUsd(r.earn_usd)], ['其中 AERO', `${fmtNum(r.earn_aero, 2)} 个`]);
         if (r.earn_fee_usd) lines.push(['其中手续费', fmtUsd(r.earn_fee_usd)]);
-        tip.show(toBox(box, W, x(r.day) + x.bandwidth() / 2), y(Math.max(0, r.earn_usd)), r.day + (r.partial ? '（今日至今）' : ''), lines);
+        tip.show(toBox(box, W, x(r.day) + x.bandwidth() / 2), y(Math.max(0, r.earn_usd)), periodTitle(r, period), lines);
       })
       .on('mouseleave', () => tip.hide());
   }
@@ -448,16 +458,17 @@
   }
 
   // ---------- table ----------
-  function drawDays(rowsAll, sc) {
+  function drawDays(rowsAll, sc, period) {
     const rows = rowsAll.filter((r) => r.scope === sc).slice().reverse();
+    const today = cstDay(Date.now());
     $('days-body').replaceChildren(...rows.map((r) => {
       const tr = document.createElement('tr');
       if (r.partial) tr.className = 'lp-today';
       const cell = (text, v, cls) => { const td = document.createElement('td'); td.textContent = text; if (v !== undefined) tone(td, v); if (cls) td.classList.add(cls); return td; };
-      const day = cell(r.partial && r.day === cstDay(Date.now()) ? `${r.day.slice(5)} 今天` : r.day.slice(5));
-      if (r.range_status === 'out' || r.range_status === 'none') {
-        const c = document.createElement('span'); c.className = 'lp-chip'; c.textContent = r.range_status === 'out' ? '区间外' : '无仓位'; day.appendChild(c);
-      }
+      const isNow = r.partial && (r.last ?? r.day) === today;
+      const day = cell(periodLabel(r, period) + (isNow ? { day: ' 今天', week: ' 本周', month: ' 本月' }[period] : ''));
+      const chip = period === 'day' ? { out: '区间外', none: '无仓位' }[r.range_status] : r.out_days ? `区间外 ${r.out_days} 天` : r.none_days === r.n ? '无仓位' : '';
+      if (chip) { const c = document.createElement('span'); c.className = 'lp-chip'; c.textContent = chip; day.appendChild(c); }
       tr.append(day, cell(fmtUsd(r.earn_usd)), cell(fmtSigned(r.pnl_day_usd), r.pnl_day_usd), cell(fmtSigned(r.pnl_usd), r.pnl_usd), cell(fmtUsd(r.eth_usd), undefined, 'lp-hide-sm'));
       return tr;
     }));
@@ -556,6 +567,65 @@
       { day, scope: s.scope, scope_label: s.scope_label, partial: true, earn_usd: null, earn_aero: null, earn_fee_usd: null, ...now, pnl_day_usd: s.pnl_usd - last.pnl_usd }];
   }
 
+  // ---------- by day, week or month; the last 30 / 90 days or all ----------
+  // A per-viewer choice, kept in this browser only.
+  const VIEW_KEY = 'aero-view';
+  const view = { period: 'day', range: 'all' };
+  try { const v = JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}'); if (['day', 'week', 'month'].includes(v.period)) view.period = v.period; if (['30', '90', 'all'].includes(v.range)) view.range = v.range; } catch {}
+  $('viewbar').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.period) view.period = b.dataset.period;
+    if (b.dataset.range) view.range = b.dataset.range;
+    try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {}
+    draw();
+  });
+  const addDays = (d, n) => new Date(parseDay(d).getTime() + n * 864e5).toISOString().slice(0, 10);
+  const periodOf = (d, period) => (period === 'month' ? d.slice(0, 7) : period === 'week' ? addDays(d, -((parseDay(d).getUTCDay() + 6) % 7)) : d);
+  const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+  const periodLabel = (r, period) => (period === 'month' ? r.day : period === 'week' ? (r.first === r.last ? md(r.first) : `${md(r.first)}–${md(r.last)}`) : r.day.slice(5));
+  const periodTitle = (r, period) => (period === 'day' ? r.day : periodLabel(r, period)) + (r.partial ? '（至今）' : '');
+  const dayCount = (rows) => new Set(rows.map((r) => r.day)).size;
+  // The last N days of the data (counted back from its newest day).
+  function lastDays(rows) {
+    if (view.range === 'all') return rows;
+    const newest = rows.reduce((m, r) => (r.day > m ? r.day : m), '');
+    const from = addDays(newest, -(Number(view.range) - 1));
+    return rows.filter((r) => r.day >= from);
+  }
+  // Rows grouped by week (Monday to Sunday) or month, per scope: interest and the period's P&L add
+  // up; the cumulative P&L and the ETH price are those of the period's last day.
+  function byPeriod(rows, period) {
+    if (period === 'day') return rows;
+    const out = [], at = new Map();
+    for (const r of rows) {
+      const key = periodOf(r.day, period), id = `${r.scope}|${key}`;
+      let g = at.get(id);
+      if (!g) { g = { scope: r.scope, scope_label: r.scope_label, day: key, first: r.day, earn_usd: null, earn_aero: null, earn_fee_usd: null, pnl_day_usd: 0, out_days: 0, none_days: 0, n: 0 }; at.set(id, g); out.push(g); }
+      // A day whose interest is not worked out yet (just after midnight) adds nothing; a period with only such days has none.
+      if (r.earn_usd != null) { g.earn_usd = (g.earn_usd ?? 0) + r.earn_usd; g.earn_aero = (g.earn_aero ?? 0) + (r.earn_aero ?? 0); g.earn_fee_usd = (g.earn_fee_usd ?? 0) + (r.earn_fee_usd ?? 0); }
+      g.pnl_day_usd += r.pnl_day_usd; g.pnl_usd = r.pnl_usd; g.eth_usd = r.eth_usd; g.last = r.day; g.partial = r.partial; g.n++;
+      if (r.range_status === 'out') g.out_days++;
+      if (r.range_status === 'none') g.none_days++;
+    }
+    return out;
+  }
+  function drawViewbar(all) {
+    const n = dayCount(all);
+    $('viewbar').querySelectorAll('button[data-period]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.period === view.period)));
+    $('range-switch').hidden = n <= 30;
+    $('range-switch').querySelectorAll('button').forEach((b) => { b.hidden = b.dataset.range === '90' && n <= 90; b.setAttribute('aria-pressed', String(b.dataset.range === view.range)); });
+    const word = { day: '日', week: '周', month: '月' }[view.period];
+    $('interest-title').textContent = `每${word}利息收益`;
+    $('days-title').textContent = `每${word}明细`;
+    $('th-day').textContent = { day: '日期', week: '周', month: '月份' }[view.period];
+    $('th-pnl-day').textContent = `当${word}盈亏`;
+  }
+  // The rows each part draws: live, cut to the chosen days, grouped for the bars and the table.
+  function viewRows(D, s) {
+    const all = liveRows(D.data, s), rows = lastDays(all);
+    return { all, rows, grouped: byPeriod(rows, view.period) };
+  }
+
   // ---------- draw ----------
   const current = () => { const S = dash.data('summary'); return applyLive(S.status === 'ok' ? S.data.find((r) => r.scope === scope()) ?? null : null); };
   function drawHead(s) {
@@ -576,6 +646,14 @@
     put('k-earn-sub', s ? `${fmtNum(s.aero_earned, 2)} 个 AERO + 手续费 ${fmtUsd(s.fees_usd)}` : '—');
     put('k-yday', s ? fmtUsd(s.yesterday_usd) : '—');
     put('k-today', s ? `今日至今 ${fmtUsd(s.today_usd)}` : '—');
+    put('k-apr-label', s?.apr_days && s.apr_days < 7 ? `近 ${s.apr_days} 日年化` : '近 7 日年化');
+    put('k-apr', s?.apr_7d != null ? `${(s.apr_7d * 100).toFixed(1)}%` : '—');
+    put('k-apr-sub', !s ? '—' : s.apr_days ? `这几天赚 ${fmtUsd(s.earn_7d_usd)}，按池子里的钱算` : '还没有完整的一天');
+    const unsold = s ? (s.aero_held ?? 0) + (s.aero_pending ?? 0) : null;
+    put('k-aero', s?.aero_unsold_usd != null ? fmtUsd(s.aero_unsold_usd) : '—');
+    put('k-aero-sub', s ? `${fmtNum(unsold, 0)} 个，其中待领 ${fmtNum(s.aero_pending, 0)}${s.aero_usd != null ? ` · 现价 $${Number(s.aero_usd).toFixed(3)}` : ''}` : '—');
+    const drift = s?.aero_drift_usd;
+    put('k-aero-drift', drift && Math.abs(drift) >= 0.5 ? `AERO 涨跌让利息${drift < 0 ? '少了' : '多了'} ${fmtUsd(Math.abs(drift))}` : '', drift);
   }
   const tipOpen = (id) => [...document.querySelectorAll(`#${id} .lp-tip`)].some((t) => t.style.display === 'block');
   function draw() {
@@ -584,7 +662,10 @@
     drawScopes(sc);
     const s = current();
     drawHead(s); drawRange(s); drawExit(s); drawNumbers(s);
-    if (D.status === 'ok') { const rows = liveRows(D.data, s); drawInterest(rows, sc); drawPnl(rows, sc); drawDays(rows, sc); }
+    if (D.status === 'ok') {
+      const v = viewRows(D, s);
+      drawViewbar(v.all); drawInterest(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period);
+    }
   }
   // A live price changes only the price-driven parts; leave a chart alone while its tooltip is open.
   function drawLive() {
@@ -592,7 +673,7 @@
     const sc = scope();
     const s = current();
     drawHead(s); drawRange(s); drawExit(s); drawNumbers(s);
-    if (D.status === 'ok') { const rows = liveRows(D.data, s); if (!tipOpen('pnl-chart')) drawPnl(rows, sc); drawDays(rows, sc); }
+    if (D.status === 'ok') { const v = viewRows(D, s); if (!tipOpen('pnl-chart')) drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period); }
   }
   let liveStarted = false;
   dash.onData(() => {

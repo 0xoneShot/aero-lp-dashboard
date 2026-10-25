@@ -50,6 +50,12 @@ jobs:
       - run: node scripts/cache-crypt.mjs open
       - run: npm run update
       - run: npm test
+      # Phone alerts (lib/alerts.mjs); a failure here must not hold back the publish.
+      - name: Send price alerts
+        continue-on-error: true
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: node scripts/alerts.mjs
       - run: node scripts/cache-crypt.mjs seal
       - uses: actions/cache/save@v4
         continue-on-error: true # a re-run of the same run id cannot save under its key again
