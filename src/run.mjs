@@ -8,7 +8,7 @@ import { buildLedger, isExternal, owedPrincipal } from '../lib/ledger.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf } from '../lib/prices.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, TOPIC } from '../lib/abi.mjs'
-import { WALLETS, START_DAY, TOKENS, NPMS, WETH, AERO, LABELS, GAUGE_IMPLS, STRATEGY, BRIDGES, OVERRIDES_FILE } from '../lib/config.mjs'
+import { WALLETS, START_DAY, TOKENS, NPMS, WETH, AERO, USDC as TOKEN_USDC, LABELS, GAUGE_IMPLS, STRATEGY, BRIDGES, OVERRIDES_FILE } from '../lib/config.mjs'
 import { daysBetween, dayEndBlock, cstDay, tsOfBlock } from '../lib/time.mjs'
 import { priceAtTick, priceFromSqrt, amountsForLiquidity } from '../lib/univ3.mjs'
 
@@ -125,6 +125,7 @@ const prices = {}
 const eventBlocks = WALLETS.flatMap((w) => ledger[w.key].events.map((e) => e.block)).filter((b) => b > openingBlock && b <= head)
 await pmap([...new Set([...blocks, ...eventBlocks])], 4, async (b) => { prices[b] = await pricesAt(b) })
 log(`valued ${blocks.length} day-end blocks and ${new Set(eventBlocks).size} event blocks`)
+const pNowCurve = prices[head]
 
 // A snapshot's static collect pays principal still owed first; only the rest is fees.
 function valueSnapshot(s, p) {
@@ -264,6 +265,60 @@ function lpTimeWeighted(key, startB, endB) {
   return endB > startB ? area / (endB - startB) : lp
 }
 
+// Money moved into (+) or out of (-) a wallet's LP bundle (positions, their uncollected fees and
+// unclaimed AERO) during (a, b], at the prices of each event: liquidity added or removed, fees
+// collected, rewards claimed, positions received or sent.
+function lpNetFlow(key, a, b) {
+  const D = walletData[key], inR = (x) => x.block > a && x.block <= b
+  let net = 0
+  for (const x of D.lpEvents.filter(inR)) net += x.type === 'increase' ? x.usd : -x.usd
+  for (const f of D.fees.filter(inR)) net -= valueOf(f.token0, f.amount0, prices[f.block]) + valueOf(f.token1, f.amount1, prices[f.block])
+  for (const r of D.rewards.filter(inR)) net -= units(r.amount, 18) * (prices[r.block].aero ?? 0)
+  for (const m of D.nftFlows.filter(inR)) net += m.dir === 'in' ? m.usd : -m.usd
+  return net
+}
+
+// Value of some wallets' current holdings as a function of the ETH price, with AERO and every
+// other token held at today's price. Concentrated positions follow their real curve: as ETH falls
+// they turn into ETH, below the range entirely. Used for the ETH cost and break-even prices.
+function ethCurve(keys) {
+  let fixedUsd = 0, ethUnits = 0
+  const curves = []
+  for (const k of keys) {
+    const s = snaps[k][head]
+    for (const [asset, raw] of Object.entries(s.balances)) {
+      if (hodlKey(asset) === 'ETH') ethUnits += units(raw, 18)
+      else fixedUsd += valueOf(asset, raw, pNowCurve)
+    }
+    fixedUsd += units(s.positions.reduce((a, x) => a + x.pending, 0n) + s.deferred, 18) * (pNowCurve.aero ?? 0)
+    for (const x of s.positions) {
+      const extra0 = x.fees0, extra1 = x.fees1 // owed principal plus fees, both paid by collect()
+      if (x.token0 === WETH && x.token1 === TOKEN_USDC) {
+        curves.push({ L: Number(x.liquidity), sa: Math.sqrt(1.0001 ** x.tickLower), sb: Math.sqrt(1.0001 ** x.tickUpper), low: priceAtTick(x.tickLower, 18, 6) })
+        ethUnits += units(extra0, 18); fixedUsd += units(extra1, 6)
+      } else {
+        fixedUsd += valueOf(x.token0, x.amount0 + extra0, pNowCurve) + valueOf(x.token1, x.amount1 + extra1, pNowCurve)
+      }
+    }
+  }
+  const amounts = (c, P) => {
+    const r = Math.sqrt(P * 1e-12)
+    if (r <= c.sa) return [c.L * (1 / c.sa - 1 / c.sb) / 1e18, 0]
+    if (r < c.sb) return [c.L * (1 / r - 1 / c.sb) / 1e18, c.L * (r - c.sa) / 1e6]
+    return [0, c.L * (c.sb - c.sa) / 1e6]
+  }
+  const value = (P) => fixedUsd + ethUnits * P + curves.reduce((a, c) => { const [e, u] = amounts(c, P); return a + e * P + u }, 0)
+  const ethAt = (P) => ethUnits + curves.reduce((a, c) => a + amounts(c, P)[0], 0)
+  // ETH price at which the holdings are worth `target`; null when no ETH price gets there.
+  const solve = (target) => {
+    let lo = 1, hi = 1e7
+    if (value(lo) >= target || value(hi) < target) return null
+    for (let i = 0; i < 200; i++) { const mid = Math.sqrt(lo * hi); if (value(mid) < target) lo = mid; else hi = mid }
+    return hi
+  }
+  return { value, ethAt, solve, lowest: curves.length ? Math.min(...curves.map((c) => c.low)) : null }
+}
+
 // ---------- datasets ----------
 const SCOPES = [...WALLETS.map((w) => ({ key: w.key, label: w.label, wallets: [w.key] })), { key: 'total', label: '合计', wallets: WALLETS.map((w) => w.key) }]
 const firstFlowDay = Object.fromEntries(WALLETS.map((w) => {
@@ -275,7 +330,7 @@ const firstFlowDay = Object.fromEntries(WALLETS.map((w) => {
 const walletRows = {}
 for (const w of WALLETS) {
   walletRows[w.key] = []
-  let prev = scopeAt([w.key], openingBlock), cum = 0
+  let prev = scopeAt([w.key], openingBlock), cum = 0, prevPnl = null
   for (const d of days) {
     const b = dayBlock(d)
     const cur = scopeAt([w.key], b)
@@ -288,11 +343,19 @@ for (const w of WALLETS) {
     cum += earnAeroUsd + feeUsd
     if (started) {
       const value = r2(cur.value), invested = r2(cur.c.invested), hodl = r2(cur.hodl)
+      const pnl = r2(value - invested), earn = r2(r2(earnAeroUsd) + r2(feeUsd))
+      prevPnl ??= 0 // the first reported day carries everything before it, so the days add up to the total
+      // The day's result: change in cumulative P&L, and the LP bundle's own result (its value change
+      // after taking out what was added or removed); both include the day's interest.
+      const pnlDay = r2(pnl - prevPnl)
+      const lpDay = r2((cur.lp + cur.feesNow + cur.pending) - (prev.lp + prev.feesNow + prev.pending) - lpNetFlow(w.key, prev.b, b))
+      prevPnl = pnl
       walletRows[w.key].push({
         day: d, scope: w.key, scope_label: w.label, partial: d === today,
         earn_aero: r6(earnAero), earn_aero_usd: r2(earnAeroUsd), earn_fee_usd: r2(feeUsd), earn_usd: r2(r2(earnAeroUsd) + r2(feeUsd)), earn_cum_usd: r2(cum),
         value_usd: value, invested_usd: invested, pnl_usd: r2(value - invested), hodl_usd: hodl, vs_hodl_usd: r2(value - hodl),
         lp_usd: r2(cur.lp), lp_tw_usd: r2(lpTimeWeighted(w.key, prev.b, b)), wallet_usd: r2(cur.wallet),
+        pnl_day_usd: pnlDay, price_day_usd: r2(pnlDay - earn), lp_pnl_day_usd: lpDay, lp_price_day_usd: r2(lpDay - earn),
         eth_usd: r2(cur.p.eth), aero_usd: cur.p.aero == null ? null : r6(cur.p.aero), block: b,
       })
     }
@@ -300,7 +363,7 @@ for (const w of WALLETS) {
   }
 }
 const daily = WALLETS.flatMap((w) => walletRows[w.key])
-const MONEY = ['earn_aero_usd', 'earn_fee_usd', 'earn_usd', 'earn_cum_usd', 'value_usd', 'invested_usd', 'hodl_usd', 'lp_usd', 'lp_tw_usd', 'wallet_usd']
+const MONEY = ['earn_aero_usd', 'earn_fee_usd', 'earn_usd', 'earn_cum_usd', 'value_usd', 'invested_usd', 'hodl_usd', 'lp_usd', 'lp_tw_usd', 'wallet_usd', 'pnl_day_usd', 'price_day_usd', 'lp_pnl_day_usd', 'lp_price_day_usd']
 for (const d of days) {
   const rows = WALLETS.map((w) => walletRows[w.key].find((r) => r.day === d)).filter(Boolean)
   if (!rows.length) continue
@@ -312,6 +375,28 @@ for (const d of days) {
   t.vs_hodl_usd = r2(t.value_usd - t.hodl_usd)
   t.eth_usd = rows[0].eth_usd; t.aero_usd = rows[0].aero_usd; t.block = rows[0].block
   daily.push(t)
+}
+
+// For the case the owners plan around: ETH falls below every range, the positions turn entirely
+// into ETH, and they hold that ETH until selling it. Then the holdings are a fixed amount of ETH
+// plus everything else, so
+//   ETH cost price  = price at which selling returns the money put in plus the interest earned;
+//   break-even      = price at which everything is worth exactly the money put in.
+function ethPrices(keys, invested, interest, value) {
+  const c = ethCurve(keys)
+  const now = pNow.eth
+  if (Math.abs(c.value(now) - value) > 1) log(`ETH curve check off by ${(c.value(now) - value).toFixed(2)} USD`)
+  let cost = null, even = null
+  if (c.lowest != null) {
+    const p0 = c.lowest * 0.999, eth = c.ethAt(p0), rest = c.value(p0) - eth * p0
+    if (eth > 0) { cost = (invested + interest - rest) / eth; even = (invested - rest) / eth }
+  }
+  return {
+    cost_eth_price: cost == null ? null : r2(cost), cost_gap_pct: cost == null ? null : r6(cost / now - 1),
+    breakeven_eth_price: even == null ? null : r2(even), breakeven_gap_pct: even == null ? null : r6(even / now - 1),
+    eth_units_now: r6(c.ethAt(now)), eth_units_below: c.lowest == null ? null : r6(c.ethAt(c.lowest * 0.999)),
+    range_low_min: c.lowest == null ? null : r2(c.lowest),
+  }
 }
 
 // Summary and attribution. Money figures come from the rounded daily rows, so the cards, the
@@ -341,6 +426,7 @@ for (const sc of SCOPES) {
     lp_usd: last?.lp_usd ?? r2(n.lp), wallet_usd: last?.wallet_usd ?? r2(n.wallet), pending_usd: r2(n.pending), fees_unclaimed_usd: r2(n.feesNow),
     gas_eth: r6(gasEth), gas_usd: gasUsd, eth_usd: r2(pNow.eth), aero_usd: pNow.aero == null ? null : r6(pNow.aero),
     flagged: sum(sc.wallets, (k) => walletData[k].flagged.length + walletData[k].warnings.length),
+    ...ethPrices(sc.wallets, invested, r2(rewards + fees), value),
   })
   // From money put in to value now. The AERO step is what the earned AERO is worth now (held or
   // unclaimed at today's price, sold or sent at the price then) minus what it was worth when earned.
@@ -350,6 +436,18 @@ for (const sc of SCOPES) {
   const order = [['invested', '净投入', invested], ['market', '带入资产涨跌', steps.market], ['rewards', 'AERO 奖励', steps.rewards], ['fees', '交易手续费', steps.fees],
     ['aero_drift', 'AERO 价格变动', steps.aero_drift], ['gas', 'Gas', steps.gas], ['residual', '无常损失与调仓', steps.residual], ['value', '现值', value]]
   order.forEach(([step, label, usd], i) => attribution.push({ scope: sc.key, step, label, usd: r2(usd), order: i + 1 }))
+}
+
+// What a WETH/USDC position turns into outside its range, and what was put into it: below the
+// range it is all ETH, so its cost price is the money put in divided by that ETH.
+function positionCost(key, x) {
+  const D = walletData[key]
+  const mine = (y) => y.npm === x.npm && y.tokenId === x.tokenId
+  const cost = sum(D.lpEvents.filter(mine), (y) => (y.type === 'increase' ? y.usd : -y.usd)) + sum(D.nftFlows.filter(mine), (m) => (m.dir === 'in' ? m.usd : -m.usd))
+  if (!(x.token0 === WETH && x.token1 === TOKEN_USDC)) return { cost_usd: r2(cost), eth_if_below: null, usdc_if_above: null, cost_price: null }
+  const L = Number(x.liquidity), sa = Math.sqrt(1.0001 ** x.tickLower), sb = Math.sqrt(1.0001 ** x.tickUpper)
+  const eth = L * (1 / sa - 1 / sb) / 1e18 + units(x.fees0, 18), usdc = L * (sb - sa) / 1e6 + units(x.fees1, 6)
+  return { cost_usd: r2(cost), eth_if_below: r6(eth), usdc_if_above: r2(usdc), cost_price: eth > 0 ? r2(cost / eth) : null }
 }
 
 // Current positions and holdings.
@@ -371,6 +469,7 @@ for (const w of WALLETS) {
       value_usd: r2(valueOf(x.token0, a0, pNow) + valueOf(x.token1, a1, pNow)),
       pending_aero: r6(pending), pending_usd: r2(pending * (pNow.aero ?? 0)),
       fees_usd: r2(valueOf(x.token0, x.fees0 - o0, pNow) + valueOf(x.token1, x.fees1 - o1, pNow)),
+      ...positionCost(w.key, x),
     })
   }
   for (const [asset, raw] of Object.entries(s.balances)) {
