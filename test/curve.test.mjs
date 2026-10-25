@@ -13,7 +13,7 @@ const amountsAt = (p, P) => {
   return [0, (p.L * (p.sb - p.sa)) / 1e6]
 }
 const holdAt = (c, P) => c.positions.reduce(([e, u], p) => { const [a, b] = amountsAt(p, P); return [e + a, u + b] }, [c.eth, c.usd])
-const needed = (e, u, target) => (e < 0.05 ? null : Math.max(0, (target - u) / e))
+const needed = (e, u, target) => (target <= u ? 0 : e < 0.05 ? null : (target - u) / e)
 const close = (a, b, tol, what) => {
   if (a == null || b == null) return assert.equal(a == null ? null : a, b == null ? null : b, what)
   assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`)
@@ -39,5 +39,10 @@ test('the published ETH curve gives the same value and cost prices', { skip: !fs
     close(eb, s.eth_units_below, 1e-4, `${s.scope} ETH below the range`)
     close(needed(eb, ub, target), s.cost_eth_price, 0.02, `${s.scope} cost price below the range`)
     for (const p of c.positions) assert.ok(p.low < p.high && p.L > 0 && p.wallet && typeof p.in_range === 'boolean', `${s.scope}: position fields`)
+    // The state follows the positions' own pools.
+    const inside = c.positions.filter((p) => p.in_range).length
+    if (s.range_state === 'in') assert.equal(inside, c.positions.length, `${s.scope}: in`)
+    if (s.range_state === 'part') assert.ok(inside > 0 && inside < c.positions.length, `${s.scope}: part`)
+    if (['below', 'above', 'gap'].includes(s.range_state)) assert.equal(inside, 0, `${s.scope}: ${s.range_state}`)
   }
 })

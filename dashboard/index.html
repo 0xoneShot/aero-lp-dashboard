@@ -191,8 +191,9 @@
     if (r < p.sb) return [(p.L * (1 / r - 1 / p.sb)) / 1e18, (p.L * (r - p.sa)) / 1e6];
     return [0, (p.L * (p.sb - p.sa)) / 1e6];
   };
-  // Price the ETH must reach for everything held to be worth `target`; 0 when any price already does.
-  const needed = (e, u, target) => (e < 0.05 ? null : Math.max(0, (target - u) / e));
+  // Price the ETH must reach for everything held to be worth `target`: 0 when the rest already is,
+  // null when there is too little ETH for a price to mean anything. Shown rounded up, as a floor to sell at.
+  const needed = (e, u, target) => (target <= u ? 0 : e < 0.05 ? null : Math.ceil((target - u) / e));
   const pct = (v) => `${(Math.abs(v) * 100).toFixed(1)}%`;
   const walletColor = (label) => { const i = walletKeys().findIndex((k) => labelOf(k) === label); return dash.colors[Math.max(0, i) % dash.colors.length]; };
 
@@ -227,17 +228,17 @@
     const several = new Set(ps.map((p) => p.wallet)).size > 1;
     for (const p of ps) {
       const row = el('div', 'lp-range');
-      const at0 = p.pool ?? now, inside = p.in_range ?? (at0 >= p.low && at0 < p.high);
+      const at0 = p.pool ?? now, inside = p.in_range ?? (at0 >= p.low && at0 < p.high), under = at0 < (p.low + p.high) / 2;
       const head = el('div', 'lp-range-head');
       head.append(el('span', null, `${several ? p.wallet + ' · ' : ''}${fmtUsd(p.low)} – ${fmtUsd(p.high)}`),
-        el('span', `lp-range-tag ${inside ? 'in' : 'out'}`, inside ? '区间内' : at0 < p.low ? '已跌破' : '已涨破'));
+        el('span', `lp-range-tag ${inside ? 'in' : 'out'}`, inside ? '区间内' : under ? '已跌破' : '已涨破'));
       const track = el('div', 'lp-track');
       const seg = el('i', 'lp-seg'); seg.style.left = at(p.low); seg.style.width = `calc(${at(p.high)} - ${at(p.low)})`; seg.style.background = walletColor(p.wallet);
       const mark = el('i', 'lp-now'); mark.style.left = at(at0); mark.title = `现价 ${fmtUsd(at0)}`;
       track.append(seg, mark);
       const [e, u] = amountsAt(p, at0);
       const where = inside ? `跌 ${pct((at0 - p.low) / at0)} 到下沿 · 涨 ${pct((p.high - at0) / at0)} 到上沿`
-        : at0 < p.low ? `要涨 ${pct((p.low - at0) / at0)} 才回到区间` : `要跌 ${pct((at0 - p.high) / at0)} 才回到区间`;
+        : under ? `要涨 ${pct(Math.max(0, p.low - at0) / at0)} 才回到区间` : `要跌 ${pct(Math.max(0, at0 - p.high) / at0)} 才回到区间`;
       row.append(head, track, el('div', 'lp-range-sub', `${where} · 池子里 ${fmtNum(e, 2)} ETH + ${fmtUsd(u)} USDC`));
       list.appendChild(row);
     }
@@ -263,7 +264,9 @@
     const [pe, pu] = withdraw, e = s.curve.eth + pe, u = s.curve.usd + pu;
     const c = needed(e, u, s.invested_usd + s.earn_total_usd), even = needed(e, u, s.invested_usd);
     const price = el('div', 'lp-exit-price');
-    if (c == null) price.append(el('span', 'lp-kpi-value', '—'), el('span', 'lp-exit-gap', '没有要卖的 ETH'));
+    const short = `比本金加利息少 ${fmtUsd(s.invested_usd + s.earn_total_usd - u)}`;
+    if (c == null) price.append(el('span', 'lp-kpi-value', '—'), el('span', 'lp-exit-gap', `没有要卖的 ETH；${short}`));
+    else if (c > 5 * s.eth_usd) price.append(el('span', 'lp-kpi-value', '—'), el('span', 'lp-exit-gap', `ETH 太少，靠卖 ETH 补不回；${short}`));
     else if (c === 0) price.append(el('span', 'lp-kpi-value', '已覆盖'), el('span', 'lp-exit-gap', '不用卖 ETH，其他资产已经够本金加利息'));
     else {
       const g = c / compare[1] - 1;
@@ -271,7 +274,7 @@
     }
     const got = pe < 0.005 && pu < 0.5 ? '' : `池子给你 ${pe >= 0.005 ? `${fmtNum(pe, 2)} ETH` : ''}${pe >= 0.005 && pu >= 0.5 ? ' + ' : ''}${pu >= 0.5 ? `${fmtUsd(pu)} USDC` : ''}；加上钱包里已有的，`;
     const parts = [`${sub ? sub + '。' : ''}${got}共 ${fmtNum(e, 2)} ETH、${fmtUsd(u)} 其他资产`];
-    if (c && even != null) parts.push(even === 0 ? '回本价：任何价格都不亏本金' : `回本价 ${fmtUsd(even)}`);
+    if (c && c <= 5 * s.eth_usd && even != null) parts.push(even === 0 ? '回本价：任何价格都不亏本金' : `回本价 ${fmtUsd(even)}`);
     b.append(h, price, el('div', 'lp-range-sub', parts.join(' · ')));
     return b;
   }

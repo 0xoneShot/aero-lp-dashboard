@@ -406,29 +406,24 @@ function ethPrices(keys, invested, interest, value) {
   if (Math.abs(c.value(now) - value) > 1) log(`ETH curve check off by ${(c.value(now) - value).toFixed(2)} USD`)
   const p0 = c.lowest != null ? Math.min(c.lowest * 0.999, now) : now
   const eth = c.ethAt(p0), rest = c.value(p0) - eth * p0
-  const price = (target) => {
-    if (eth < 0.05) return null
-    const x = (target - rest) / eth
-    return x > 0 ? r2(x) : 0 // 0: any ETH price already covers it
-  }
+  // 0: what is held besides ETH already covers it; null: too little ETH for a price to mean anything.
+  const price = (target) => (target <= rest ? 0 : eth < 0.05 ? null : r2((target - rest) / eth))
   const gap = (x) => (x == null ? null : r6(x / now - 1))
   const cost = price(invested + interest), even = price(invested)
   const holdCost = c.lowest != null ? c.solve(invested + interest) : null, holdEven = c.lowest != null ? c.solve(invested) : null
-  const rs = keys.map((k) => valueSnapshot(snaps[k][head], pNow).range)
+  // Each live position's side, from its own pool: the page draws the ranges and the withdrawal from
+  // the pool prices, so the state must agree with them rather than with the reference price.
+  const sides = c.curves.map((x) => (x.inRange ? 'in' : x.pool < (x.low + x.high) / 2 ? 'below' : 'above'))
   const wallEth = keys.reduce((a, k) => a + units((snaps[k][head].balances.ETH ?? 0n) + (snaps[k][head].balances[WETH] ?? 0n), 18), 0)
   const highest = Math.max(...keys.flatMap((k) => snaps[k][head].positions.filter((x) => x.liquidity > 0n).map((x) => priceAtTick(x.tickUpper, 18, 6))), -Infinity)
   // Withdrawing now pays each position out at its own pool's price, which can differ a little from
   // the reference price the rest is valued at.
   const [ethNow, restNow] = c.curves.reduce(([e, u], x) => { const [a, b] = c.amounts(x, x.pool); return [e + a, u + b] }, [c.ethUnits, c.fixedUsd])
-  const priceNow = (target) => {
-    if (ethNow < 0.05) return null
-    const x = (target - restNow) / ethNow
-    return x > 0 ? r2(x) : 0
-  }
+  const priceNow = (target) => (target <= restNow ? 0 : ethNow < 0.05 ? null : r2((target - restNow) / ethNow))
   const label = (k) => WALLETS.find((w) => w.key === k)?.label ?? k
   return {
-    // 'gap': the price sits between the lowest and the highest bound but every position is out of its own range.
-    range_state: c.lowest == null ? 'none' : now < c.lowest ? 'below' : Number.isFinite(highest) && now >= highest ? 'above' : combineRange(rs) === 'in' ? 'in' : combineRange(rs) === 'out' ? 'gap' : 'part',
+    // 'gap': every position is out of its own range, some below and some above.
+    range_state: !sides.length ? 'none' : sides.every((x) => x === 'in') ? 'in' : sides.some((x) => x === 'in') ? 'part' : sides.every((x) => x === 'below') ? 'below' : sides.every((x) => x === 'above') ? 'above' : 'gap',
     cost_eth_price: cost, cost_gap_pct: gap(cost || null),
     breakeven_eth_price: even, breakeven_gap_pct: gap(even || null),
     hold_cost_eth_price: holdCost == null ? null : r2(holdCost), hold_cost_gap_pct: gap(holdCost || null),
