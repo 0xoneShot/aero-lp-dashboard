@@ -93,7 +93,7 @@
         <tbody id="days-body"></tbody>
       </table>
     </div>
-    <p class="lp-note">当日盈亏 = 当天累计盈亏的变化（利息加上 ETH 涨跌）；累计盈亏是对比一直持有 USDC。标“区间外”的日子仓位不在价格区间内，没有利息。</p>
+    <p class="lp-note">当日盈亏 = 当天累计盈亏的变化（利息加上 ETH 涨跌）；累计盈亏是对比一直持有 USDC。标“区间外”是当天收盘时价格不在仓位区间内；不在区间内的那段时间没有利息。</p>
   </section>
 
   <section class="lp-about" id="about">
@@ -251,8 +251,8 @@
     }
     const tip = tipFor(box);
     svg.append('rect').attr('x', m.l).attr('width', W - m.l - m.r).attr('height', H - m.b).attr('fill', 'transparent')
-      .on('mousemove touchstart', (ev) => {
-        const [px] = d3.pointer(ev, svg.node());
+      .on('mousemove touchstart touchmove', (ev) => {
+        const [px] = d3.pointer(ev.touches ? ev.touches[0] : ev, svg.node());
         const i = Math.max(0, Math.min(days.length - 1, Math.floor((px - m.l - x.step() * x.paddingOuter()) / x.step())));
         const r = rows[i];
         const lines = keys.length > 1 ? keys.map((k) => [labelOf(k), fmtUsd(by[r.day]?.[k]?.earn_usd ?? 0)]) : [];
@@ -294,8 +294,8 @@
     const dot = svg.append('circle').attr('r', 4).attr('fill', color).style('display', 'none');
     const bis = d3.bisector((r) => r.date).center;
     svg.append('rect').attr('x', m.l).attr('width', W - m.l - m.r).attr('height', H - m.b).attr('fill', 'transparent')
-      .on('mousemove touchstart', (ev) => {
-        const [px] = d3.pointer(ev, svg.node());
+      .on('mousemove touchstart touchmove', (ev) => {
+        const [px] = d3.pointer(ev.touches ? ev.touches[0] : ev, svg.node());
         const r = rows[bis(rows, x.invert(px))];
         dot.style('display', null).attr('cx', x(r.date)).attr('cy', y(r.pnl_usd));
         tip.show(toBox(box, W, x(r.date)), y(r.pnl_usd), r.day + (r.partial ? '（今日至今）' : ''), [

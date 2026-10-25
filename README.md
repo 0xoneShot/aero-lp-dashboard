@@ -36,7 +36,7 @@ npm run serve       # 本地预览 http://localhost:4173
 
 `npm run update` 是增量的：`data/cache/` 记住已经扫描过的区块、交易和已结束日子的快照，日常一次只需几十秒。删除 `data/cache/` 会从配置的起始区块重新全量扫描（约 15 分钟）。
 
-`out/` 里的 JSON 就是网站的数据源（网站上的 `data/*.json`）：
+`out/` 里是完整的计算结果。网站只发布其中的 `summary.json` 和 `daily.json`，按地址加密成 `data/*.json`；其余文件不发布，留在本机核对用：
 
 | 文件 | 内容 |
 | --- | --- |
@@ -71,22 +71,22 @@ npm run serve       # 本地预览 http://localhost:4173
 - 单向、对手方是普通账户（交易所、个人）的算转入转出；
 - 被追踪钱包之间的算互转；
 - 有进有出（兑换）、带 LP 或奖励事件、或经过已知路由与结算合约（`lib/config.mjs` 的 `STRATEGY`）的，是策略内部的移动；
-- 和其它合约的单向往来**按资金进出计**并在看板流水里标黄，等人确认。
+- 和其它合约的单向往来**按资金进出计**并标记为待确认（`out/events.json` 里 `flagged: true`）。
 - 奖励只认真正 gauge（已知实现的克隆合约）发出、且 AERO 确实到账的事件；LP 事件按仓位当时的所有者记账。
 
-每个区块内部操作的美元净额应接近零，偏差超过 25 美元且超过 2% 的也会标黄。标黄的交易如果判断错了，在 `config/overrides.json` 里按交易哈希和钱包代号写上 `internal` 或 `transfer` 修正，重跑即可：
+每个区块内部操作的美元净额应接近零，偏差超过 25 美元且超过 2% 的也会标记。`npm run update` 结束时会打印待确认的笔数（Actions 日志里也有）；标记的交易如果判断错了，在 `config/overrides.json` 里按交易哈希和钱包代号写上 `internal` 或 `transfer` 修正，重跑即可：
 
 ```json
 { "0x交易哈希": { "w2": "internal" } }
 ```
 
-已知局限：挂单（限价单）如果隔天才成交，挂单期间托管在合约里的币不计入现值，相关交易会标黄。
+已知局限：挂单（限价单）如果隔天才成交，挂单期间托管在合约里的币不计入现值，相关交易会被标记。
 
 ## 目录
 
 - `lib/`：配置、RPC、链上读取、扫描、分类、定价、集中流动性数学
 - `src/update.mjs`：主流程
-- `dashboard/index.html`：看板页面（网站和 Claude 看板共用）
+- `dashboard/index.html`：看板页面
 - `site/shell.html`、`scripts/build-site.mjs`：网站外壳和构建
 - `.github/workflows/refresh.yml`：每小时刷新并发布
 - `test/`：合成场景测试和不变量检查
