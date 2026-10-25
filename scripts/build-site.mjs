@@ -6,7 +6,8 @@ import path from 'node:path'
 import { WALLETS } from '../lib/config.mjs'
 import { encryptView } from '../lib/views.mjs'
 
-const IDS = ['summary', 'daily', 'attribution', 'positions', 'holdings', 'events']
+// The page shows only the headline figures and the daily rows; nothing else is published.
+const IDS = ['summary', 'daily']
 const missing = IDS.filter((id) => !fs.existsSync(path.join('out', `${id}.json`)))
 if (missing.length) throw new Error(`no data in out/ for ${missing.join(', ')}: run npm run update first`)
 if (!WALLETS.length) throw new Error('no wallets configured (AERO_CONFIG or config/wallets.local.json)')

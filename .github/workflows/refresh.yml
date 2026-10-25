@@ -6,7 +6,8 @@ name: Refresh and publish
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    # GitHub registers the schedule from the default branch; editing this line re-registers it.
+    - cron: '11 * * * *'
   push:
     branches: [main]
   workflow_dispatch:

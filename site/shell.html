@@ -100,7 +100,7 @@
   // until someone enters wallet address(es): the matching data file's name and key are derived
   // from the addresses (PBKDF2, same parameters as lib/views.mjs), then it is fetched and decrypted.
   window.dash = (() => {
-    const IDS = ['summary', 'daily', 'attribution', 'positions', 'holdings', 'events']
+    const IDS = ['summary', 'daily']
     const ITERATIONS = 200000, SALT = 'aero-lp-dashboard/v1'
     const enc = new TextEncoder()
     let store = Object.fromEntries(IDS.map((id) => [id, { status: 'loading', data: [] }]))
