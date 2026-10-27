@@ -335,6 +335,12 @@ const firstFlowDay = Object.fromEntries(WALLETS.map((w) => {
   return [w.key, f ? cstDay(f.ts) : null]
 }))
 
+// The day's interest as a yearly rate on the money in the pool that day (time-weighted), and the AERO
+// each $1,000 in the pool earned per day; a day still under way is scaled to a whole one. Null while
+// there was too little in the pool for a rate to mean anything.
+const yearly = (usd, tw, days) => (tw >= 50 && days > 0 ? r6((usd / tw) * (365 / days)) : null)
+const per1k = (aero, tw, days) => (tw >= 50 && days > 0 ? r6(((aero / tw) * 1000) / days) : null)
+
 // Daily rows per wallet, rounded; the combined rows add up the rounded wallet rows so every view agrees.
 const walletRows = {}
 for (const w of WALLETS) {
@@ -353,6 +359,7 @@ for (const w of WALLETS) {
     if (started) {
       const value = r2(cur.value), invested = r2(cur.c.invested), hodl = r2(cur.hodl)
       const pnl = r2(value - invested), earn = r2(r2(earnAeroUsd) + r2(feeUsd))
+      const tw = lpTimeWeighted(w.key, prev.b, b), days = (tsOfBlock(b) - tsOfBlock(prev.b)) / 86400
       prevPnl ??= 0 // the first reported day carries everything before it, so the days add up to the total
       // The day's result: change in cumulative P&L, and the LP bundle's own result (its value change
       // after taking out what was added or removed); both include the day's interest.
@@ -365,7 +372,11 @@ for (const w of WALLETS) {
         day: d, scope: w.key, scope_label: w.label, partial: d === today,
         earn_aero: r6(earnAero), earn_aero_usd: r2(earnAeroUsd), earn_fee_usd: r2(feeUsd), earn_usd: r2(r2(earnAeroUsd) + r2(feeUsd)), earn_cum_usd: r2(cum),
         value_usd: value, invested_usd: invested, pnl_usd: r2(value - invested), hodl_usd: hodl, vs_hodl_usd: r2(value - hodl),
-        lp_usd: r2(cur.lp), lp_tw_usd: r2(lpTimeWeighted(w.key, prev.b, b)), wallet_usd: r2(cur.wallet),
+        lp_usd: r2(cur.lp), lp_tw_usd: r2(tw), span_days: r6(days), apr_day: yearly(earn, tw, days), aero_per_1k: per1k(earnAero, tw, days),
+        // How much of the day the money was in the pool: low on a day it went in or came out, when the
+        // rate rests on a few hours.
+        pool_share: Math.max(prev.lp, cur.lp) > 0 ? r6(Math.min(1, tw / Math.max(prev.lp, cur.lp))) : null,
+        wallet_usd: r2(cur.wallet),
         pnl_day_usd: pnlDay, price_day_usd: r2(pnlDay - earn), lp_pnl_day_usd: lpDay, lp_price_day_usd: r2(lpDay - earn), idle_day_usd: r2(pnlDay - lpDay),
         range_status: cur.range[0], lp_eth: r6(cur.lpEth),
         eth_usd: r2(cur.p.eth), aero_usd: cur.p.aero == null ? null : r6(cur.p.aero), block: b,
@@ -383,11 +394,15 @@ for (const d of days) {
   const t = { day: d, scope: 'total', scope_label: '合计', partial: d === today, earn_aero: r6(sum(rows, (r) => r.earn_aero)) }
   for (const f of MONEY) t[f] = r2(sum(rows, (r) => r[f]))
   // Holding transfers between the wallets is not a change of what the two hold together.
+let prevTotalLp = 0
   t.hodl_usd = r2(scopeAt(WALLETS.map((w) => w.key), rows[0].block).hodl)
   t.pnl_usd = r2(t.value_usd - t.invested_usd)
   t.vs_hodl_usd = r2(t.value_usd - t.hodl_usd)
   t.eth_usd = rows[0].eth_usd; t.aero_usd = rows[0].aero_usd; t.block = rows[0].block
   t.range_status = combineRange(rows.map((r) => r.range_status)); t.lp_eth = r6(sum(rows, (r) => r.lp_eth))
+  t.span_days = rows[0].span_days; t.apr_day = yearly(t.earn_usd, t.lp_tw_usd, t.span_days); t.aero_per_1k = per1k(t.earn_aero, t.lp_tw_usd, t.span_days)
+  t.pool_share = Math.max(prevTotalLp, t.lp_usd) > 0 ? r6(Math.min(1, t.lp_tw_usd / Math.max(prevTotalLp, t.lp_usd))) : null
+  prevTotalLp = t.lp_usd
   daily.push(t)
 }
 

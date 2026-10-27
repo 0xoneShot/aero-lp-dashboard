@@ -61,6 +61,8 @@
   .lp-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .lp-sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
   .lp-chart { position: relative; min-height: 220px; }
+  .lp-chart.lp-chart-sm { min-height: 170px; }
+  .lp-subhead { font-size: 14px; font-weight: 600; margin: 10px 0 0; }
   .lp-chart svg { display: block; overflow: visible; }
   .lp-tip { position: absolute; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: 10px; box-shadow: var(--cds-shadow-popover); padding: 6px 10px; font-size: 12px; white-space: nowrap; z-index: 2; display: none; }
   .lp-tip .t { color: var(--cds-text-secondary); margin-bottom: 2px; }
@@ -132,6 +134,9 @@
     <p class="lp-note">每天领到和待领的 AERO 奖励（按当天收盘价）加上交易手续费；按周、按月时是这些天加起来。今天是截至目前的数，颜色浅一些。</p>
     <div class="lp-legend" id="interest-legend"></div>
     <div class="lp-chart" id="interest-chart"></div>
+    <h3 class="lp-subhead" id="apr-title">每日年化</h3>
+    <p class="lp-note">当天利息 ÷ 当天池子里的平均资金 × 365，看收益率本身有没有变低；今天按已经过去的时间折算成一整天。指上去能看到当天的 AERO 价格和每 $1,000 分到多少 AERO：收益率变低，是 AERO 跌了还是分得少了，一看便知。</p>
+    <div class="lp-chart lp-chart-sm" id="apr-chart"></div>
   </section>
 
   <section class="lp-card" id="vs-usdc">
@@ -144,7 +149,7 @@
     <h2 id="days-title">每日明细</h2>
     <div class="lp-tablewrap">
       <table>
-        <thead><tr><th id="th-day">日期</th><th>利息收益</th><th id="th-pnl-day">当日盈亏</th><th>累计盈亏</th><th class="lp-hide-sm">ETH 价格</th></tr></thead>
+        <thead><tr><th id="th-day">日期</th><th>利息收益</th><th class="lp-hide-sm">年化</th><th id="th-pnl-day">当日盈亏</th><th>累计盈亏</th><th class="lp-hide-sm">ETH 价格</th></tr></thead>
         <tbody id="days-body"></tbody>
       </table>
     </div>
@@ -173,6 +178,7 @@
   const fmtSigned = (v) => (v == null ? '—' : sign(v) + fmtUsd(Math.abs(v)));
   const fmtPct = (v) => (v == null ? '—' : sign(v) + (Math.abs(v) * 100).toFixed(2) + '%');
   const fmtNum = (v, d) => (v == null ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: d }));
+  const fmtApr = (v) => (v == null || !Number.isFinite(v) ? '—' : `${(v * 100).toFixed(1)}%`);
   const fmtTick = (v) => (Number.isInteger(v) ? usd0.format(v) : fmtUsd(v));
   const tone = (el, v) => { el.classList.toggle('lp-pos', v > 0); el.classList.toggle('lp-neg', v < 0); };
   const parseDay = (d) => new Date(d + 'T00:00:00Z');
@@ -417,6 +423,67 @@
       .on('mouseleave', () => tip.hide());
   }
 
+  // ---------- yearly rate of the interest: one line, its own axis ----------
+  function drawApr(rowsAll, sc, period) {
+    const box = $('apr-chart');
+    box.replaceChildren();
+    const word = { day: '日', week: '周', month: '月' }[period];
+    $('apr-title').textContent = `每${word}年化`;
+    const rows = rowsAll.filter((r) => r.scope === sc);
+    const pts = rows.filter((r) => Number.isFinite(r.apr_day));
+    if (!pts.length) { box.textContent = '还没有能算年化的日子。'; return; }
+    const wallets = walletKeys();
+    const color = sc === 'total' ? 'var(--color-fg)' : dash.colors[Math.max(0, wallets.indexOf(sc)) % dash.colors.length];
+    const W = box.clientWidth || 600, H = 170, m = { t: 10, b: 24 };
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+    // The axis follows the usual days; a day far above them (typically money that went in late that
+    // day, its rate resting on a few hours) sits on the top edge as a triangle, its real rate in the tooltip.
+    // Usual = the median of the days that earned; out-of-range days at 0% must not pull the axis down.
+    const med = d3.median(pts.filter((r) => r.apr_day > 0), (r) => r.apr_day) || 0, max = d3.max(pts, (r) => r.apr_day) || 1;
+    const cap = max > med * 2.5 && med > 0 ? med * 2.5 : max;
+    const y = d3.scaleLinear([0, cap * 1.1], [H - m.b, m.t]).nice();
+    const yv = (v) => y(Math.min(v, cap * 1.1));
+    const short = (r) => r.pool_share != null && r.pool_share < 0.5;
+    const ticks = y.ticks(3), pctTick = (v) => `${Math.round(v * 100)}%`;
+    m.l = Math.ceil(measure(svg, ticks.map(pctTick))) + 8;
+    const last = pts.at(-1);
+    m.r = Math.ceil(measure(svg, [fmtApr(last.apr_day)])) + 12;
+    const days = rows.map((r) => r.day);
+    const x = d3.scaleBand(days, [m.l, W - m.r]).paddingInner(0.3).paddingOuter(0.1);
+    const cx = (r) => x(r.day) + x.bandwidth() / 2;
+    const firstOf = Object.fromEntries(rows.map((r) => [r.day, r.first ?? r.day]));
+    const tickText = (d) => (period === 'month' ? `${Number(d.slice(5, 7))}月` : dayLabel(parseDay(period === 'week' ? firstOf[d] : d)));
+    svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).tickValues(ticks).tickFormat(pctTick).tickSize(-(W - m.l - m.r))).call(axisStyle);
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickValues(thinDays(days, W - m.l)).tickFormat(tickText).tickSize(0).tickPadding(8)).call(axisStyle);
+    svg.append('path').datum(rows).attr('d', d3.line().defined((r) => Number.isFinite(r.apr_day)).x(cx).y((r) => yv(r.apr_day)))
+      .attr('fill', 'none').attr('stroke', color).attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
+    for (const r of pts) {
+      const hollow = r.partial || short(r);
+      if (r.apr_day > cap * 1.1) {
+        const X = cx(r), Y = yv(r.apr_day);
+        svg.append('path').attr('d', `M${X - 5},${Y + 4}L${X},${Y - 4}L${X + 5},${Y + 4}Z`).attr('stroke', color).attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('fill', hollow ? 'var(--color-panel)' : color);
+      } else {
+        svg.append('circle').attr('cx', cx(r)).attr('cy', yv(r.apr_day)).attr('r', 4).attr('stroke', color).attr('stroke-width', 2).attr('fill', hollow ? 'var(--color-panel)' : color);
+      }
+    }
+    svg.append('text').attr('x', cx(last) + 8).attr('y', yv(last.apr_day)).attr('dy', '0.35em').attr('fill', 'var(--color-fg)').style('font-size', '12px').text(fmtApr(last.apr_day));
+    const tip = tipFor(box);
+    const dot = svg.append('line').attr('y1', m.t).attr('y2', H - m.b).attr('stroke', 'var(--cds-chart-axis)').style('display', 'none');
+    svg.append('rect').attr('x', m.l).attr('width', W - m.l - m.r).attr('height', H - m.b).attr('fill', 'transparent')
+      .on('mousemove touchstart touchmove', (ev) => {
+        const [px] = d3.pointer(ev.touches ? ev.touches[0] : ev, svg.node());
+        const i = Math.max(0, Math.min(days.length - 1, Math.floor((px - m.l - x.step() * x.paddingOuter()) / x.step())));
+        const r = rows[i];
+        dot.style('display', null).attr('x1', cx(r)).attr('x2', cx(r));
+        const lines = [['年化', fmtApr(r.apr_day)], ['利息', fmtUsd(r.earn_usd)], ['池子里平均', fmtUsd(r.lp_tw_usd)]];
+        if (r.aero_per_1k != null) lines.push(['每 $1,000 每天分到', `${fmtNum(r.aero_per_1k, 2)} AERO`]);
+        if (period === 'day' && r.aero_usd != null) lines.push(['AERO 价格', `$${Number(r.aero_usd).toFixed(3)}`]);
+        if (period === 'day' && short(r)) lines.push(['', '当天中途加了或撤了钱，按当天平均资金折算，波动可能大']);
+        tip.show(toBox(box, W, cx(r)), Number.isFinite(r.apr_day) ? yv(r.apr_day) : H / 2, periodTitle(r, period), lines);
+      })
+      .on('mouseleave', () => { tip.hide(); dot.style('display', 'none'); });
+  }
+
   // ---------- P&L against holding USDC: a line around zero ----------
   function drawPnl(rowsAll, sc) {
     const box = $('pnl-chart');
@@ -472,7 +539,7 @@
       const chip = period === 'day' ? { out: '区间外', none: '无仓位' }[r.range_status] : r.out_days ? `区间外 ${r.out_days} 天` : r.none_days === r.n ? '无仓位' : '';
       if (chip) { const c = document.createElement('span'); c.className = 'lp-chip'; c.textContent = chip; day.appendChild(c); }
       if (period !== 'day') day.classList.add('lp-wrap');
-      tr.append(day, cell(fmtUsd(r.earn_usd)), cell(fmtSigned(r.pnl_day_usd), r.pnl_day_usd), cell(fmtSigned(r.pnl_usd), r.pnl_usd), cell(fmtUsd(r.eth_usd), undefined, 'lp-hide-sm'));
+      tr.append(day, cell(fmtUsd(r.earn_usd)), cell(fmtApr(r.apr_day), undefined, 'lp-hide-sm'), cell(fmtSigned(r.pnl_day_usd), r.pnl_day_usd), cell(fmtSigned(r.pnl_usd), r.pnl_usd), cell(fmtUsd(r.eth_usd), undefined, 'lp-hide-sm'));
       return tr;
     }));
   }
@@ -607,12 +674,20 @@
     for (const r of rows) {
       const key = periodOf(r.day, period), id = `${r.scope}|${key}`;
       let g = at.get(id);
-      if (!g) { g = { scope: r.scope, scope_label: r.scope_label, day: key, first: r.day, earn_usd: null, earn_aero: null, earn_fee_usd: null, pnl_day_usd: 0, out_days: 0, none_days: 0, n: 0 }; at.set(id, g); out.push(g); }
+      if (!g) { g = { scope: r.scope, scope_label: r.scope_label, day: key, first: r.day, earn_usd: null, earn_aero: null, earn_fee_usd: null, pnl_day_usd: 0, out_days: 0, none_days: 0, n: 0, lp_days: 0, days: 0 }; at.set(id, g); out.push(g); }
+      if (r.earn_usd != null && r.lp_tw_usd != null && r.span_days) { g.lp_days += r.lp_tw_usd * r.span_days; g.days += r.span_days; }
       // A day whose interest is not worked out yet (just after midnight) adds nothing; a period with only such days has none.
       if (r.earn_usd != null) { g.earn_usd = (g.earn_usd ?? 0) + r.earn_usd; g.earn_aero = (g.earn_aero ?? 0) + (r.earn_aero ?? 0); g.earn_fee_usd = (g.earn_fee_usd ?? 0) + (r.earn_fee_usd ?? 0); }
       g.pnl_day_usd += r.pnl_day_usd; g.pnl_usd = r.pnl_usd; g.eth_usd = r.eth_usd; g.last = r.day; g.partial = r.partial; g.n++;
       if (r.range_status === 'out') g.out_days++;
       if (r.range_status === 'none') g.none_days++;
+    }
+    // The period's yearly rate: its interest over the dollar-days in the pool.
+    for (const g of out) {
+      const ok = g.earn_usd != null && g.lp_days >= 50;
+      g.apr_day = ok ? (g.earn_usd / g.lp_days) * 365 : null;
+      g.aero_per_1k = ok ? (g.earn_aero / g.lp_days) * 1000 : null;
+      g.lp_tw_usd = g.days ? g.lp_days / g.days : null;
     }
     return out;
   }
@@ -670,7 +745,7 @@
     drawHead(s); drawRange(s); drawExit(s); drawNumbers(s);
     if (D.status === 'ok') {
       const v = viewRows(D, s, sc);
-      drawViewbar(v.n, v.range); drawInterest(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period);
+      drawViewbar(v.n, v.range); drawInterest(v.grouped, sc, view.period); drawApr(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period);
     }
   }
   // A live price changes only the price-driven parts; leave a chart alone while its tooltip is open.
@@ -683,6 +758,7 @@
       const v = viewRows(D, s, sc);
       drawViewbar(v.n, v.range);
       if (!tipOpen('interest-chart')) drawInterest(v.grouped, sc, view.period);
+      if (!tipOpen('apr-chart')) drawApr(v.grouped, sc, view.period);
       if (!tipOpen('pnl-chart')) drawPnl(v.rows, sc);
       drawDays(v.grouped, sc, view.period);
     }
