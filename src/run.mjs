@@ -388,13 +388,13 @@ for (const w of WALLETS) {
 const daily = WALLETS.flatMap((w) => walletRows[w.key])
 const MONEY = ['earn_aero_usd', 'earn_fee_usd', 'earn_usd', 'earn_cum_usd', 'value_usd', 'invested_usd', 'hodl_usd', 'lp_usd', 'lp_tw_usd', 'wallet_usd', 'pnl_day_usd', 'price_day_usd', 'lp_pnl_day_usd', 'lp_price_day_usd', 'idle_day_usd']
 const combineRange = (xs) => { const live = xs.filter((x) => x !== 'none'); return !live.length ? 'none' : live.every((x) => x === 'in') ? 'in' : live.every((x) => x === 'out') ? 'out' : 'part' }
+let prevTotalLp = 0 // the combined LP value at the previous day's close, for pool_share
 for (const d of days) {
   const rows = WALLETS.map((w) => walletRows[w.key].find((r) => r.day === d)).filter(Boolean)
   if (!rows.length) continue
   const t = { day: d, scope: 'total', scope_label: '合计', partial: d === today, earn_aero: r6(sum(rows, (r) => r.earn_aero)) }
   for (const f of MONEY) t[f] = r2(sum(rows, (r) => r[f]))
   // Holding transfers between the wallets is not a change of what the two hold together.
-let prevTotalLp = 0
   t.hodl_usd = r2(scopeAt(WALLETS.map((w) => w.key), rows[0].block).hodl)
   t.pnl_usd = r2(t.value_usd - t.invested_usd)
   t.vs_hodl_usd = r2(t.value_usd - t.hodl_usd)
