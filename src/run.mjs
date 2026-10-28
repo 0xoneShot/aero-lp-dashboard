@@ -7,9 +7,9 @@ import { scan } from '../lib/scan.mjs'
 import { buildLedger, isExternal, owedPrincipal } from '../lib/ledger.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf } from '../lib/prices.mjs'
-import { npmAbi, clPoolAbi, factoryAbi, TOPIC } from '../lib/abi.mjs'
+import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, TOPIC } from '../lib/abi.mjs'
 import { WALLETS, START_DAY, TOKENS, NPMS, WETH, AERO, USDC as TOKEN_USDC, LABELS, GAUGE_IMPLS, STRATEGY, BRIDGES, OVERRIDES_FILE, PRICE } from '../lib/config.mjs'
-import { daysBetween, dayEndBlock, cstDay, tsOfBlock } from '../lib/time.mjs'
+import { daysBetween, cstDay, prevDay, createTimeline } from '../lib/time.mjs'
 import { priceAtTick, priceFromSqrt, amountsForLiquidity } from '../lib/univ3.mjs'
 
 const OUT = path.resolve('out')
@@ -48,6 +48,10 @@ function reviveSnap(s) {
 // ---------- scan and classify ----------
 const head = Number((await client.getBlock({ blockTag: 'safe' })).number)
 const state = await scan({ head })
+// Block times from the chain (lib/time.mjs): exact across a change of block time.
+const timeline = await createTimeline(client, head, path.join('data', 'cache', 'timeline.json'))
+await timeline.ensure(Object.values(state.txs).map((t) => t.block))
+const tsOfBlock = timeline.tsOf
 log(`scanned to ${state.scannedTo}, ${Object.keys(state.txs).length} transactions`)
 const overrides = readJson(path.resolve(OVERRIDES_FILE), {})
 
@@ -102,8 +106,11 @@ async function positionValueAt(npm, tokenId, block, prices) {
 // ---------- day-end snapshots ----------
 const today = cstDay(tsOfBlock(head))
 const days = daysBetween(START_DAY, today)
-const openingBlock = dayEndBlock(new Date(Date.parse(`${START_DAY}T00:00:00Z`) - 86400e3).toISOString().slice(0, 10))
-const dayBlock = (d) => (d === today ? head : dayEndBlock(d))
+const openingBlock = await timeline.dayEndBlock(prevDay(START_DAY))
+const dayEnds = new Map()
+for (const d of days) if (d !== today) dayEnds.set(d, await timeline.dayEndBlock(d))
+const dayBlock = (d) => (d === today ? head : dayEnds.get(d))
+timeline.save()
 const blocks = [openingBlock, ...days.map(dayBlock)]
 
 const snapCache = readJson(SNAP_CACHE, {})
@@ -264,10 +271,12 @@ function lpTimeWeighted(key, startB, endB) {
     ...walletData[key].lpEvents.filter((x) => x.block > startB && x.block <= endB).map((x) => ({ block: x.block, d: x.type === 'increase' ? x.usd : -x.usd })),
     ...walletData[key].nftFlows.filter((x) => x.block > startB && x.block <= endB).map((x) => ({ block: x.block, d: x.dir === 'in' ? x.usd : -x.usd })),
   ].sort((a, b) => a.block - b.block)
+  // Weighted by time, not by block count: blocks stop being evenly spaced at the Denim hard fork.
   let cursor = startB, area = 0
-  for (const c of changes) { area += lp * (c.block - cursor); lp = Math.max(0, lp + c.d); cursor = c.block }
-  area += lp * (endB - cursor)
-  return endB > startB ? area / (endB - startB) : lp
+  for (const c of changes) { area += lp * (tsOfBlock(c.block) - tsOfBlock(cursor)); lp = Math.max(0, lp + c.d); cursor = c.block }
+  area += lp * (tsOfBlock(endB) - tsOfBlock(cursor))
+  const span = tsOfBlock(endB) - tsOfBlock(startB)
+  return span > 0 ? area / span : lp
 }
 
 // Money moved into (+) or out of (-) a wallet's LP bundle (positions, their uncollected fees and
@@ -454,6 +463,23 @@ function ethPrices(keys, invested, interest, value) {
   }
 }
 
+// Tokens a wallet's positions, liquidity moves or fees hold that have no price source (lib/config.mjs
+// TOKENS). They are valued at $0, so the page says the figures are incomplete instead of showing them
+// as if they were whole. (Unpriced tokens moving through the wallet itself are flagged by the ledger.)
+const unpricedOf = (keys) => {
+  const out = new Set()
+  for (const k of keys) {
+    const D = walletData[k]
+    const seen = [...snaps[k][head].positions, ...D.lpEvents, ...D.fees].flatMap((x) => [x.token0, x.token1])
+    for (const t of seen) if (t && t !== 'ETH' && !TOKENS[t]) out.add(t)
+  }
+  return [...out].sort()
+}
+const unpricedSymbols = {}
+for (const t of unpricedOf(WALLETS.map((w) => w.key))) {
+  unpricedSymbols[t] = await client.readContract({ address: t, abi: erc20Abi, functionName: 'symbol', blockNumber: BigInt(head) }).catch(() => null)
+}
+
 // Summary and attribution. Money figures come from the rounded daily rows, so the cards, the
 // charts, the tables and the breakdown all show the same numbers.
 const pNow = prices[head]
@@ -487,6 +513,7 @@ for (const sc of SCOPES) {
     eth_ref_pool: PRICE.ethPool, // the page reads it live; a public pool, not a wallet
     flagged: sum(sc.wallets, (k) => walletData[k].flagged.length + walletData[k].warnings.length),
     ...ethPrices(sc.wallets, invested, r2(rewards + fees), value),
+    unpriced: unpricedOf(sc.wallets).map((address) => ({ address, symbol: unpricedSymbols[address] })),
   })
   // From money put in to value now; the AERO step is aeroNow minus what it was worth when earned.
   const steps = { market: r2(hodl - invested), rewards, fees, aero_drift: r2(aeroNow - rewards), gas: -gasUsd }
@@ -597,4 +624,4 @@ writeJson(path.join(OUT, 'holdings.json'), holdings)
 writeJson(path.join(OUT, 'events.json'), events)
 writeJson(path.join(OUT, 'flows.json'), WALLETS.flatMap((w) => walletData[w.key].flows.map((f) => ({ scope: w.key, ...f, amount: units(f.amount, decOf(f.asset)), asset: symOf(f.asset) }))))
 // Only counts are printed: the hourly job's logs are public.
-log(`wrote out/ as of block ${head} (${cstTime(tsOfBlock(head))} CST): ${daily.length} daily rows, ${events.length} ledger rows, ${summary.find((s) => s.scope === 'total')?.flagged ?? 0} to check`)
+log(`wrote out/ as of block ${head} (${cstTime(tsOfBlock(head))} CST): ${daily.length} daily rows, ${events.length} ledger rows, ${summary.find((s) => s.scope === 'total')?.flagged ?? 0} to check, ${Object.keys(unpricedSymbols).length} tokens without a price`)

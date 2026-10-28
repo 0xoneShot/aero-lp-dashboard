@@ -54,6 +54,14 @@ test('after withdrawing, the cost alert still follows the wallet', () => {
   assert.deepEqual(out, [[], [], ['cost'], [], [], ['cost']])
 })
 
+test('a token without a price is reported once per new token', () => {
+  const nv = { address: '0xb20000000000000000000078ee7ce2fe4908108c', symbol: 'NVDAc' }, other = { address: '0x1111111111111111111111111111111111111111', symbol: null }
+  const { out } = run(null, [row(2200), row(2200, { unpriced: [nv] }), row(2201, { unpriced: [nv] }), row(2202, { unpriced: [nv, other] }), row(2203, { unpriced: [] }), row(2204, { unpriced: [nv] })])
+  assert.deepEqual(out, [[], ['unpriced'], [], ['unpriced'], [], ['unpriced']])
+  const { messages } = evaluate([row(2200, { unpriced: [nv] }), total], { 'a:2000-2500': 'in', 'a:cost': 'na', 'a:unpriced': '' })
+  assert.match(messages[0].message, /^NVDAc（0xb200…108c）/)
+})
+
 test('messages name the wallet, never an address', () => {
   const { messages } = evaluate([row(1990), total], { 'a:2000-2500': 'in', 'a:cost': 'na' })
   assert.equal(messages.length, 1)

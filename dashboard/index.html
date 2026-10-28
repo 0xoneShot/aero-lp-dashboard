@@ -7,6 +7,7 @@
   .lp-title { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: 28px; }
   .lp-asof { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--color-fg-muted); }
   .lp-live-on { color: var(--color-ok); }
+  .lp-warn { font-size: 13px; line-height: 1.6; color: var(--color-bad); border: 1px solid currentColor; border-radius: 10px; padding: 10px 12px; }
   .lp-refresh { font: inherit; font-size: 12px; border: 1px solid var(--color-border-line); background: transparent; color: var(--color-fg); padding: 2px 10px; border-radius: 8px; cursor: pointer; }
   .lp-refresh:disabled { color: var(--color-fg-muted); cursor: default; }
   .lp-refresh:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
@@ -95,6 +96,8 @@
     <div class="lp-scope" role="group" aria-label="查看范围" hidden></div>
     <p class="lp-asof"><span id="lp-asof">—</span><span id="lp-live"></span><button type="button" class="lp-refresh" id="lp-refresh">刷新</button></p>
   </header>
+
+  <p class="lp-warn" id="lp-warn" role="alert" hidden></p>
 
   <section class="lp-kpis" aria-label="主要数字">
     <div class="lp-kpi"><span class="lp-kpi-label">现值</span><span class="lp-kpi-value" id="k-value">—</span><span class="lp-kpi-sub" id="k-invested">—</span></div>
@@ -718,6 +721,9 @@
   // ---------- draw ----------
   const current = () => { const S = dash.data('summary'); return applyLive(S.status === 'ok' ? S.data.find((r) => r.scope === scope()) ?? null : null); };
   function drawHead(s) {
+    const warn = $('lp-warn'), bad = s?.unpriced ?? [];
+    warn.hidden = !bad.length;
+    warn.textContent = bad.length ? `有代币没有价格：${bad.map((t) => `${t.symbol ?? '未知代币'}（${t.address.slice(0, 6)}…${t.address.slice(-4)}）`).join('、')}。它在池子和手续费里的部分被按 $0 算了，所以现值、盈亏和利息都不完整；要先给它加上价格来源。` : '';
     $('lp-asof').textContent = s ? `数据截至 ${s.as_of_cst}（北京时间），利息大约每小时更新` : '—';
     const note = $('lp-live');
     note.className = s?.live_at ? 'lp-live-on' : '';
