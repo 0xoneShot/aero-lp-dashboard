@@ -52,6 +52,9 @@ const state = await scan({ head })
 const timeline = await createTimeline(client, head, path.join('data', 'cache', 'timeline.json'))
 await timeline.ensure(Object.values(state.txs).map((t) => t.block))
 const tsOfBlock = timeline.tsOf
+// Every transaction takes its block's real time, whatever the cache recorded (a release before the
+// fix kept computing 2-second times).
+for (const t of Object.values(state.txs)) t.ts = tsOfBlock(t.block)
 log(`scanned to ${state.scannedTo}, ${Object.keys(state.txs).length} transactions`)
 const overrides = readJson(path.resolve(OVERRIDES_FILE), {})
 
@@ -466,22 +469,14 @@ function ethPrices(keys, invested, interest, value) {
 // Tokens with no price source (lib/config.mjs TOKENS) that are valued at $0 somewhere in a wallet's
 // figures, so the page says they are incomplete instead of showing them as whole: tokens in any
 // position the wallet held at a day's close, added or removed liquidity, fees, or positions that moved
-// in or out; and tokens the ledger saw the wallet trade that it still holds.
-const heldUnpriced = {}
-for (const w of WALLETS) {
-  heldUnpriced[w.key] = []
-  for (const t of ledger[w.key].unpriced ?? []) {
-    if (t === 'ETH' || TOKENS[t]) continue
-    const bal = await client.readContract({ address: t, abi: erc20Abi, functionName: 'balanceOf', args: [w.address], blockNumber: BigInt(head) }).catch(() => 0n)
-    if (bal > 0n) heldUnpriced[w.key].push(t)
-  }
-}
+// in or out; and tokens the ledger saw the wallet receive (lib/ledger.mjs), which stay listed after
+// they are gone, since the days they were held were valued without them.
 const unpricedOf = (keys) => {
   const out = new Set()
   for (const k of keys) {
     const D = walletData[k]
     const seen = [...Object.values(snaps[k]).flatMap((s) => s.positions), ...D.lpEvents, ...D.fees, ...D.nftFlows].flatMap((x) => [x.token0, x.token1])
-    for (const t of [...seen, ...heldUnpriced[k]]) if (t && t !== 'ETH' && !TOKENS[t]) out.add(t)
+    for (const t of [...seen, ...(ledger[k].unpriced ?? [])]) if (t && t !== 'ETH' && !TOKENS[t]) out.add(t)
   }
   return [...out].sort()
 }

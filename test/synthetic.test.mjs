@@ -76,6 +76,27 @@ test('a position first seen arriving from outside is money in; one returned by a
   assert.deepEqual(moves('a', '0x24'), [['out', 'transfer', EOA]])
 })
 
+test('an outsider collecting and then sending a position in one transaction: money in, and the collect is not our fee', () => {
+  const L = ledgerOf([
+    { hash: '0x26', logs: [collect(34, EOA, 5n, 7n), nft(EOA, WA, 34)] },
+    { hash: '0x27', from: WA, logs: [collect(34, WA, 0n, 9_000000n), transfer(USDC, POOL, WA, 9_000000n)] },
+  ])
+  assert.deepEqual(L.a.events.find((e) => e.hash === '0x26').nftMoves.map((m) => [m.dir, m.cls]), [['in', 'transfer']])
+  assert.deepEqual(L.a.events.flatMap((e) => e.fees).map((f) => [f.amount0, f.amount1]), [[0n, 9_000000n]])
+})
+
+test('unpriced tokens: an order filled by a settlement contract counts, airdrop spam and fake sends do not', () => {
+  const NV = '0xb20000000000000000000078ee7ce2fe4908108c', SPAM = '0x00000000000000000000000000000000000005aa'
+  const SETTLE = '0x2ad5004c60e16e54d5007c80ce329adde5b51ef5' // 1inch settlement, in STRATEGY
+  const L = ledgerOf([
+    { hash: '0x31', logs: [transfer(NV, SETTLE, WA, 25n * 10n ** 8n)] }, // someone else's transaction fills WA's order
+    { hash: '0x32', logs: [transfer(SPAM, FAKE, WA, 10n ** 21n)] },
+    { hash: '0x33', logs: [transfer(SPAM, WA, FAKE, 10n ** 21n)] }, // a fake "sent from you"
+  ])
+  assert.deepEqual(L.a.unpriced, [NV])
+  assert.deepEqual(L.a.warnings.map((w) => w.hash), ['0x31'])
+})
+
 test('a reward event without the AERO actually paid is ignored', () => {
   const L = ledgerOf([{ hash: '0x21', logs: [claim(GAUGE, WA, 1, WA, 10n ** 30n)] }])
   assert.equal(L.a.events.flatMap((e) => e.rewards).length, 0)
