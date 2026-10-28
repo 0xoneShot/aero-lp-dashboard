@@ -185,7 +185,7 @@ for (const w of WALLETS) {
       for (const [asset, raw] of [[v.token0, v.amount0], [v.token1, v.amount1]]) {
         flows.push({ block: e.block, ts: e.ts, asset, amount: sign * raw, usd: Number(sign) * valueOf(asset, raw, p), kind: m.cls, hash: e.hash, cp: m.cp, nft: m.tokenId })
       }
-      nftFlows.push({ ...m, block: e.block, ts: e.ts, hash: e.hash, usd: v.usd })
+      nftFlows.push({ ...m, block: e.block, ts: e.ts, hash: e.hash, usd: v.usd, token0: v.token0, token1: v.token1 })
     }
     for (const r of e.rewards) rewards.push({ block: e.block, ts: e.ts, hash: e.hash, tokenId: r.tokenId, amount: r.amount, recipient: r.recipient })
     for (const f of e.fees) {
@@ -463,15 +463,25 @@ function ethPrices(keys, invested, interest, value) {
   }
 }
 
-// Tokens a wallet's positions, liquidity moves or fees hold that have no price source (lib/config.mjs
-// TOKENS). They are valued at $0, so the page says the figures are incomplete instead of showing them
-// as if they were whole. (Unpriced tokens moving through the wallet itself are flagged by the ledger.)
+// Tokens with no price source (lib/config.mjs TOKENS) that are valued at $0 somewhere in a wallet's
+// figures, so the page says they are incomplete instead of showing them as whole: tokens in any
+// position the wallet held at a day's close, added or removed liquidity, fees, or positions that moved
+// in or out; and tokens the ledger saw the wallet trade that it still holds.
+const heldUnpriced = {}
+for (const w of WALLETS) {
+  heldUnpriced[w.key] = []
+  for (const t of ledger[w.key].unpriced ?? []) {
+    if (t === 'ETH' || TOKENS[t]) continue
+    const bal = await client.readContract({ address: t, abi: erc20Abi, functionName: 'balanceOf', args: [w.address], blockNumber: BigInt(head) }).catch(() => 0n)
+    if (bal > 0n) heldUnpriced[w.key].push(t)
+  }
+}
 const unpricedOf = (keys) => {
   const out = new Set()
   for (const k of keys) {
     const D = walletData[k]
-    const seen = [...snaps[k][head].positions, ...D.lpEvents, ...D.fees].flatMap((x) => [x.token0, x.token1])
-    for (const t of seen) if (t && t !== 'ETH' && !TOKENS[t]) out.add(t)
+    const seen = [...Object.values(snaps[k]).flatMap((s) => s.positions), ...D.lpEvents, ...D.fees, ...D.nftFlows].flatMap((x) => [x.token0, x.token1])
+    for (const t of [...seen, ...heldUnpriced[k]]) if (t && t !== 'ETH' && !TOKENS[t]) out.add(t)
   }
   return [...out].sort()
 }

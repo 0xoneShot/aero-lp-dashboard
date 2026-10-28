@@ -61,6 +61,21 @@ test('a position moved between the wallets is a transfer between them, and later
   assert.deepEqual(L.b.events.flatMap((e) => e.fees).map((f) => f.amount1), [25_000000n])
 })
 
+test('a position first seen arriving from outside is money in; one returned by a gauge or sent by the other wallet is not', () => {
+  const L = ledgerOf([
+    { hash: '0x21', logs: [nft(EOA, WA, 31)] }, // minted before the scanned history, by someone else
+    { hash: '0x22', from: WA, logs: [nft(GAUGE, WA, 32)] }, // the wallet's own position, unstaked
+    { hash: '0x23', from: WB, logs: [nft(WB, WA, 33)] }, // from the other wallet
+    { hash: '0x24', from: WA, logs: [nft(WA, EOA, 31)] },
+  ])
+  const moves = (k, h) => L[k].events.find((e) => e.hash === h)?.nftMoves.map((m) => [m.dir, m.cls, m.cp]) ?? []
+  assert.deepEqual(moves('a', '0x21'), [['in', 'transfer', EOA]])
+  assert.deepEqual(moves('a', '0x22'), [])
+  assert.deepEqual(moves('a', '0x23'), [['in', 'between', WB]])
+  assert.deepEqual(moves('b', '0x23'), [['out', 'between', WA]])
+  assert.deepEqual(moves('a', '0x24'), [['out', 'transfer', EOA]])
+})
+
 test('a reward event without the AERO actually paid is ignored', () => {
   const L = ledgerOf([{ hash: '0x21', logs: [claim(GAUGE, WA, 1, WA, 10n ** 30n)] }])
   assert.equal(L.a.events.flatMap((e) => e.rewards).length, 0)

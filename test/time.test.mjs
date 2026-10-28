@@ -57,5 +57,26 @@ test('what was found is cached for the next run', async () => {
   const again = await createTimeline(c, head, file)
   assert.equal(again.exactTo, FORK)
   assert.equal(again.tsOf(end), tsAt(end))
-  assert.equal(c.calls.n, 0)
+  assert.equal(c.calls.n, 1) // only the head
+})
+
+// Hourly runs after the fork, each restoring the last one's cache, as the scheduled job does.
+test('runs after the fork keep working, find each day once and keep the cache small', async () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-')), 'timeline.json')
+  const forkDay = new Date((formulaTs(FORK) + 8 * 3600) * 1000).toISOString().slice(0, 10)
+  let calls = 0
+  for (let hour = 1; hour <= 24 * 20; hour++) {
+    const c = fakeClient(), head = FORK + hour * 3600 * 5
+    const t = await createTimeline(c, head, file)
+    assert.equal(t.exactTo, FORK)
+    assert.equal(t.tsOf(head), tsAt(head))
+    for (let d = forkDay; cstDayStartTs(nextDay(d)) <= tsAt(head); d = nextDay(d)) {
+      const end = await t.dayEndBlock(d), T = cstDayStartTs(nextDay(d))
+      assert.ok(t.tsOf(end) < T && tsAt(end + 1) >= T, `${d} at hour ${hour}`)
+    }
+    t.save()
+    if (hour > 24 * 19) calls = Math.max(calls, c.calls.n)
+  }
+  assert.ok(calls <= 30, `a run late on read ${calls} blocks`)
+  assert.ok(fs.statSync(file).size < 4000, `cache is ${fs.statSync(file).size} bytes`)
 })
