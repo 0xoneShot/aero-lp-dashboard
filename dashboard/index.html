@@ -71,6 +71,9 @@
   .lp-tip .r b { font-weight: 600; }
 
   .lp-tablewrap { overflow-x: auto; }
+  .lp table.lp-compare td:first-child { white-space: normal; color: var(--color-fg-muted); }
+  .lp table.lp-compare th:not(:first-child) { color: var(--color-fg); }
+  .lp-sw.lp-sw-total { width: 14px; height: 0; border-radius: 0; background: none; border-top: 2px dashed var(--color-fg); }
   .lp table { border-collapse: collapse; width: 100%; font-size: 13px; }
   .lp th, .lp td { padding: 8px 10px; border-bottom: 1px solid var(--color-border-line); white-space: nowrap; text-align: right; }
   .lp th:first-child, .lp td:first-child { text-align: left; }
@@ -108,6 +111,12 @@
     <div class="lp-kpi"><span class="lp-kpi-label">没卖的 AERO</span><span class="lp-kpi-value" id="k-aero">—</span><span class="lp-kpi-sub" id="k-aero-sub">—</span><span class="lp-kpi-sub" id="k-aero-drift"></span></div>
   </section>
 
+  <section class="lp-card" id="compare" hidden>
+    <h2 id="compare-title">两个钱包对比</h2>
+    <div class="lp-tablewrap"><table class="lp-compare"><thead id="compare-head"></thead><tbody id="compare-body"></tbody></table></div>
+    <p class="lp-note">现值、盈亏、成本价和区间按实时价格，利息按整点数据。撤出成本价：撤出后拿着自己钱包里所有的 ETH，涨到这个价以上再卖，本金不亏、利息全拿；每个钱包按自己的算。</p>
+  </section>
+
   <div class="lp-pair">
     <section class="lp-card" id="range">
       <h2>现价在区间的位置</h2>
@@ -118,6 +127,7 @@
     <section class="lp-card" id="exit">
       <h2>撤出后的 ETH 成本价</h2>
       <p class="lp-note">撤出后拿着 ETH，等 ETH 涨到成本价以上再卖：本金不亏、利息全拿。卖到回本价：算上利息，整体不亏。</p>
+      <p class="lp-note" id="exit-scope" hidden>这里是几个钱包合起来算的；各自的成本价见上面的对比表。</p>
       <div class="lp-exits" id="exit-rows"></div>
       <div class="lp-exit-input" id="exit-input">
         <label for="exit-price">按别的撤出价算 $</label>
@@ -138,6 +148,7 @@
     <div class="lp-legend" id="interest-legend"></div>
     <div class="lp-chart" id="interest-chart"></div>
     <h3 class="lp-subhead" id="apr-title">每日年化</h3>
+    <div class="lp-legend" id="apr-legend"></div>
     <p class="lp-note">当天利息 ÷ 当天池子里的平均资金 × 365，看收益率本身有没有变低；今天按已经过去的时间折算成一整天。指上去能看到当天的 AERO 价格、每 $1,000 分到多少 AERO 和手续费占多少：收益率变低，是 AERO 跌了、分得少了，还是没质押只赚手续费，一看便知。</p>
     <div class="lp-chart lp-chart-sm" id="apr-chart"></div>
   </section>
@@ -145,6 +156,7 @@
   <section class="lp-card" id="vs-usdc">
     <h2>对比一直持有 USDC 的盈亏</h2>
     <p class="lp-note">每天收盘时，现值减去投入的钱：0 以上表示比一直拿着 USDC 赚得多。包含利息，也包含 ETH 涨跌的影响。</p>
+    <div class="lp-legend" id="pnl-legend"></div>
     <div class="lp-chart" id="pnl-chart"></div>
   </section>
 
@@ -305,6 +317,7 @@
   function drawExit(s) {
     const rows = $('exit-rows');
     rows.replaceChildren();
+    $('exit-scope').hidden = !(s?.scope === 'total' && walletKeys().length > 1);
     const ps = s?.curve?.positions ?? [];
     $('exit-input').hidden = !ps.length;
     if (!s?.curve) { rows.textContent = '—'; drawExitCustom(s); return; }
@@ -371,6 +384,30 @@
     const every = Math.max(1, Math.ceil(days.length / Math.max(2, Math.floor(width / 52))));
     return days.filter((d, i) => (days.length - 1 - i) % every === 0);
   };
+  // On the combined view of several wallets the line charts draw each wallet and the total: colour
+  // follows the wallet (as in the interest bars), the total is neutral ink and dashed, so a wallet
+  // whose line it covers (the only one with money, early on) still shows through.
+  const dashOf = (sr, multi) => (multi && sr.k === 'total' ? '5 4' : null);
+  const seriesFor = (sc) => {
+    const wallets = walletKeys();
+    if (sc !== 'total' || wallets.length < 2) return [{ k: sc, label: labelOf(sc), color: null }];
+    return [...wallets.map((k, i) => ({ k, label: labelOf(k), color: dash.colors[i % dash.colors.length] })), { k: 'total', label: labelOf('total'), color: 'var(--color-fg)' }];
+  };
+  function drawLegend(id, series) {
+    $(id).replaceChildren(...(series.length > 1 ? series : []).map((x) => {
+      const s = document.createElement('span'), i = document.createElement('i');
+      i.className = x.k === 'total' ? 'lp-sw lp-sw-total' : 'lp-sw'; if (x.k !== 'total') i.style.background = x.color;
+      s.append(i, document.createTextNode(x.label)); return s;
+    }));
+  }
+  // End-of-line labels pushed apart so they never overlap.
+  function endLabels(svg, items, top, bottom) {
+    const gap = 14, out = items.slice().sort((a, b) => a.y - b.y);
+    for (let i = 1; i < out.length; i++) out[i].y = Math.max(out[i].y, out[i - 1].y + gap);
+    const over = out.length ? out.at(-1).y - bottom : 0;
+    if (over > 0) for (const o of out) o.y -= over;
+    for (const o of out) svg.append('text').attr('x', o.x).attr('y', Math.max(top, o.y)).attr('dy', '0.35em').attr('fill', 'var(--color-fg)').style('font-size', '12px').text(o.text);
+  }
   // Map an SVG coordinate (viewBox units) to the box's CSS pixels for the tooltip.
   const toBox = (box, W, v) => (v / W) * box.clientWidth;
 
@@ -426,109 +463,168 @@
       .on('mouseleave', () => tip.hide());
   }
 
-  // ---------- yearly rate of the interest: one line, its own axis ----------
+  // ---------- yearly rate of the interest: its own axis; one line, or each wallet and the total ----------
   function drawApr(rowsAll, sc, period) {
     const box = $('apr-chart');
     box.replaceChildren();
     const word = { day: '日', week: '周', month: '月' }[period];
     $('apr-title').textContent = `每${word}年化`;
-    const rows = rowsAll.filter((r) => r.scope === sc);
-    const pts = rows.filter((r) => Number.isFinite(r.apr_day));
-    if (!pts.length) { box.textContent = '还没有能算年化的日子。'; return; }
-    const wallets = walletKeys();
-    const color = sc === 'total' ? 'var(--color-fg)' : dash.colors[Math.max(0, wallets.indexOf(sc)) % dash.colors.length];
+    const series = seriesFor(sc).map((x) => ({ ...x, rows: rowsAll.filter((r) => r.scope === x.k) }));
+    const multi = series.length > 1;
+    if (!multi) series[0].color = sc === 'total' ? 'var(--color-fg)' : dash.colors[Math.max(0, walletKeys().indexOf(sc)) % dash.colors.length];
+    drawLegend('apr-legend', series);
+    const main = series.at(-1); // the scope itself (the total, on the combined view)
+    const rows = main.rows;
+    const all = series.flatMap((x) => x.rows.filter((r) => Number.isFinite(r.apr_day)));
+    if (!all.length) { box.textContent = '还没有能算年化的日子。'; return; }
     const W = box.clientWidth || 600, H = 170, m = { t: 10, b: 24 };
     const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
     // The axis follows the usual days; a day far above them (typically money that went in late that
     // day, its rate resting on a few hours) sits on the top edge as a triangle, its real rate in the tooltip.
     // Usual = the median of the days that earned; out-of-range days at 0% must not pull the axis down.
     const short = (r) => r.pool_share != null && r.pool_share < 0.5;
-    const usual = pts.filter((r) => r.apr_day > 0 && !short(r)), base = usual.length ? usual : pts.filter((r) => r.apr_day > 0);
-    const med = d3.median(base, (r) => r.apr_day) || 0, max = d3.max(pts, (r) => r.apr_day) || 1;
+    const usual = all.filter((r) => r.apr_day > 0 && !short(r)), base = usual.length ? usual : all.filter((r) => r.apr_day > 0);
+    const med = d3.median(base, (r) => r.apr_day) || 0, max = d3.max(all, (r) => r.apr_day) || 1;
     const cap = max > med * 2.5 && med > 0 ? med * 2.5 : max;
     const y = d3.scaleLinear([0, cap * 1.1], [H - m.b, m.t]).nice();
     const top = y.domain()[1], yv = (v) => y(Math.min(v, top));
     const ticks = y.ticks(3), pctTick = (v) => `${Math.round(v * 100)}%`;
     m.l = Math.ceil(measure(svg, ticks.map(pctTick))) + 8;
-    const last = pts.at(-1);
-    m.r = Math.ceil(measure(svg, [fmtApr(last.apr_day)])) + 12;
-    const days = rows.map((r) => r.day);
+    const lastOf = (x) => x.rows.filter((r) => Number.isFinite(r.apr_day)).at(-1);
+    const endText = (x) => { const l = lastOf(x); return l ? (multi ? `${x.label} ${fmtApr(l.apr_day)}` : fmtApr(l.apr_day)) : ''; };
+    m.r = Math.ceil(measure(svg, series.map(endText))) + 12;
+    const days = [...new Set(series.flatMap((x) => x.rows.map((r) => r.day)))].sort();
     const x = d3.scaleBand(days, [m.l, W - m.r]).paddingInner(0.3).paddingOuter(0.1);
     const cx = (r) => x(r.day) + x.bandwidth() / 2;
     const firstOf = Object.fromEntries(rows.map((r) => [r.day, r.first ?? r.day]));
-    const tickText = (d) => (period === 'month' ? `${Number(d.slice(5, 7))}月` : dayLabel(parseDay(period === 'week' ? firstOf[d] : d)));
+    const tickText = (d) => (period === 'month' ? `${Number(d.slice(5, 7))}月` : dayLabel(parseDay(period === 'week' ? firstOf[d] ?? d : d)));
     svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).tickValues(ticks).tickFormat(pctTick).tickSize(-(W - m.l - m.r))).call(axisStyle);
     svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickValues(thinDays(days, W - m.l)).tickFormat(tickText).tickSize(0).tickPadding(8)).call(axisStyle);
-    svg.append('path').datum(rows).attr('d', d3.line().defined((r) => Number.isFinite(r.apr_day)).x(cx).y((r) => yv(r.apr_day)))
-      .attr('fill', 'none').attr('stroke', color).attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
-    for (const r of pts) {
-      const hollow = r.partial || short(r);
+    const mark = (r, color, hollow) => {
       if (r.apr_day > top) {
         const X = cx(r), Y = yv(r.apr_day) + 4;
         svg.append('path').attr('d', `M${X - 5},${Y + 4}L${X},${Y - 4}L${X + 5},${Y + 4}Z`).attr('stroke', color).attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('fill', hollow ? 'var(--color-panel)' : color);
       } else {
         svg.append('circle').attr('cx', cx(r)).attr('cy', yv(r.apr_day)).attr('r', 4).attr('stroke', color).attr('stroke-width', 2).attr('fill', hollow ? 'var(--color-panel)' : color);
       }
+    };
+    for (const sr of series) {
+      svg.append('path').datum(sr.rows).attr('d', d3.line().defined((r) => Number.isFinite(r.apr_day)).x(cx).y((r) => yv(r.apr_day)))
+        .attr('fill', 'none').attr('stroke', sr.color).attr('stroke-width', 2).attr('stroke-dasharray', dashOf(sr, multi)).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
+      // One series: every day marked (hollow = under way, or money moved in or out). Several: only the
+      // ends and the clipped days, so the lines stay readable.
+      for (const r of sr.rows.filter((q) => Number.isFinite(q.apr_day))) if (!multi || r === lastOf(sr) || r.apr_day > top) mark(r, sr.color, r.partial || short(r));
     }
-    svg.append('text').attr('x', cx(last) + 8).attr('y', yv(last.apr_day)).attr('dy', '0.35em').attr('fill', 'var(--color-fg)').style('font-size', '12px').text(fmtApr(last.apr_day));
+    endLabels(svg, series.filter(lastOf).map((sr) => ({ x: cx(lastOf(sr)) + 8, y: yv(lastOf(sr).apr_day), text: endText(sr) })), m.t, H - m.b);
     const tip = tipFor(box);
-    const dot = svg.append('line').attr('y1', m.t).attr('y2', H - m.b).attr('stroke', 'var(--cds-chart-axis)').style('display', 'none');
+    const rule = svg.append('line').attr('y1', m.t).attr('y2', H - m.b).attr('stroke', 'var(--cds-chart-axis)').style('display', 'none');
     svg.append('rect').attr('x', m.l).attr('width', W - m.l - m.r).attr('height', H - m.b).attr('fill', 'transparent')
       .on('mousemove touchstart touchmove', (ev) => {
         const [px] = d3.pointer(ev.touches ? ev.touches[0] : ev, svg.node());
         const i = Math.max(0, Math.min(days.length - 1, Math.floor((px - m.l - x.step() * x.paddingOuter()) / x.step())));
-        const r = rows[i];
-        dot.style('display', null).attr('x1', cx(r)).attr('x2', cx(r));
-        const lines = [['年化', fmtApr(r.apr_day)], ['利息', fmtUsd(r.earn_usd)], ['池子里平均', fmtUsd(r.lp_tw_usd)]];
+        const day = days[i], r = rows.find((q) => q.day === day) ?? series.map((sr) => sr.rows.find((q) => q.day === day)).find(Boolean);
+        rule.style('display', null).attr('x1', cx({ day })).attr('x2', cx({ day }));
+        const lines = multi ? series.map((sr) => [sr.label, fmtApr(sr.rows.find((q) => q.day === day)?.apr_day)]) : [['年化', fmtApr(r.apr_day)]];
+        lines.push([multi ? '合计利息' : '利息', fmtUsd(r.earn_usd)], ['池子里平均', fmtUsd(r.lp_tw_usd)]);
         if (r.aero_per_1k != null) lines.push(['每 $1,000 每天分到', `${fmtNum(r.aero_per_1k, 2)} AERO`]);
         if (r.earn_fee_usd) lines.push(['其中手续费', `${fmtUsd(r.earn_fee_usd)}（${Math.round((r.earn_fee_usd / r.earn_usd) * 100)}%）`]);
         if (period === 'day' && r.aero_usd != null) lines.push(['AERO 价格', `$${Number(r.aero_usd).toFixed(3)}`]);
-        if (short(r)) lines.push(['', `${period === 'day' ? '当天' : '这段时间'}中途加了或撤了钱，按平均资金折算，波动可能大`]);
-        tip.show(toBox(box, W, cx(r)), Number.isFinite(r.apr_day) ? yv(r.apr_day) : H / 2, periodTitle(r, period), lines);
+        if (series.some((sr) => { const q = sr.rows.find((z) => z.day === day); return q && short(q); })) lines.push(['', `${period === 'day' ? '当天' : '这段时间'}中途加了或撤了钱，按平均资金折算，波动可能大`]);
+        const yAt = Number.isFinite(r.apr_day) ? yv(r.apr_day) : H / 2;
+        tip.show(toBox(box, W, cx({ day })), yAt, periodTitle(r, period), lines);
       })
-      .on('mouseleave', () => { tip.hide(); dot.style('display', 'none'); });
+      .on('mouseleave', () => { tip.hide(); rule.style('display', 'none'); });
   }
 
-  // ---------- P&L against holding USDC: a line around zero ----------
+  // ---------- P&L against holding USDC: a line around zero; one, or each wallet and the total ----------
   function drawPnl(rowsAll, sc) {
     const box = $('pnl-chart');
     box.replaceChildren();
-    const rows = rowsAll.filter((r) => r.scope === sc).map((r) => ({ ...r, date: parseDay(r.day) }));
-    if (!rows.length) return;
+    const series = seriesFor(sc).map((x) => ({ ...x, rows: rowsAll.filter((r) => r.scope === x.k).map((r) => ({ ...r, date: parseDay(r.day) })) })).filter((x) => x.rows.length);
+    if (!series.length) { drawLegend('pnl-legend', []); return; }
+    const multi = series.length > 1;
+    const main = series.at(-1), rows = main.rows, last = rows.at(-1);
+    // One series keeps the sign colour (green above zero, red below); several are coloured by wallet.
+    if (!multi) main.color = last.pnl_usd >= 0 ? 'var(--color-ok)' : 'var(--color-bad)';
+    drawLegend('pnl-legend', series);
     const W = box.clientWidth || 600, H = 220, m = { t: 12, b: 24 };
     const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
-    const lo = Math.min(0, d3.min(rows, (r) => r.pnl_usd)), hi = Math.max(0, d3.max(rows, (r) => r.pnl_usd));
+    const vals = series.flatMap((x) => x.rows.map((r) => r.pnl_usd));
+    const lo = Math.min(0, d3.min(vals)), hi = Math.max(0, d3.max(vals));
     const pad = (hi - lo) * 0.1 || 10;
     const y = d3.scaleLinear([lo - pad, hi + pad], [H - m.b, m.t]).nice();
     const ticks = y.ticks(4);
     m.l = Math.ceil(measure(svg, ticks.map(fmtTick))) + 8;
-    const last = rows.at(-1);
-    m.r = Math.ceil(measure(svg, [fmtSigned(last.pnl_usd)])) + 12;
-    const days = rows.map((r) => r.date);
-    const x = d3.scaleUtc(rows.length > 1 ? d3.extent(days) : [d3.utcDay.offset(days[0], -1), d3.utcDay.offset(days[0], 1)], [m.l, W - m.r]);
+    const endText = (x) => (multi ? `${x.label} ${fmtSigned(x.rows.at(-1).pnl_usd)}` : fmtSigned(x.rows.at(-1).pnl_usd));
+    m.r = Math.ceil(measure(svg, series.map(endText))) + 12;
+    const dates = [...new Set(series.flatMap((x) => x.rows.map((r) => +r.date)))].sort((a, b) => a - b).map((t) => new Date(t));
+    const x = d3.scaleUtc(dates.length > 1 ? d3.extent(dates) : [d3.utcDay.offset(dates[0], -1), d3.utcDay.offset(dates[0], 1)], [m.l, W - m.r]);
     svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).tickValues(ticks).tickFormat(fmtTick).tickSize(-(W - m.l - m.r))).call(axisStyle);
-    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickValues(thinDays(days, W - m.l - m.r)).tickFormat(dayLabel).tickSize(0).tickPadding(8)).call(axisStyle);
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickValues(thinDays(dates, W - m.l - m.r)).tickFormat(dayLabel).tickSize(0).tickPadding(8)).call(axisStyle);
     svg.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(0)).attr('y2', y(0)).attr('stroke', 'var(--cds-chart-axis)');
-    const color = last.pnl_usd >= 0 ? 'var(--color-ok)' : 'var(--color-bad)';
-    if (rows.length > 1) {
-      svg.append('path').datum(rows).attr('d', d3.area().x((r) => x(r.date)).y0(y(0)).y1((r) => y(r.pnl_usd))).attr('fill', color).attr('opacity', 0.1);
-      svg.append('path').datum(rows).attr('d', d3.line().x((r) => x(r.date)).y((r) => y(r.pnl_usd))).attr('fill', 'none').attr('stroke', color).attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
+    if (!multi && rows.length > 1) svg.append('path').datum(rows).attr('d', d3.area().x((r) => x(r.date)).y0(y(0)).y1((r) => y(r.pnl_usd))).attr('fill', main.color).attr('opacity', 0.1);
+    for (const sr of series) {
+      if (sr.rows.length > 1) svg.append('path').datum(sr.rows).attr('d', d3.line().x((r) => x(r.date)).y((r) => y(r.pnl_usd))).attr('fill', 'none').attr('stroke', sr.color).attr('stroke-width', 2).attr('stroke-dasharray', dashOf(sr, multi)).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
+      const l = sr.rows.at(-1);
+      svg.append('circle').attr('cx', x(l.date)).attr('cy', y(l.pnl_usd)).attr('r', 4).attr('fill', sr.color);
     }
-    svg.append('circle').attr('cx', x(last.date)).attr('cy', y(last.pnl_usd)).attr('r', 3.5).attr('fill', color);
-    svg.append('text').attr('x', x(last.date) + 6).attr('y', y(last.pnl_usd)).attr('dy', '0.35em').attr('fill', 'var(--color-fg)').style('font-size', '12px').text(fmtSigned(last.pnl_usd));
+    endLabels(svg, series.map((sr) => ({ x: x(sr.rows.at(-1).date) + 8, y: y(sr.rows.at(-1).pnl_usd), text: endText(sr) })), m.t, H - m.b);
     const tip = tipFor(box);
-    const dot = svg.append('circle').attr('r', 4).attr('fill', color).style('display', 'none');
-    const bis = d3.bisector((r) => r.date).center;
+    const dots = series.map((sr) => svg.append('circle').attr('r', 4).attr('fill', sr.color).attr('stroke', 'var(--color-panel)').attr('stroke-width', 2).style('display', 'none'));
+    const bis = d3.bisector((d) => d).center;
     svg.append('rect').attr('x', m.l).attr('width', W - m.l - m.r).attr('height', H - m.b).attr('fill', 'transparent')
       .on('mousemove touchstart touchmove', (ev) => {
         const [px] = d3.pointer(ev.touches ? ev.touches[0] : ev, svg.node());
-        const r = rows[bis(rows, x.invert(px))];
-        dot.style('display', null).attr('cx', x(r.date)).attr('cy', y(r.pnl_usd));
-        tip.show(toBox(box, W, x(r.date)), y(r.pnl_usd), r.day + (r.partial ? '（今日至今）' : ''), [
-          ['累计盈亏', fmtSigned(r.pnl_usd)], ['当日盈亏', fmtSigned(r.pnl_day_usd)], ['其中利息', fmtUsd(r.earn_usd)], ['ETH 价格', fmtUsd(r.eth_usd)],
-        ]);
+        const date = dates[bis(dates, x.invert(px))], at = (sr) => sr.rows.find((r) => +r.date === +date);
+        series.forEach((sr, i) => { const r = at(sr); dots[i].style('display', r ? null : 'none'); if (r) dots[i].attr('cx', x(r.date)).attr('cy', y(r.pnl_usd)); });
+        const r = at(main) ?? series.map(at).find(Boolean);
+        const lines = multi
+          ? [...series.map((sr) => [`${sr.label} 累计盈亏`, at(sr) ? fmtSigned(at(sr).pnl_usd) : '—']), ['ETH 价格', fmtUsd(r.eth_usd)]]
+          : [['累计盈亏', fmtSigned(r.pnl_usd)], ['当日盈亏', fmtSigned(r.pnl_day_usd)], ['其中利息', fmtUsd(r.earn_usd)], ['ETH 价格', fmtUsd(r.eth_usd)]];
+        tip.show(toBox(box, W, x(date)), y(r.pnl_usd), r.day + (r.partial ? '（今日至今）' : ''), lines);
       })
-      .on('mouseleave', () => { tip.hide(); dot.style('display', 'none'); });
+      .on('mouseleave', () => { tip.hide(); dots.forEach((d) => d.style('display', 'none')); });
+  }
+
+  // ---------- several wallets side by side (the combined view) ----------
+  const STATE_SHORT = { in: '区间内', part: '部分在区间内', gap: '区间外', below: '已跌破', above: '已涨破', none: '没有仓位' };
+  const exitCost = (s, below) => {
+    const ps = s.curve?.positions ?? [];
+    if (!s.curve || (below && !ps.length)) return null;
+    const lowest = ps.length ? Math.min(...ps.map((p) => p.low)) : null;
+    const [pe, pu] = poolOut(ps, below ? () => lowest * 0.999 : (p) => p.pool ?? s.eth_usd);
+    return needed(s.curve.eth + pe, s.curve.usd + pu, s.invested_usd + s.earn_total_usd);
+  };
+  const fmtCost = (c, s) => (c == null || c > 5 * s.eth_usd ? '—' : c === 0 ? '已覆盖' : fmtUsd(c));
+  function drawCompare(lives, sc) {
+    const card = $('compare'), wallets = walletKeys();
+    card.hidden = sc !== 'total' || wallets.length < 2;
+    if (card.hidden) return;
+    const cols = [...wallets, 'total'].map((k) => lives.find((r) => r.scope === k)).filter(Boolean);
+    $('compare-title').textContent = `${wallets.length === 2 ? '两' : wallets.length} 个钱包对比`.replace('两 个', '两个');
+    const th = (t) => { const e = document.createElement('th'); e.textContent = t; return e; };
+    const hr = document.createElement('tr'); hr.append(th(''), ...cols.map((r) => th(r.scope_label)));
+    $('compare-head').replaceChildren(hr);
+    const rowsDef = [
+      ['投入', (r) => fmtUsd(r.invested_usd)],
+      ['现值', (r) => fmtUsd(r.value_usd)],
+      ['对比持有 USDC', (r) => fmtSigned(r.pnl_usd), (r) => r.pnl_usd],
+      ['盈亏比例', (r) => fmtPct(r.pnl_pct), (r) => r.pnl_pct],
+      ['累计利息', (r) => fmtUsd(r.earn_total_usd)],
+      ['昨日利息', (r) => fmtUsd(r.yesterday_usd)],
+      ['今日至今', (r) => fmtUsd(r.today_usd)],
+      ['近 7 日年化', (r) => (r.apr_7d == null ? '—' : `${(r.apr_7d * 100).toFixed(1)}%${r.apr_days < 7 ? `（${r.apr_days} 天）` : ''}`)],
+      ['没卖的 AERO', (r) => fmtUsd(r.aero_unsold_usd)],
+      ['现在撤出成本价', (r) => fmtCost(exitCost(r, false), r)],
+      ['跌破后撤出成本价', (r) => fmtCost(exitCost(r, true), r)],
+      ['区间', (r) => STATE_SHORT[r.range_state] ?? '—'],
+    ];
+    $('compare-body').replaceChildren(...rowsDef.map(([name, f, toneOf]) => {
+      const tr = document.createElement('tr');
+      const a = document.createElement('td'); a.textContent = name; tr.appendChild(a);
+      for (const r of cols) { const td = document.createElement('td'); td.textContent = f(r); if (toneOf) tone(td, toneOf(r)); tr.appendChild(td); }
+      return tr;
+    }));
   }
 
   // ---------- table ----------
@@ -713,13 +809,17 @@
     $('th-pnl-day').textContent = `当${word}盈亏`;
   }
   // The rows each part draws: live, cut to the chosen days, grouped for the bars and the table.
-  function viewRows(D, s, sc) {
-    const all = liveRows(D.data, s), n = dayCount(all.filter((r) => r.scope === sc)), range = rangeFor(n), rows = lastDays(all, range);
+  // Every scope's rows follow its own live figures, so the wallets and the total agree on the charts.
+  function viewRows(D, lives, sc) {
+    let all = D.data;
+    for (const s of lives) all = liveRows(all, s);
+    const n = dayCount(all.filter((r) => r.scope === sc)), range = rangeFor(n), rows = lastDays(all, range);
     return { n, range, rows, grouped: byPeriod(rows, view.period) };
   }
 
   // ---------- draw ----------
   const current = () => { const S = dash.data('summary'); return applyLive(S.status === 'ok' ? S.data.find((r) => r.scope === scope()) ?? null : null); };
+  const allLive = () => { const S = dash.data('summary'); return S.status === 'ok' ? S.data.map(applyLive) : []; };
   function drawHead(s) {
     const warn = $('lp-warn'), bad = s?.unpriced ?? [];
     warn.hidden = !bad.length;
@@ -755,10 +855,10 @@
     const D = dash.data('daily');
     const sc = scope();
     drawScopes(sc);
-    const s = current();
-    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s);
+    const lives = allLive(), s = lives.find((r) => r.scope === sc) ?? null;
+    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc);
     if (D.status === 'ok') {
-      const v = viewRows(D, s, sc);
+      const v = viewRows(D, lives, sc);
       drawViewbar(v.n, v.range); drawInterest(v.grouped, sc, view.period); drawApr(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period);
     }
   }
@@ -766,10 +866,10 @@
   function drawLive() {
     const D = dash.data('daily');
     const sc = scope();
-    const s = current();
-    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s);
+    const lives = allLive(), s = lives.find((r) => r.scope === sc) ?? null;
+    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc);
     if (D.status === 'ok') {
-      const v = viewRows(D, s, sc);
+      const v = viewRows(D, lives, sc);
       drawViewbar(v.n, v.range);
       if (!tipOpen('interest-chart')) drawInterest(v.grouped, sc, view.period);
       if (!tipOpen('apr-chart')) drawApr(v.grouped, sc, view.period);
