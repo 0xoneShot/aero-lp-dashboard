@@ -384,3 +384,52 @@ test('Aero\'s own Hyperlane messages do not make a transaction cross-chain; a wa
   ])
   assert.deepEqual([legsOf(L, 'a', '0xf4'), legsOf(L, 'a', '0xf5')], [['0xa0b8:-5:internal'], ['0xa0b8:-5:bridge']])
 })
+
+test('a position already staked when a chain\'s scan starts is the wallet\'s, even if only claimed from afterwards', () => {
+  const META = '0x0fef9e88a7b76bcdbf451780c6774fe32965ee98', NPM_E = '0x4857db576ee0e45f10525ec59527bfd10beec60b'
+  const nftE = (from, to, id) => ({ address: NPM_E, topics: [TOPIC.Transfer, pad(from), pad(to), num(id)], data: '0x' })
+  const seed = [{ wallet: WA, npm: NPM_E, tokenId: '6015', gauge: ETH_GAUGE }]
+  const state = { wallets: { a: { openingBlock: 0, openingEth: '0' }, b: { openingBlock: 0, openingEth: '0' } }, txs: {} }
+  const L = buildLedger(state, () => 'contract', { gaugeOk: (a) => a === ETH_GAUGE, wallets: WALLETS, chain: ETHC, seed })
+  assert.deepEqual(L.a.positions.map((p) => [p.tokenId, p.gauges, p.born]), [['6015', [ETH_GAUGE], null]])
+  assert.deepEqual(positionsAt(L.a.positions, 26306626).map((p) => p.tokenId), ['6015'])
+  // Withdrawn later through the Metarouter: the NFT goes gauge -> Metarouter -> burned, the tokens to the wallet.
+  const txs = [{ hash: '0xe1', block: 26306700, from: WA, to: META, logs: [
+    { address: ETH_GAUGE, topics: [TOPIC.GaugeWithdraw, pad(META), pad(WA), num(6015)], data: num(1) },
+    nftE(ETH_GAUGE, META, 6015), { address: NPM_E, topics: [TOPIC.DecreaseLiquidity, num(6015)], data: words(1000, 10n ** 18n, 2000_000000n) },
+    { address: NPM_E, topics: [TOPIC.Collect, num(6015)], data: words(WA, 10n ** 18n, 2000_000000n) }, nftE(META, ZERO, 6015),
+    transfer(ETHC.weth, '0xd661623947ef2ead12d577b47021c167d163b0c5', WA, 10n ** 18n), transfer(ETHC.usdc, '0xd661623947ef2ead12d577b47021c167d163b0c5', WA, 2000_000000n),
+  ] }]
+  const M = buildLedger({ ...state, txs: Object.fromEntries(txs.map((t) => [t.hash, { index: 0, ts: 0, selector: '0x', value: '0', status: 'success', gasCost: '0', eth: {}, ...t, logs: t.logs.map((l, j) => ({ ...l, logIndex: j })) }])) },
+    () => 'contract', { gaugeOk: (a) => a === ETH_GAUGE, wallets: WALLETS, chain: ETHC, seed })
+  assert.deepEqual(legsOf(M, 'a', '0xe1').sort(), [`0xa0b8:2000000000:internal`, `0xc02a:${10n ** 18n}:internal`])
+  assert.equal(M.a.events[0].lp[0].type, 'decrease')
+})
+
+test('a payment partly refunded by the contract it went to stays one-way', () => {
+  const NPM_U = '0x03a520b32c04bf3beef7beb72e919cf822ed34f1', POOLU = '0x00000000000000000000000000000000000000a5'
+  const L = ledgerOf([{ hash: '0xe2', from: WB, to: NPM_U, eth: { [WB]: { delta: '0', legs: [{ cp: NPM_U, value: (-3n * 10n ** 18n).toString() }, { cp: NPM_U, value: (10n ** 16n).toString() }] } }, logs: [transfer(USDC, WB, POOLU, 18_000000n)] }])
+  assert.deepEqual(legsOf(L, 'b', '0xe2').sort(), [`0x8335:-18000000:transfer:review`, `ETH:${-3n * 10n ** 18n}:transfer:review`, `ETH:${10n ** 16n}:transfer:review`].sort())
+  // A router swap with an ETH refund and USDC coming back is still a swap.
+  const R = '0x6131b5fae19ea4f9d964eac0408e4408b66337b5'
+  const S = ledgerOf([{ hash: '0xe3', from: WB, to: R, eth: { [WB]: { delta: '0', legs: [{ cp: R, value: (-3n * 10n ** 18n).toString() }, { cp: R, value: (10n ** 16n).toString() }] } }, logs: [transfer(USDC, POOL, WB, 7000_000000n)] }])
+  assert.ok(legsOf(S, 'b', '0xe3').every((x) => x.endsWith(':internal')))
+})
+
+test('principal removed in one transaction and collected in the next is recorded as owed, then paid', () => {
+  const L = ledgerOf([
+    { hash: '0xe4', from: WB, logs: [nft(ZERO, WB, 21), increase(21, 1000, 10n ** 18n, 0n)] },
+    { hash: '0xe5', from: WB, logs: [decrease(21, 1000, 10n ** 18n, 0n)] },
+    { hash: '0xe6', from: WB, logs: [collect(21, WB, 10n ** 18n, 0n), transfer(WETH, POOL, WB, 10n ** 18n)] },
+  ])
+  const owed = (h) => L.b.events.find((e) => e.hash === h).owed.map((o) => [o.amount0, o.amount1])
+  assert.deepEqual([owed('0xe5'), owed('0xe6')], [[[10n ** 18n, 0n]], [[-(10n ** 18n), 0n]]])
+  assert.deepEqual(legsOf(L, 'b', '0xe6'), [`0x4200:${10n ** 18n}:internal`])
+})
+
+test('the ETH sent with an xAERO redeem is its fee, a cost, not money leaving', () => {
+  const X = 46n * 10n ** 18n
+  const eth = ledgerOn(ETHC, [{ hash: '0xe7', from: WA, to: LEAF, eth: { [WA]: { delta: '0', legs: [{ cp: LEAF, value: (-44n * 10n ** 12n).toString() }, { cp: LEAF, value: (2n * 10n ** 12n).toString() }] } },
+    logs: [transfer(XAERO, WA, ZERO, X), { address: LEAF, topics: [REDEEMED, pad(WA), pad(WA)], data: num(X) }] }])
+  assert.deepEqual(legsOf(eth, 'a', '0xe7').sort(), [`0x9e14:${-X}:bridge`, `ETH:${-44n * 10n ** 12n}:internal`, `ETH:${2n * 10n ** 12n}:internal`].sort())
+})

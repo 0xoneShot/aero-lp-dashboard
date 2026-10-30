@@ -139,3 +139,14 @@ test('a range on another chain is kept apart and named by its chain', () => {
   assert.match(messages[0].title, /^A（以太坊） 跌出区间/)
   assert.equal(state['a:2000-2500'], 'in')
 })
+
+test('from the last good data, a range whose chain could not be read waits; the other chain still alerts', () => {
+  const ethPos = { ...outage.curve.positions[0], chain: 'eth', pool_address: '0xd661623947ef2ead12d577b47021c167d163b0c5' }
+  const both = { ...outage, curve: { ...outage.curve, positions: [outage.curve.positions[0], ethPos] } }
+  // Only Base answered: its range falls below, Ethereum's keeps its published state and waits.
+  const [live] = withLivePrices([both], { [`base:${pool}`]: { tick: -201000, price: 1900 } }, 1901)
+  assert.equal(live.curve.positions[1].held, true)
+  const r = evaluate([live, total], { 'a:2000-2500': 'in', 'a:eth:2000-2500': 'in', 'a:cost': 'na' }, { lastGood: true })
+  assert.deepEqual(r.messages.map((m) => m.key), ['a:2000-2500'])
+  assert.deepEqual([r.state['a:eth:2000-2500'], r.state['a:cost']], ['in', 'na'])
+})

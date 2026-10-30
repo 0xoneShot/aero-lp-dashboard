@@ -32,3 +32,15 @@ test('what does not match stays money in or out', () => {
   matchCrossChain([a, b, c], canon, dec)
   assert.deepEqual([a, b, c].map((e) => e.legs[0].cls), ['internal', 'internal', 'bridge'])
 })
+
+test('transfers in flight together pair with the closest arrival', () => {
+  // Two departures of 2 and 1 ETH; the 1 ETH arrival comes first. First-fit would take it for the 2 ETH one.
+  const a = ev('0x21', 'base', 1000, 100, 'weth-base', -2n * E), b = ev('0x22', 'base', 1010, 101, 'weth-base', -1n * E)
+  const one = ev('0x23', 'eth', 1100, 200, 'ETH', E - 10n ** 15n), two = ev('0x24', 'eth', 1200, 210, 'ETH', 2n * E - 2n * 10n ** 15n)
+  const transit = matchCrossChain([a, b, one, two], canon, dec)
+  assert.deepEqual([a, b, one, two].map((e) => e.legs[0].cls), ['internal', 'internal', 'internal', 'internal'])
+  const pair = (h) => transit.find((m) => m.hash === h)
+  assert.equal(pair('0x24').amount, -2n * E)
+  assert.equal(pair('0x23').amount, -1n * E)
+  assert.equal(pair('0x24').received, 2n * E - 2n * 10n ** 15n)
+})

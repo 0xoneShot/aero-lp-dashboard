@@ -12,10 +12,11 @@ import { matchCrossChain } from '../lib/crosschain.mjs'
 import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
 import { hodlHeld } from '../lib/hodl.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
-import { pricesAt, usdOf } from '../lib/prices.mjs'
-import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, TOPIC } from '../lib/abi.mjs'
-import { WALLETS, START_DAY, TOKENS, ALL_TOKENS, CHAINS, WETH, LABELS, GAUGE_IMPLS, OVERRIDES_FILE, PRICE } from '../lib/config.mjs'
-import { daysBetween, cstDay, prevDay, createTimeline } from '../lib/time.mjs'
+import { pricesAt, usdOf, savePrices } from '../lib/prices.mjs'
+import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, gaugeAbi, TOPIC } from '../lib/abi.mjs'
+import { tryRead } from '../lib/errors.mjs'
+import { WALLETS, START_DAY, TOKENS, ALL_TOKENS, CHAINS, WETH, ZERO, LABELS, GAUGE_IMPLS, OVERRIDES_FILE, PRICE } from '../lib/config.mjs'
+import { daysBetween, cstDay, cstDayStartTs, prevDay, createTimeline } from '../lib/time.mjs'
 import { priceAtTick, priceFromSqrt, amountsForLiquidity } from '../lib/univ3.mjs'
 
 const OUT = path.resolve('out')
@@ -81,6 +82,8 @@ log(`scanned to ${state.scannedTo}, ${Object.keys(state.txs).length} transaction
 // Base's head is held back to the earliest of their heads.
 const ext = {} // chain key -> { chain, client, state, timeline, head, headTs }
 for (const c of Object.values(CHAINS).filter((x) => x.key !== 'base')) {
+  // A chain starting before the first reported day would bring in holdings no day accounts for.
+  if (c.startTs < cstDayStartTs(START_DAY)) throw new Error(`${c.key}: its start (chains.${c.key}.startTs) is before ${START_DAY} 00:00 Beijing; set chains.${c.key}.scanFromBlock and startTs at or after it`)
   const cl = clientOf(c)
   const h = Number((await cl.getBlock({ blockTag: c.safeTag })).number)
   const st = await scan({ head: h, chain: c })
@@ -119,23 +122,55 @@ log(`checked ${asked.size} counterparties, ${gaugeCands.size} gauge candidates`)
 
 // The same on every other chain, its code lookups kept apart by chain.
 const extLedger = {}
-for (const x of Object.values(ext)) {
-  const c = x.chain, txs = Object.values(x.state.txs)
-  const cands = new Set(txs.flatMap((r) => r.logs.filter((l) => gaugeTopics.has(l.topics[0])).map((l) => l.address)))
-  await pmap([...cands].filter((a) => !(`gauge:${c.key}:${a}` in codeCache)), 4, async (a) => {
+async function knownGauges(x, addresses) {
+  const c = x.chain
+  await pmap([...addresses].filter((a) => !(`gauge:${c.key}:${a}` in codeCache)), 4, async (a) => {
     const code = (await x.client.getCode({ address: a })) ?? '0x'
     const impl = code.length === 92 && code.startsWith('0x363d3d373d3d3d363d73') ? '0x' + code.slice(22, 62) : null
     codeCache[`gauge:${c.key}:${a}`] = Boolean(impl && c.gaugeImpls[impl])
   })
+}
+// The positions the wallets already held on a chain when its tracking starts, in the wallet or staked in
+// a gauge: the ledger only learns of positions from transactions, and a staked position may only be
+// claimed from afterwards. Read once at the start block (every pool's gauge of each position manager's
+// factory) and kept in data/cache/seed-<chain>.json.
+async function startPositions(x) {
+  const c = x.chain, cl = x.client, blockNumber = BigInt(c.scanFromBlock), out = []
+  for (const [npm, n] of Object.entries(c.npms)) {
+    for (const w of WALLETS) {
+      const held = await cl.readContract({ address: npm, abi: npmAbi, functionName: 'balanceOf', args: [w.address], blockNumber })
+      for (let i = 0n; i < held; i++) out.push({ wallet: w.address, npm, tokenId: (await cl.readContract({ address: npm, abi: npmAbi, functionName: 'tokenOfOwnerByIndex', args: [w.address, i], blockNumber })).toString() })
+    }
+    const count = Number(await cl.readContract({ address: n.factory, abi: factoryAbi, functionName: 'allPoolsLength', blockNumber }))
+    const pools = await pmap([...Array(count).keys()], 4, (i) => cl.readContract({ address: n.factory, abi: factoryAbi, functionName: 'allPools', args: [BigInt(i)], blockNumber }))
+    const gauges = [...new Set((await pmap(pools, 4, (p) => tryRead(cl.readContract({ address: p, abi: clPoolAbi, functionName: 'gauge', blockNumber })))).filter((g) => g && lc(g) !== ZERO).map(lc))]
+    await knownGauges(x, gauges)
+    for (const g of gauges.filter((a) => codeCache[`gauge:${c.key}:${a}`] === true)) {
+      for (const w of WALLETS) {
+        const ids = (await tryRead(cl.readContract({ address: g, abi: gaugeAbi, functionName: 'stakedValues', args: [w.address], blockNumber }))) ?? []
+        for (const id of ids) out.push({ wallet: w.address, npm, tokenId: id.toString(), gauge: g })
+      }
+    }
+  }
+  return out
+}
+for (const x of Object.values(ext)) {
+  const c = x.chain, txs = Object.values(x.state.txs)
+  const seedFile = path.resolve('data', 'cache', `seed-${c.key}.json`)
+  let seeds = readJson(seedFile, null)
+  if (seeds?.block !== c.scanFromBlock) { seeds = { block: c.scanFromBlock, positions: await startPositions(x) }; writeJson(seedFile, seeds) }
+  const seed = seeds.positions
+  const cands = new Set([...txs.flatMap((r) => r.logs.filter((l) => gaugeTopics.has(l.topics[0])).map((l) => l.address)), ...seed.filter((p) => p.gauge).map((p) => p.gauge)])
+  await knownGauges(x, cands)
   const ok = (a) => codeCache[`gauge:${c.key}:${a}`] === true
   const ask = new Map()
-  buildLedger(x.state, (a, b) => { ask.set(`${c.key}:${a}@${b}`, [a, b]); return 'contract' }, { gaugeOk: ok, overrides, chain: c })
+  buildLedger(x.state, (a, b) => { ask.set(`${c.key}:${a}@${b}`, [a, b]); return 'contract' }, { gaugeOk: ok, overrides, chain: c, seed })
   await pmap([...ask].filter(([k]) => !(k in codeCache)), 6, async ([k, [a, b]]) => {
     const code = await x.client.getCode({ address: a, blockNumber: BigInt(b) })
     codeCache[k] = !code || code === '0x' || code.startsWith('0xef0100') ? 'eoa' : 'contract'
   })
-  extLedger[c.key] = buildLedger(x.state, (a, b) => codeCache[`${c.key}:${a}@${b}`] ?? 'contract', { gaugeOk: ok, overrides, chain: c })
-  log(`${c.key}: checked ${ask.size} counterparties, ${cands.size} gauge candidates`)
+  extLedger[c.key] = buildLedger(x.state, (a, b) => codeCache[`${c.key}:${a}@${b}`] ?? 'contract', { gaugeOk: ok, overrides, chain: c, seed })
+  log(`${c.key}: checked ${ask.size} counterparties, ${cands.size} gauge candidates, ${seed.length} positions held at the start`)
 }
 writeJson(CODE_CACHE, codeCache)
 
@@ -279,6 +314,7 @@ for (const w of WALLETS) for (const b of blocks) snaps[w.key][b].escrow = escrow
 const prices = {}
 const eventBlocks = WALLETS.flatMap((w) => ledger[w.key].events.map((e) => e.block)).filter((b) => b > openingBlock && b <= head)
 await pmap([...new Set([...blocks, ...eventBlocks, ...Object.values(startBase).filter((b) => b <= head)])], 4, async (b) => { prices[b] = await pricesAt(b) })
+await savePrices(head)
 log(`valued ${blocks.length} day-end blocks and ${new Set(eventBlocks).size} event blocks`)
 const pNowCurve = prices[head]
 
@@ -337,7 +373,7 @@ for (const w of WALLETS) {
     for (const g of e.legs) {
       if (isExternal(g.cls)) flows.push({ block: e.block, ts: e.ts, asset: g.asset, amount: g.amount, usd: valueOf(g.asset, g.amount, p), kind: g.cls, bridge: e.bridge, hash: e.hash, cp: g.cp, chain: e.chain })
       // AERO (or xAERO) leaving, except to the wallet's own other chain.
-      if (isAero(g.asset) && g.amount < 0n && !g.crossChain) aeroOut.push({ block: e.block, amount: -g.amount, usd: valueOf(g.asset, -g.amount, p), between: g.cls === 'between' })
+      if (isAero(g.asset) && g.amount < 0n && !g.crossChain && !e.lp.length) aeroOut.push({ block: e.block, amount: -g.amount, usd: valueOf(g.asset, -g.amount, p), between: g.cls === 'between' })
     }
     for (const m of e.nftMoves) {
       const v = await positionValueAt(e.chain, m.npm, m.tokenId, e.chainBlock, p)
@@ -366,7 +402,8 @@ for (const w of WALLETS) {
   // an order paid to someone else is booked as money leaving.
   const byBlock = new Map()
   const escrowIn = new Map() // tx hash -> [asset, amount] moved into (+) or out of (-) what is on the way
-  for (const m of L.escrow) escrowIn.set(m.hash, [...(escrowIn.get(m.hash) ?? []), [m.asset, m.amount]])
+  // A matched transfer between chains releases only what arrived: its fee is a known cost, not a mismatch.
+  for (const m of L.escrow) escrowIn.set(m.hash, [...(escrowIn.get(m.hash) ?? []), [m.asset, m.received != null ? -m.received : m.amount]])
   for (const e of ev) {
     const p = prices[e.block]
     const k = `${e.chain}:${e.block}`
@@ -375,6 +412,9 @@ for (const w of WALLETS) {
     for (const leg of e.legs) if (leg.fromOrder) g.net -= valueOf(leg.asset, leg.amount, p)
     for (const [asset, amount] of escrowIn.get(e.hash) ?? []) g.net += valueOf(asset, amount, p)
     for (const x of lpEvents.filter((y) => y.hash === e.hash)) g.net += x.type === 'increase' ? x.usd : -x.usd
+    // Principal removed but left in the position, or collected later: what the position owes changes
+    // by it (lib/ledger.mjs), so a withdrawal split over two transactions balances in each.
+    for (const o of e.owed ?? []) { const pr = await pairOf(e.chain, o.npm, o.tokenId, e.chainBlock); g.net += valueOf(pr.token0, o.amount0, p) + valueOf(pr.token1, o.amount1, p) }
     for (const f of fees.filter((y) => y.hash === e.hash)) g.net -= valueOf(f.token0, f.amount0, p) + valueOf(f.token1, f.amount1, p)
     g.hashes.push(e.hash)
     g.review ||= e.review
@@ -425,11 +465,22 @@ function scopeAt(keys, b) {
   }
 }
 
+// Another chain's holdings at its start, valued then (lib/config.mjs CHAINS): on the day the chain
+// starts they join the day's starting figures, as if held from the start of the day, so they count as
+// neither the day's interest nor its LP result.
+function chainStarts(key, a, b) {
+  return Object.values(ext).filter((x) => startBase[x.chain.key] > a && startBase[x.chain.key] <= b && startBase[x.chain.key] <= head).map((x) => {
+    const s0 = x.snaps[key][x.chain.scanFromBlock], sb = startBase[x.chain.key]
+    return { block: sb, v: valueSnapshot({ ...s0, positions: s0.positions.map((p) => ({ ...p, chain: x.chain.key, chainBlock: s0.block })) }, prices[sb]) }
+  })
+}
+
 // Time-weighted LP value over (startB, endB]: liquidity added or removed during the day only counts
 // for the part of the day it was in the pool.
 function lpTimeWeighted(key, startB, endB) {
   let lp = valueSnapshot(snaps[key][startB], prices[startB]).lp
   const changes = [
+    ...chainStarts(key, startB, endB).map((o) => ({ block: o.block, d: o.v.lp })),
     ...walletData[key].lpEvents.filter((x) => x.block > startB && x.block <= endB).map((x) => ({ block: x.block, d: x.type === 'increase' ? x.usd : -x.usd })),
     ...walletData[key].nftFlows.filter((x) => x.block > startB && x.block <= endB).map((x) => ({ block: x.block, d: x.dir === 'in' ? x.usd : -x.usd })),
   ].sort((a, b) => a.block - b.block)
@@ -521,6 +572,11 @@ for (const w of WALLETS) {
   for (const d of days) {
     const b = dayBlock(d)
     const cur = scopeAt([w.key], b)
+    for (const { v } of chainStarts(w.key, prev.b, b)) {
+      const feeAccrued = { ...prev.feeAccrued }
+      for (const [t, a] of Object.entries(v.feeTok)) feeAccrued[t] = (feeAccrued[t] ?? 0n) + a
+      prev = { ...prev, feeAccrued, aeroAccrued: prev.aeroAccrued + v.pendingAero, lp: prev.lp + v.lp, owedUsd: prev.owedUsd + v.owedUsd, feesNow: prev.feesNow + v.fees, pending: prev.pending + v.pending, value: prev.value + v.total }
+    }
     // A wallet's rows start once it holds real money (more than dust) or money arrives.
     const started = prev.value > 10 || (firstFlowDay[w.key] && firstFlowDay[w.key] <= d)
     const earnAero = cur.aeroAccrued - prev.aeroAccrued
@@ -655,16 +711,18 @@ const toCheck = (keys) => {
       for (const { e, g } of legs) {
         const into = g.amount > 0n
         const amount = `${r6(Math.abs(units(g.amount, decOf(g.asset))))} ${symOf(g.asset)}`
-        out.push({ block: e.block, time_cst: cstTime(e.ts), wallet, tx: e.hash, usd: r2(valueOf(g.asset, g.amount, prices[e.block])),
+        out.push({ block: e.block, chain: e.chain, time_cst: cstTime(e.ts), wallet, tx: e.hash, usd: r2(valueOf(g.asset, g.amount, prices[e.block])),
           text: g.fromOrder
             ? (into ? `${amount} 从 ${short(g.cp)} 退回了挂单，暂按资金转入计` : `挂单把 ${amount} 付给了 ${short(g.cp)}，暂按资金转出计`)
             : `${into ? '收到' : '转出'} ${amount}，对方是不认识的合约 ${short(g.cp)}，暂按资金${into ? '转入' : '转出'}计` })
       }
-      if (!legs.length) out.push({ block: f.block, time_cst: cstTime(tsOfBlock(f.block)), wallet, tx: f.hashes[0], usd: null, text: `这个区块里策略内部的进出对不上，差 $${Math.abs(f.net).toFixed(2)}` })
+      if (!legs.length) out.push({ block: f.block, chain: f.chain, time_cst: cstTime(tsOfBlock(f.block)), wallet, tx: f.hashes[0], usd: null, text: `这个区块里策略内部的进出对不上，差 $${Math.abs(f.net).toFixed(2)}` })
     }
     // Tokens without a price have their own notice and alert (summary.unpriced).
-    for (const x of D.warnings.filter((y) => y.kind !== 'unpriced')) out.push({ block: x.block, time_cst: cstTime(tsOfBlock(x.block)), wallet, tx: x.hash, usd: null, text: x.text })
+    for (const x of D.warnings.filter((y) => y.kind !== 'unpriced')) out.push({ block: x.block, chain: x.chain ?? 'base', time_cst: cstTime(tsOfBlock(x.block)), wallet, tx: x.hash, usd: null, text: x.text })
   }
+  // Another chain's items say which chain (the page links them to its explorer, the alert names it).
+  for (const x of out) if (x.chain && x.chain !== 'base') x.text = `（${chainOf(x.chain).label}）${x.text}`
   return out.sort((a, b) => b.block - a.block)
 }
 
@@ -766,7 +824,10 @@ for (const w of WALLETS) {
   for (const [t, a] of Object.entries(v.lpTokens)) lp[t] = (lp[t] ?? 0n) + a
   for (const [t, a] of Object.entries(v.feeTok)) lp[t] = (lp[t] ?? 0n) + a
   for (const [asset, raw] of Object.entries(lp)) if (raw > 0n) holdings.push({ scope: w.key, scope_label: w.label, place: 'LP 仓位', asset: symOf(asset), amount: r6(units(raw, decOf(asset))), value_usd: r2(valueOf(asset, raw, pNow)) })
-  if (v.pendingAero > 0) holdings.push({ scope: w.key, scope_label: w.label, place: '待领奖励', asset: 'AERO', amount: r6(v.pendingAero), value_usd: r2(v.pending) })
+  for (const [ck, part] of Object.entries(s.parts ?? { base: s })) {
+    const units18 = units(part.positions.reduce((a, x) => a + x.pending, 0n) + part.deferred, 18)
+    if (units18 > 0) holdings.push({ scope: w.key, scope_label: w.label, place: ck === 'base' ? '待领奖励' : `待领奖励（${chainOf(ck).label}）`, asset: symOf(chainOf(ck).rewardToken), amount: r6(units18), value_usd: r2(units18 * (pNow.aero ?? 0)) })
+  }
 }
 
 // The ledger as people read it: money in and out, LP moves, rewards, fees, swaps, and anything to check.
@@ -777,7 +838,7 @@ for (const w of WALLETS) {
   const seenMint = new Set()
   for (const e of D.ev) {
     const p = prices[e.block]
-    const base = { scope: w.key, scope_label: w.label, time_cst: cstTime(e.ts), day: cstDay(e.ts), block: e.block, tx: e.hash, flagged: flaggedHashes.has(e.hash) }
+    const base = { scope: w.key, scope_label: w.label, chain: e.chain, time_cst: cstTime(e.ts), day: cstDay(e.ts), block: e.block, tx: e.hash, flagged: flaggedHashes.has(e.hash) }
     const ch = chainOf(e.chain)
     const cpLabel = (g) => (g.cls === 'bridge' ? `${e.bridge} 跨链` : g.cls === 'between' ? (g.amount > 0n ? '来自另一钱包' : '转给另一钱包') : LABELS[g.cp] ?? ch.strategy[g.cp] ?? ch.bridges[g.cp] ?? short(g.cp))
     for (const g of e.legs.filter((x) => isExternal(x.cls))) {
@@ -787,7 +848,7 @@ for (const w of WALLETS) {
       events.push({ ...base, kind: m.dir === 'in' ? '仓位转入' : '仓位转出', detail: `#${m.tokenId} · ${m.cls === 'between' ? (m.dir === 'in' ? '来自另一钱包' : '转给另一钱包') : short(m.cp)}`, usd: r2(m.dir === 'in' ? m.usd : -m.usd) })
     }
     for (const x of D.lpEvents.filter((y) => y.hash === e.hash)) {
-      const k = `${x.npm}:${x.tokenId}`
+      const k = `${e.chain}:${x.npm}:${x.tokenId}`
       const kind = x.type === 'decrease' ? '撤出流动性' : seenMint.has(k) ? '加仓' : '开仓'
       if (x.type === 'increase') seenMint.add(k)
       events.push({ ...base, kind, detail: `#${x.tokenId} · ${r6(units(x.amount0, decOf(x.token0)))} ${symOf(x.token0)} + ${r2(units(x.amount1, decOf(x.token1)))} ${symOf(x.token1)}`, usd: r2(x.usd) })
@@ -797,21 +858,32 @@ for (const w of WALLETS) {
     for (const f of D.fees.filter((y) => y.hash === e.hash)) {
       events.push({ ...base, kind: '收取手续费', detail: `#${f.tokenId} · ${r6(units(f.amount0, decOf(f.token0)))} ${symOf(f.token0)} + ${r6(units(f.amount1, decOf(f.token1)))} ${symOf(f.token1)}`, usd: r2(valueOf(f.token0, f.amount0, p) + valueOf(f.token1, f.amount1, p)) })
     }
+    // Moves between the tracked chains (lib/crosschain.mjs), and principal collected after it was removed.
+    for (const g of e.legs.filter((x) => x.crossChain)) {
+      const other = Object.values(CHAINS).filter((c) => c.key !== e.chain).map((c) => c.label).join('、')
+      events.push({ ...base, kind: g.amount > 0n ? '跨链转入' : '跨链转出', detail: `${g.amount > 0n ? `来自${other}` : `转到${other}`}${e.bridge ? `（${e.bridge}）` : ''} · ${r6(Math.abs(units(g.amount, decOf(g.asset))))} ${symOf(g.asset)}`, usd: r2(valueOf(g.asset, g.amount, p)) })
+    }
+    if (!e.lp.length && (e.owed ?? []).some((o) => o.amount0 < 0n || o.amount1 < 0n)) {
+      for (const o of e.owed.filter((y) => y.amount0 < 0n || y.amount1 < 0n)) {
+        const pr = await pairOf(e.chain, o.npm, o.tokenId, e.chainBlock)
+        events.push({ ...base, kind: '取回本金', detail: `#${o.tokenId} · ${r6(units(-o.amount0, decOf(pr.token0)))} ${symOf(pr.token0)} + ${r6(units(-o.amount1, decOf(pr.token1)))} ${symOf(pr.token1)}`, usd: r2(-(valueOf(pr.token0, o.amount0, p) + valueOf(pr.token1, o.amount1, p))) })
+      }
+    }
     // Swaps: internal legs of a transaction with no liquidity change, netted per asset.
-    if (!e.lp.length && !e.fees.length && !e.rewards.length) {
+    if (!e.lp.length && !e.fees.length && !e.rewards.length && !(e.owed ?? []).length) {
       const net = {}
-      for (const g of e.legs.filter((x) => x.cls === 'internal')) net[g.asset] = (net[g.asset] ?? 0n) + g.amount
+      for (const g of e.legs.filter((x) => x.cls === 'internal' && !x.crossChain)) net[g.asset] = (net[g.asset] ?? 0n) + g.amount
       const outs = Object.entries(net).filter(([, a]) => a < 0n), ins = Object.entries(net).filter(([, a]) => a > 0n)
       if (outs.length || ins.length) {
         const fmt = ([a, x]) => `${r6(Math.abs(units(x, decOf(a))))} ${symOf(a)}`
         const detail = outs.length && ins.length ? `${outs.map(fmt).join(' + ')} → ${ins.map(fmt).join(' + ')}` : outs.length ? `付出 ${outs.map(fmt).join(' + ')}（成交在另一笔交易）` : `收到 ${ins.map(fmt).join(' + ')}（挂单成交）`
         const usd = outs.length ? sum(outs, ([x, r]) => -valueOf(x, r, p)) : sum(ins, ([x, r]) => valueOf(x, r, p))
-        const wrap = outs.length > 0 && ins.length > 0 && Object.keys(net).every((a) => a === 'ETH' || a === WETH)
+        const wrap = outs.length > 0 && ins.length > 0 && Object.keys(net).every((a) => hodlKey(a) === 'ETH')
         events.push({ ...base, kind: wrap ? '包装 ETH' : '兑换', detail, usd: r2(Math.abs(usd)) })
       }
     }
   }
-  for (const x of D.warnings) events.push({ scope: w.key, scope_label: w.label, time_cst: cstTime(tsOfBlock(x.block)), day: cstDay(tsOfBlock(x.block)), block: x.block, tx: x.hash, kind: '待确认', detail: x.text, usd: null, flagged: true })
+  for (const x of D.warnings) events.push({ scope: w.key, scope_label: w.label, chain: x.chain ?? 'base', time_cst: cstTime(tsOfBlock(x.block)), day: cstDay(tsOfBlock(x.block)), block: x.block, tx: x.hash, kind: '待确认', detail: x.text, usd: null, flagged: true })
 }
 events.sort((a, b) => b.block - a.block || a.scope.localeCompare(b.scope))
 events.forEach((r, i) => { r.id = events.length - i })

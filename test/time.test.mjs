@@ -80,3 +80,17 @@ test('runs after the fork keep working, find each day once and keep the cache sm
   assert.ok(calls <= 30, `a run late on read ${calls} blocks`)
   assert.ok(fs.statSync(file).size < 4000, `cache is ${fs.statSync(file).size} bytes`)
 })
+
+test('times placed past the change are found once and kept for the next run', async () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-')), 'timeline.json')
+  const head = FORK + 5 * 86400 * 2
+  const asks = [1, 2, 3].map((k) => formulaTs(FORK) + k * 3600 + 7)
+  const first = await createTimeline(fakeClient(), head, file)
+  const got = await Promise.all(asks.map((t) => first.blockBefore(t)))
+  first.save()
+  const c = fakeClient()
+  const again = await createTimeline(c, head, file)
+  assert.deepEqual(await Promise.all(asks.map((t) => again.blockBefore(t))), got)
+  assert.equal(c.calls.n, 1) // only the head
+  for (const b of got) assert.equal(again.tsOf(b), tsAt(b))
+})

@@ -177,7 +177,7 @@
   <section class="lp-about" id="about">
     <ul>
       <li>投入：从外面转进钱包的钱，按到账时的价格算美元。现值：钱包里的币、池子里的币和没领的奖励，按现在的价格算。</li>
-      <li>数据来自 Base 链上：利息和投入大约每小时更新一次；ETH 价格和跟着它变的数字（现值、盈亏、区间位置、撤出成本价）每 15 秒直接从链上读一次。按北京时间切日。</li>
+      <li>数据来自 Base 和以太坊链上（以太坊从 2026-10-31 起），价格都按 Base 上的池子算：利息和投入大约每小时更新一次；ETH 价格和跟着它变的数字（现值、盈亏、区间位置、撤出成本价）每 15 秒直接从链上读一次。按北京时间切日。</li>
       <li>ETH 成本价：把流动性撤出来，拿着手里所有的 ETH（撤出来的加上钱包里原有的），等 ETH 涨到成本价以上再全部卖出，投入的钱一分不少、目前为止的利息全部到手。按现在的持仓算；之后再赚的利息会同时算进手里的资产，所以成本价不变、回本价会更低。没卖的 AERO 按今天的价格算，卖出手续费没算。</li>
     </ul>
   </section>
@@ -656,9 +656,10 @@
   // Each chain's public RPCs; a position on another chain than Base names its chain (curve positions).
   const RPCS = {
     base: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'],
-    eth: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://cloudflare-eth.com'],
+    eth: ['https://ethereum-rpc.publicnode.com', 'https://rpc.mevblocker.io', 'https://eth.blockrazor.xyz'],
   };
   const CHAIN_NAMES = { eth: '以太坊' };
+  const EXPLORERS = { base: 'https://basescan.org', eth: 'https://etherscan.io' };
   const LIVE_EVERY = 15000, LIVE_STALE = 120000;
   let live = null, liveFailed = false, liveBusy = null, dataFailed = false;
   const rpcFirst = {};
@@ -857,7 +858,7 @@
       const ul = document.createElement('ul');
       for (const x of checks) {
         const li = document.createElement('li'), a = document.createElement('a');
-        a.href = `https://basescan.org/tx/${x.tx}`; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = '查看交易';
+        a.href = `${EXPLORERS[x.chain] ?? EXPLORERS.base}/tx/${x.tx}`; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = '查看交易';
         li.append(`${x.time_cst}${s.scope === 'total' ? ` · ${x.wallet}` : ''} · ${x.text}${x.usd != null ? `（${fmtSigned(x.usd)}）` : ''} · `, a);
         ul.append(li);
       }

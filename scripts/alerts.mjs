@@ -12,7 +12,7 @@ const topic = process.env.NTFY_TOPIC?.trim()
 const STATE = 'data/cache/alerts.json', LAST = 'data/cache/last-summary.json', SITE = 'https://0xoneshot.github.io/aero-lp-dashboard/'
 const RPCS = {
   base: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'],
-  eth: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://cloudflare-eth.com'],
+  eth: ['https://ethereum-rpc.publicnode.com', 'https://rpc.mevblocker.io', 'https://eth.blockrazor.xyz'],
 }
 
 // slot0() of one chain's WETH/USDC pools (18 and 6 decimals), as the page reads them: [{ address, invert }]
@@ -40,17 +40,20 @@ async function lastSummaryLive() {
   // The reference pool is on Base; each position's pool on its own chain.
   const want = new Map(ref ? [[`base:${ref}`, { chain: 'base', address: ref, invert: false }]] : [])
   for (const p of summary.flatMap((r) => r.curve?.positions ?? [])) if (p.pool_address) want.set(`${p.chain ?? 'base'}:${p.pool_address}`, { chain: p.chain ?? 'base', address: p.pool_address, invert: Boolean(p.invert) })
+  // Each sane quote counts on its own: one chain's RPCs being down leaves the other chain's alerts working
+  // (lib/alerts.mjs holds the ranges whose pool had no quote).
   const live = {}
   for (const chain of new Set([...want.values()].map((q) => q.chain))) {
     const keys = [...want].filter(([, q]) => q.chain === chain)
     const got = await slot0s(chain, keys.map(([, q]) => q))
-    if (got) keys.forEach(([k], i) => { live[k] = got[i] })
+    if (got) keys.forEach(([k], i) => { if (got[i].price > hourly / 2 && got[i].price < hourly * 2) live[k] = got[i] })
   }
-  if (!ref || Object.keys(live).length < want.size || Object.values(live).some((x) => !(x.price > hourly / 2 && x.price < hourly * 2))) {
+  const eth = ref && live[`base:${ref}`]?.price
+  if (!eth) {
     console.log('alerts: no live prices either')
     return { summary, live: false }
   }
-  return { summary: withLivePrices(summary, live, live[`base:${ref}`].price), live: true }
+  return { summary: withLivePrices(summary, live, eth), live: true }
 }
 
 async function send(m) {
