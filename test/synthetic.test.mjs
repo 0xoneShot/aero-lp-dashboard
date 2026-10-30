@@ -344,3 +344,43 @@ test('two CoW orders of one wallet filled together: the one paying another recei
   assert.deepEqual(legsOf(L, 'a', '0xe3').sort(), ['0x4200:-2000000000000000000:transfer:review', '0x8335:5000000000:internal'])
   assert.equal(escrowAt(L.a.escrow, 102), 0n)
 })
+
+// Ethereum: xAERO rewards paid by the emissions handler, and xAERO redeemed into AERO on Base.
+import { CHAINS } from '../lib/config.mjs'
+import { matchCrossChain } from '../lib/crosschain.mjs'
+const ETHC = CHAINS.eth, XAERO = ETHC.rewardToken, HANDLER = ETHC.rewardPayers[1], ETH_GAUGE = '0x9de929252c9017fe8a4cd5986475a658ad87ce33'
+const LEAF = ETHC.bridgeLogs[0].address, REDEEMED = ETHC.bridgeLogs[0].topic0
+const BASE_MAILBOX = CHAINS.base.bridgeLogs[0].address, PROCESS = CHAINS.base.bridgeLogs[0].topic0
+const ledgerOn = (chain, txs) => {
+  const state = { wallets: { a: { openingBlock: 0, openingEth: '0' }, b: { openingBlock: 0, openingEth: '0' } },
+    txs: Object.fromEntries(txs.map((t, i) => [t.hash, { block: 100 + i, index: 0, ts: 1000 + i * 100, from: EOA, to: EOA, selector: '0x12345678', value: '0', status: 'success', gasCost: '0', eth: {}, ...t, logs: t.logs.map((l, j) => ({ ...l, logIndex: j })) }])) }
+  return buildLedger(state, () => 'contract', { gaugeOk: (a) => a === ETH_GAUGE, wallets: WALLETS, chain })
+}
+
+test('on Ethereum, xAERO paid by the emissions handler for a claim is a reward', () => {
+  const L = ledgerOn(ETHC, [{ hash: '0xf1', from: WA, logs: [claim(ETH_GAUGE, WA, 9, WA, 5n * 10n ** 18n), transfer(XAERO, ZERO, HANDLER, 5n * 10n ** 18n), transfer(XAERO, HANDLER, WA, 5n * 10n ** 18n)] }])
+  assert.deepEqual(legsOf(L, 'a', '0xf1'), [`0x9e14:${5n * 10n ** 18n}:reward`])
+  assert.equal(L.a.events[0].rewards[0].amount, 5n * 10n ** 18n)
+})
+
+test('xAERO redeemed on Ethereum and the AERO minted on Base are one move between the chains', () => {
+  const X = 46n * 10n ** 18n
+  const eth = ledgerOn(ETHC, [{ hash: '0xf2', from: WA, to: LEAF, logs: [transfer(XAERO, WA, ZERO, X), { address: LEAF, topics: [REDEEMED, pad(WA), pad(WA)], data: num(X) }] }])
+  const base = ledgerOn(CHAINS.base, [{ hash: '0xf3', from: EOA, to: BASE_MAILBOX, ts: 1190, logs: [{ address: BASE_MAILBOX, topics: [PROCESS, num(1), pad(EOA), pad(EOA)], data: '0x' }, transfer(AERO, ZERO, WA, X), transfer(AERO, ZERO, EOA, X / 20n)] }])
+  assert.deepEqual([legsOf(eth, 'a', '0xf2'), legsOf(base, 'a', '0xf3')], [[`0x9e14:${-X}:bridge`], [`0x3f5b:${X}:bridge`]])
+  const events = [...eth.a.events.map((e) => ({ ...e, chain: 'eth' })), ...base.a.events.map((e) => ({ ...e, chain: 'base' }))]
+  const canon = (a) => (a === XAERO ? AERO : a)
+  const transit = matchCrossChain(events, canon, () => 18)
+  assert.deepEqual(events.map((e) => e.legs[0].cls), ['internal', 'internal'])
+  assert.deepEqual(transit.map((m) => [m.asset, m.amount]), [[AERO, X], [AERO, -X]])
+})
+
+test('Aero\'s own Hyperlane messages do not make a transaction cross-chain; a warp route does', () => {
+  const MB = '0xc005dc82818d67af737725bd4bf75435d065d239', DISPATCH = '0x769f711d20c679153d382254f59892613b58a97cc876b249134ac25c80f9c814'
+  const ADAPTER = '0x4aaff8cfb43e2cefbbbf4c133c934db6ba7e4c14', WARP = '0x00000000000000000000000000000000000c0ffe'
+  const L = ledgerOn(ETHC, [
+    { hash: '0xf4', from: WA, logs: [transfer(ETHC.usdc, WA, '0x0fef9e88a7b76bcdbf451780c6774fe32965ee98', 5n), { address: MB, topics: [DISPATCH, pad(ADAPTER), num(8453), pad(EOA)], data: '0x' }] },
+    { hash: '0xf5', from: WA, logs: [transfer(ETHC.usdc, WA, '0x0fef9e88a7b76bcdbf451780c6774fe32965ee98', 5n), { address: MB, topics: [DISPATCH, pad(WARP), num(8453), pad(EOA)], data: '0x' }] },
+  ])
+  assert.deepEqual([legsOf(L, 'a', '0xf4'), legsOf(L, 'a', '0xf5')], [['0xa0b8:-5:internal'], ['0xa0b8:-5:bridge']])
+})

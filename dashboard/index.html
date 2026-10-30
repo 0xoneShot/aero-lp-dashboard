@@ -255,7 +255,7 @@
     // Positions of one wallet with the same range move together: show them as one.
     const ps = [];
     for (const p of s.curve?.positions ?? []) {
-      const same = ps.find((q) => q.wallet === p.wallet && q.low === p.low && q.high === p.high);
+      const same = ps.find((q) => q.wallet === p.wallet && q.low === p.low && q.high === p.high && (q.chain ?? 'base') === (p.chain ?? 'base'));
       if (same) same.L += p.L; else ps.push({ ...p });
     }
     if (!ps.length) return;
@@ -268,7 +268,7 @@
       const row = el('div', 'lp-range');
       const at0 = p.pool ?? now, inside = p.in_range ?? (at0 >= p.low && at0 < p.high), under = at0 < (p.low + p.high) / 2;
       const head = el('div', 'lp-range-head');
-      head.append(el('span', null, `${several ? p.wallet + ' · ' : ''}${fmtUsd(p.low)} – ${fmtUsd(p.high)}`),
+      head.append(el('span', null, `${several ? p.wallet + ' · ' : ''}${CHAIN_NAMES[p.chain] ? CHAIN_NAMES[p.chain] + ' · ' : ''}${fmtUsd(p.low)} – ${fmtUsd(p.high)}`),
         el('span', `lp-range-tag ${inside ? 'in' : 'out'}`, inside ? '区间内' : under ? '已跌破' : '已涨破'));
       const track = el('div', 'lp-track');
       const seg = el('i', 'lp-seg'); seg.style.left = at(p.low); seg.style.width = `calc(${at(p.high)} - ${at(p.low)})`; seg.style.background = walletColor(p.wallet);
@@ -653,27 +653,36 @@
   // reads the current price of the reference pool and of each position's pool straight from Base
   // (pool contracts only: no wallet address is sent) and redoes the price-driven figures from the
   // published curve, the same way src/run.mjs values them. AERO stays at the hourly price.
-  const RPCS = ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'];
+  // Each chain's public RPCs; a position on another chain than Base names its chain (curve positions).
+  const RPCS = {
+    base: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'],
+    eth: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://cloudflare-eth.com'],
+  };
+  const CHAIN_NAMES = { eth: '以太坊' };
   const LIVE_EVERY = 15000, LIVE_STALE = 120000;
-  let live = null, liveFailed = false, liveBusy = null, rpcFirst = 0, dataFailed = false;
-  async function rpcBatch(calls) {
+  let live = null, liveFailed = false, liveBusy = null, dataFailed = false;
+  const rpcFirst = {};
+  async function rpcBatch(chain, calls) {
+    const urls = RPCS[chain] ?? RPCS.base;
     let err;
-    for (let k = 0; k < RPCS.length; k++) {
-      const i = (rpcFirst + k) % RPCS.length, ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 6000);
+    for (let k = 0; k < urls.length; k++) {
+      const i = ((rpcFirst[chain] ?? 0) + k) % urls.length, ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 6000);
       try {
-        const r = await fetch(RPCS[i], { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(calls), signal: ctl.signal });
+        const r = await fetch(urls[i], { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(calls), signal: ctl.signal });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const out = await r.json();
         if (!Array.isArray(out) || out.length !== calls.length || out.some((x) => x.error || typeof x.result !== 'string' || x.result.length < 130)) throw new Error('bad reply');
-        rpcFirst = i;
+        rpcFirst[chain] = i;
         return out.sort((a, b) => a.id - b.id).map((x) => x.result);
       } catch (e) { err = e; } finally { clearTimeout(t); }
     }
     throw err;
   }
-  const slot0 = (hex) => {
+  // A WETH/USDC pool's dollar price and tick from slot0 (18 and 6 decimals); `invert` where USDC is
+  // token0 (Ethereum), so its raw price is ETH per dollar.
+  const slot0 = (hex, invert) => {
     const w = hex.slice(2), x = Number(BigInt('0x' + w.slice(0, 64))) / 2 ** 96;
-    return { price: x * x * 1e12, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) }; // WETH/USDC: 18 and 6 decimals
+    return { price: invert ? 1e12 / (x * x) : x * x * 1e12, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) };
   };
   // One read at a time; a caller during a read waits for it.
   function readLive() {
@@ -686,13 +695,20 @@
   async function doReadLive(S) {
     const ref = S.data[0].eth_ref_pool;
     if (!ref) return;
-    const pools = [...new Set(S.data.flatMap((r) => (r.curve?.positions ?? []).map((p) => p.pool_address)).filter(Boolean))];
-    const addrs = [ref, ...pools.filter((a) => a !== ref)];
+    // The reference pool is on Base; each position's pool is read on its own chain.
+    const want = new Map([[`base:${ref}`, { chain: 'base', address: ref, invert: false }]]);
+    for (const p of S.data.flatMap((r) => r.curve?.positions ?? [])) if (p.pool_address) want.set(`${p.chain ?? 'base'}:${p.pool_address}`, { chain: p.chain ?? 'base', address: p.pool_address, invert: Boolean(p.invert) });
+    const byChain = {};
+    for (const [k, q] of want) (byChain[q.chain] ??= []).push([k, q]);
     try {
-      const res = (await rpcBatch(addrs.map((to, id) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to, data: '0x3850c7bd' }, 'latest'] })))).map(slot0);
+      const read = await Promise.all(Object.entries(byChain).map(async ([chain, qs]) => {
+        const out = await rpcBatch(chain, qs.map(([, q], id) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to: q.address, data: '0x3850c7bd' }, 'latest'] })));
+        return qs.map(([k, q], i) => [k, slot0(out[i], q.invert)]);
+      }));
+      const res = Object.fromEntries(read.flat());
       const hourly = S.data[0].eth_usd;
-      if (res.some((x) => !(x.price > hourly / 2 && x.price < hourly * 2))) throw new Error('implausible price');
-      live = { ref: res[0].price, pools: Object.fromEntries(addrs.map((a, i) => [a, res[i]])), at: Date.now() };
+      if (Object.values(res).some((x) => !(x.price > hourly / 2 && x.price < hourly * 2))) throw new Error('implausible price');
+      live = { ref: res[`base:${ref}`].price, pools: res, at: Date.now() };
       liveFailed = false;
     } catch (e) {
       liveFailed = true;
@@ -720,7 +736,7 @@
   function applyLive(s) {
     if (!live || !s?.curve || staleHours(s)) return s;
     const ps = s.curve.positions.map((p) => {
-      const q = live.pools[p.pool_address];
+      const q = live.pools[`${p.chain ?? 'base'}:${p.pool_address}`];
       return q ? { ...p, pool: q.price, in_range: q.tick >= p.tick_lower && q.tick < p.tick_upper } : p;
     });
     let value = s.curve.usd + s.curve.eth * live.ref;

@@ -101,10 +101,10 @@ const outage = { ...row(2200), invested_usd: 2300, earn_total_usd: 0, cost_eth_p
   curve: { eth: 0, usd: 0, positions: [{ low: 2000, high: 2500, pool: 2200, in_range: true, pool_address: pool, tick_lower: -200311, tick_upper: -198080, L, sa, sb }] } }
 
 test('while the update fails, ranges and the cost price follow live pool prices', () => {
-  const [below] = withLivePrices([outage], { [pool]: { tick: -201000, price: 1900 } }, 1901)
+  const [below] = withLivePrices([outage], { [`base:${pool}`]: { tick: -201000, price: 1900 } }, 1901)
   assert.deepEqual([below.range_state, below.eth_usd, below.curve.positions[0].in_range, below.curve.positions[0].pool, below.now_cost_eth_price], ['below', 1901, false, 1900, 2300])
   // Inside the range the cost price is worked out on the curve at the pool's price, as src/run.mjs does.
-  const [inside] = withLivePrices([outage], { [pool]: { tick: -199134, price: 2250 } }, 2251)
+  const [inside] = withLivePrices([outage], { [`base:${pool}`]: { tick: -199134, price: 2250 } }, 2251)
   const r = Math.sqrt(2250e-12), e = (L * (1 / r - 1 / sb)) / 1e18, u = (L * (r - sa)) / 1e6
   assert.deepEqual([inside.range_state, inside.now_cost_eth_price], ['in', Math.round(((2300 - u) / e) * 100) / 100])
   const { messages } = evaluate([below, total], { 'a:2000-2500': 'in', 'a:cost': 'na' })
@@ -114,13 +114,13 @@ test('while the update fails, ranges and the cost price follow live pool prices'
 
 test('from the last good data, a range coming back waits for fresh data; without live prices nothing price-driven moves', () => {
   const prev = { 'a:2000-2500': 'below', 'a:cost': 'below' }
-  const [back] = withLivePrices([outage], { [pool]: { tick: -199134, price: 2250 } }, 2251)
+  const [back] = withLivePrices([outage], { [`base:${pool}`]: { tick: -199134, price: 2250 } }, 2251)
   const r = evaluate([back, total], prev, { lastGood: true })
   assert.deepEqual([r.messages.map((m) => m.kind), r.state['a:2000-2500'], r.state['a:cost']], [[], 'below', 'below'])
   const n = evaluate([outage, total], prev, { lastGood: true, noPrices: true })
   assert.deepEqual([n.messages.map((m) => m.kind), n.state['a:2000-2500'], n.state['a:cost']], [[], 'below', 'below'])
   // Still falling: the alert goes out at live prices.
-  const [down] = withLivePrices([outage], { [pool]: { tick: -201000, price: 1900 } }, 1901)
+  const [down] = withLivePrices([outage], { [`base:${pool}`]: { tick: -201000, price: 1900 } }, 1901)
   assert.deepEqual(evaluate([down, total], { 'a:2000-2500': 'in', 'a:cost': 'na' }, { lastGood: true }).messages.map((m) => m.kind), ['below'])
 })
 
@@ -130,4 +130,12 @@ test('settling one of many transactions to check does not bring an older one bac
   const settled = items.slice(1).filter((x) => x.tx !== '0x7')
   const { out } = run(null, [row(2200), at(items), at(items), at(items.slice(1)), at(settled), at([{ ...items[0], tx: '0xnew' }, ...settled])])
   assert.deepEqual(out, [[], ['check'], [], [], [], ['check']])
+})
+
+test('a range on another chain is kept apart and named by its chain', () => {
+  const both = { ...outage, curve: { ...outage.curve, positions: [outage.curve.positions[0], { ...outage.curve.positions[0], chain: 'eth', pool_address: '0xd661623947ef2ead12d577b47021c167d163b0c5', pool: 1900, in_range: false }] } }
+  const { messages, state } = evaluate([both, total], { 'a:2000-2500': 'in', 'a:eth:2000-2500': 'in', 'a:cost': 'na' })
+  assert.deepEqual(messages.map((m) => [m.key, m.kind]), [['a:eth:2000-2500', 'below']])
+  assert.match(messages[0].title, /^A（以太坊） 跌出区间/)
+  assert.equal(state['a:2000-2500'], 'in')
 })

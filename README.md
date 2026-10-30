@@ -1,9 +1,9 @@
 # Aero LP 收益看板
 
-追踪 Base 上少数几个钱包在 Aero（原 Aerodrome）做 WETH/USDC 集中流动性并质押的每日收益与整体盈亏。
+追踪少数几个钱包在 Aero（原 Aerodrome）做 WETH/USDC 集中流动性并质押的每日收益与整体盈亏，Base 和以太坊上的合在一起算。
 
 - 网站：<https://0xoneshot.github.io/aero-lp-dashboard/>。打开后输入钱包地址才显示数据；输入多个地址看合计。
-- 数据全部来自 Base 链上：用存档节点读取每天北京时间 24:00 那个区块的状态，不依赖任何需要密钥的第三方接口。
+- 数据全部来自链上：用存档节点读取每天北京时间 24:00 那一刻 Base 和以太坊的状态，不依赖任何需要密钥的第三方接口。
 
 ## 隐私
 
@@ -72,6 +72,16 @@ npm run serve       # 本地预览 http://localhost:4173
 - **价格**：ETH 取 Uniswap v3 WETH/USDC 0.05% 池；AERO 取 Aero 上 vAMM AERO/USDC、CL200 AERO/USDC、CL200 AERO/WETH 三个池的中位数；cbBTC、cbETH 取 Chainlink；USDC、USDT、USDbC、DAI 按 1 美元。
 - **天**：北京时间自然日；今天按最新的 safe 区块计算，标为"今日至今"。
 
+## 以太坊
+
+Aero 2026-10-21 上线以太坊后，同一组钱包地址从北京时间 2026-10-31 0 点起也在以太坊上追踪（`lib/config.mjs` 的 `CHAINS.eth`），之前在以太坊上的活动不算，那一刻持有的东西算作当时投入的钱，所以之前的日子数字不变。
+
+- **同一时刻**：两条链都在每天 24:00 估值，价格都用 Base 上的池子；"现在"取两条链都已确认（safe）的同一时刻，以太坊的 safe 区块大约落后几分钟，Base 的"现在"也跟着退到那一刻。
+- **代币顺序**：以太坊的 WETH/USDC 池里 USDC 在前，Base 的相反；仓位一律换成"每 ETH 多少美元"来算（`lib/curve.mjs`），页面和提醒读以太坊池子时用以太坊的公共节点。
+- **奖励**：以太坊上质押拿的是 xAERO（由奖励合约转来），按 AERO 价格计。xAERO 在以太坊上销毁、大约 3 分钟后在 Base 上 1:1 收到 AERO（赎回），算两条链之间的内部移动。
+- **跨链**：同一个钱包在 Base 和以太坊之间转币（Across、CCTP、Stargate、deBridge、官方桥等，6 小时内到账、损耗不超过 3%、同一种币），算策略内部的移动：在路上的币算现值，跨链手续费进盈亏（`lib/crosschain.mjs`）。对不上的仍按资金进出计；Relay 的到账是普通转账，认不出是跨链，也按资金进出计。
+- **节点**：以太坊的存档读取用 MEV Blocker（drpc 备用），不带地址的日志查询用 Tenderly，调用追踪用 drpc。
+
 ## 资金流水怎么识别
 
 `lib/scan.mjs` 用三张网找出所有改变钱包的交易，只扫到 Base 的 `safe` 区块（约落后 20 秒），避免链重组留下幽灵交易：
@@ -82,7 +92,7 @@ npm run serve       # 本地预览 http://localhost:4173
 
 `lib/ledger.mjs` 再逐笔分类：
 
-- 带跨链桥事件（Across、CCTP、deBridge、Relay、Stargate、Base 官方桥）的算跨链进出；
+- 带跨链桥事件（Across、CCTP、deBridge、Relay、Stargate、Base 官方桥、Hyperlane）的算跨链进出，两条被追踪的链之间的配对后算内部移动；
 - 单向、对手方是普通账户（交易所、个人）的算转入转出；
 - 被追踪钱包之间的算互转；
 - 有进有出（兑换）、带 LP 或奖励事件、或经过已知路由与结算合约（`lib/config.mjs` 的 `STRATEGY`）的，是策略内部的移动；

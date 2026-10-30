@@ -3,27 +3,31 @@
 // data/cache/alerts.json, which travels with the encrypted scan cache. Without NTFY_TOPIC it only
 // keeps the state up to date. `--test` sends one test message.
 // With UPDATE_OK=false (the update or its checks failed) it alerts from the last good summary, kept in
-// data/cache/last-summary.json, at live pool prices read from public Base RPCs (pool contracts only).
+// data/cache/last-summary.json, at live pool prices read from each chain's public RPCs (pool contracts only).
 // Only counts are printed: the hourly job's logs are public, and the alerts name the wallets.
 import fs from 'node:fs'
 import { evaluate, withLivePrices } from '../lib/alerts.mjs'
 
 const topic = process.env.NTFY_TOPIC?.trim()
 const STATE = 'data/cache/alerts.json', LAST = 'data/cache/last-summary.json', SITE = 'https://0xoneshot.github.io/aero-lp-dashboard/'
-const RPCS = ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org']
+const RPCS = {
+  base: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'],
+  eth: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://cloudflare-eth.com'],
+}
 
-// slot0() of WETH/USDC pools (18 and 6 decimals), as the page reads them.
-async function slot0s(addresses) {
-  const calls = addresses.map((to, id) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to, data: '0x3850c7bd' }, 'latest'] }))
-  for (const url of RPCS) {
+// slot0() of one chain's WETH/USDC pools (18 and 6 decimals), as the page reads them: [{ address, invert }]
+// -> [{ price, tick }], the price in dollars per ETH (inverted where USDC is token0).
+async function slot0s(chain, pools) {
+  const calls = pools.map((p, id) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to: p.address, data: '0x3850c7bd' }, 'latest'] }))
+  for (const url of RPCS[chain] ?? []) {
     try {
       const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(calls), signal: AbortSignal.timeout(10_000) })
       const out = await r.json()
       if (!Array.isArray(out) || out.length !== calls.length || out.some((x) => x.error || typeof x.result !== 'string' || x.result.length < 130)) continue
-      return Object.fromEntries(out.sort((a, b) => a.id - b.id).map((x, i) => {
+      return out.sort((a, b) => a.id - b.id).map((x, i) => {
         const w = x.result.slice(2), q = Number(BigInt('0x' + w.slice(0, 64))) / 2 ** 96
-        return [addresses[i], { price: q * q * 1e12, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) }]
-      }))
+        return { price: pools[i].invert ? 1e12 / (q * q) : q * q * 1e12, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) }
+      })
     } catch {}
   }
   return null
@@ -33,13 +37,20 @@ async function lastSummaryLive() {
   if (!fs.existsSync(LAST)) return null
   const summary = JSON.parse(fs.readFileSync(LAST, 'utf8'))
   const ref = summary[0]?.eth_ref_pool, hourly = summary[0]?.eth_usd
-  const pools = [...new Set(summary.flatMap((r) => (r.curve?.positions ?? []).map((p) => p.pool_address)).filter(Boolean))]
-  const live = ref ? await slot0s([ref, ...pools.filter((a) => a !== ref)]) : null
-  if (!live || Object.values(live).some((x) => !(x.price > hourly / 2 && x.price < hourly * 2))) {
+  // The reference pool is on Base; each position's pool on its own chain.
+  const want = new Map(ref ? [[`base:${ref}`, { chain: 'base', address: ref, invert: false }]] : [])
+  for (const p of summary.flatMap((r) => r.curve?.positions ?? [])) if (p.pool_address) want.set(`${p.chain ?? 'base'}:${p.pool_address}`, { chain: p.chain ?? 'base', address: p.pool_address, invert: Boolean(p.invert) })
+  const live = {}
+  for (const chain of new Set([...want.values()].map((q) => q.chain))) {
+    const keys = [...want].filter(([, q]) => q.chain === chain)
+    const got = await slot0s(chain, keys.map(([, q]) => q))
+    if (got) keys.forEach(([k], i) => { live[k] = got[i] })
+  }
+  if (!ref || Object.keys(live).length < want.size || Object.values(live).some((x) => !(x.price > hourly / 2 && x.price < hourly * 2))) {
     console.log('alerts: no live prices either')
     return { summary, live: false }
   }
-  return { summary: withLivePrices(summary, live, live[ref].price), live: true }
+  return { summary: withLivePrices(summary, live, live[`base:${ref}`].price), live: true }
 }
 
 async function send(m) {
