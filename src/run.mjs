@@ -64,7 +64,8 @@ const tsOfBlock = timeline.tsOf
 // fix kept computing 2-second times).
 for (const t of Object.values(state.txs)) t.ts = tsOfBlock(t.block)
 log(`scanned to ${state.scannedTo}, ${Object.keys(state.txs).length} transactions`)
-const overrides = readJson(path.resolve(OVERRIDES_FILE), {})
+// Hand corrections are read strictly: a mistake in the file stops the run rather than drop them all.
+const overrides = fs.existsSync(path.resolve(OVERRIDES_FILE)) ? JSON.parse(fs.readFileSync(path.resolve(OVERRIDES_FILE), 'utf8')) : {}
 
 // A gauge counts only if it is a minimal-proxy clone of a known gauge implementation.
 const codeCache = readJson(CODE_CACHE, {})
@@ -676,4 +677,4 @@ writeJson(path.join(OUT, 'holdings.json'), holdings)
 writeJson(path.join(OUT, 'events.json'), events)
 writeJson(path.join(OUT, 'flows.json'), WALLETS.flatMap((w) => walletData[w.key].flows.map((f) => ({ scope: w.key, ...f, amount: units(f.amount, decOf(f.asset)), asset: symOf(f.asset) }))))
 // Only counts are printed: the hourly job's logs are public.
-log(`wrote out/ as of block ${head} (${cstTime(tsOfBlock(head))} CST): ${daily.length} daily rows, ${events.length} ledger rows, ${summary.find((s) => s.scope === 'total')?.flagged ?? 0} to check, ${Object.keys(unpricedSymbols).length} tokens without a price`)
+log(`wrote out/ as of block ${head} (${cstTime(tsOfBlock(head))} CST): ${daily.length} daily rows, ${events.length} ledger rows, ${summary.find((s) => s.scope === 'total')?.to_check_count ?? 0} to check, ${Object.keys(unpricedSymbols).length} tokens without a price`)

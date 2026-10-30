@@ -301,3 +301,34 @@ test('the gauges a wallet\'s positions had joined stay listed after the position
   assert.deepEqual([100, 101, 102, 200].map((b) => gaugesAt(L.a.positions, b)), [[], [GAUGE], [GAUGE], [GAUGE]])
   assert.deepEqual(positionsAt(L.a.positions, 102), [])
 })
+
+test('a CoW order paying another receiver is money leaving the wallet, or a transfer to the other wallet', () => {
+  const to = (receiver) => ({ ...placement, data: words(WETH, USDC, receiver, ETH2, 5000_000000n, 0xffffffffn, 0n, 0n, SELL, 0n, ERC20, ERC20) })
+  const out = to(TAKER), { uid } = cowOrder(out)
+  const L = ledgerOf([
+    { hash: '0xc1', from: WA, to: ETHFLOW, eth: ethLeg(WA, ETHFLOW, -ETH2), logs: [out] },
+    { hash: '0xc2', from: EOA, to: GPV2, logs: [cowTrade(uid, ETH2), transfer(USDC, GPV2, TAKER, 5000_000000n)] },
+  ])
+  assert.deepEqual(legsOf(L, 'a', '0xc2'), [`0x4200:${-ETH2}:transfer:review`])
+  assert.equal(escrowAt(L.a.escrow, 101), 0n)
+  const both = to(WB), b = cowOrder(both)
+  const M = ledgerOf([
+    { hash: '0xc3', from: WA, to: ETHFLOW, eth: ethLeg(WA, ETHFLOW, -ETH2), logs: [both] },
+    { hash: '0xc4', from: EOA, to: GPV2, logs: [cowTrade(b.uid, ETH2), transfer(USDC, GPV2, WB, 5000_000000n)] },
+  ])
+  assert.deepEqual([legsOf(M, 'a', '0xc4'), legsOf(M, 'b', '0xc4')], [[`0x4200:${-ETH2}:between`], ['0x8335:5000000000:between']])
+  assert.equal(M.b.events.find((e) => e.hash === '0xc4').legs[0].cp, WA)
+})
+
+test('a cancelled cross-chain order: the WETH coming back counts the way it left, and the refund is not money in', () => {
+  const ESCROW = '0x00000000000000000000000000000000000e5c02', XFACTORY = '0x03a25b3215a0e5c15cf23ac4d2e5cf86c0ff7efa'
+  const cross = { address: XFACTORY, topics: ['0x1140dcf80f027f65ebd1c2e98c33e3ebf7ef025d944a079256037cd55271bf98'], data: words(WA) }
+  const L = ledgerOf([
+    createOrder('0xd1'),
+    { hash: '0xd2', from: EOA, to: RESOLVER, logs: [transfer(WETH, ORDER, ESCROW, ETH2), cross] },
+    { hash: '0xd3', from: EOA, to: ESCROW, logs: [transfer(WETH, ESCROW, ORDER, ETH2)] },
+    { hash: '0xd4', from: EOA, to: RESOLVER, eth: ethLeg(WA, RESOLVER, ETH2), logs: [wethWithdrawal(ORDER, ETH2)] },
+  ])
+  assert.deepEqual(['0xd2', '0xd3', '0xd4'].map((h) => legsOf(L, 'a', h)), [[`0x4200:${-ETH2}:bridge`], [`0x4200:${ETH2}:bridge`], [`ETH:${ETH2}:internal`]])
+  assert.deepEqual([100, 101, 102, 103].map((b) => escrowAt(L.a.escrow, b)), [ETH2, 0n, ETH2, 0n])
+})
