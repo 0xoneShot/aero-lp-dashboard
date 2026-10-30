@@ -332,3 +332,15 @@ test('a cancelled cross-chain order: the WETH coming back counts the way it left
   assert.deepEqual(['0xd2', '0xd3', '0xd4'].map((h) => legsOf(L, 'a', h)), [[`0x4200:${-ETH2}:bridge`], [`0x4200:${ETH2}:bridge`], [`ETH:${ETH2}:internal`]])
   assert.deepEqual([100, 101, 102, 103].map((b) => escrowAt(L.a.escrow, b)), [ETH2, 0n, ETH2, 0n])
 })
+
+test('two CoW orders of one wallet filled together: the one paying another receiver is still money leaving', () => {
+  const to = (receiver, amt) => ({ ...placement, data: words(WETH, USDC, receiver, amt, 5000_000000n, 0xffffffffn, receiver === TAKER ? 1n : 0n, 0n, SELL, 0n, ERC20, ERC20) })
+  const away = to(TAKER, ETH2), home = to(WA, ETH2)
+  const L = ledgerOf([
+    { hash: '0xe1', from: WA, to: ETHFLOW, eth: ethLeg(WA, ETHFLOW, -ETH2), logs: [away] },
+    { hash: '0xe2', from: WA, to: ETHFLOW, eth: ethLeg(WA, ETHFLOW, -ETH2), logs: [home] },
+    { hash: '0xe3', from: EOA, to: GPV2, logs: [cowTrade(cowOrder(away).uid, ETH2), cowTrade(cowOrder(home).uid, ETH2), transfer(USDC, GPV2, WA, 5000_000000n), transfer(USDC, GPV2, TAKER, 5000_000000n)] },
+  ])
+  assert.deepEqual(legsOf(L, 'a', '0xe3').sort(), ['0x4200:-2000000000000000000:transfer:review', '0x8335:5000000000:internal'])
+  assert.equal(escrowAt(L.a.escrow, 102), 0n)
+})

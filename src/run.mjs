@@ -514,8 +514,11 @@ const toCheck = (keys) => {
       const legs = D.ev.filter((e) => f.hashes.includes(e.hash)).flatMap((e) => e.legs.filter((g) => g.review).map((g) => ({ e, g })))
       for (const { e, g } of legs) {
         const into = g.amount > 0n
+        const amount = `${r6(Math.abs(units(g.amount, decOf(g.asset))))} ${symOf(g.asset)}`
         out.push({ block: e.block, time_cst: cstTime(e.ts), wallet, tx: e.hash, usd: r2(valueOf(g.asset, g.amount, prices[e.block])),
-          text: `${into ? '收到' : '转出'} ${r6(Math.abs(units(g.amount, decOf(g.asset))))} ${symOf(g.asset)}，对方是不认识的合约 ${short(g.cp)}，暂按资金${into ? '转入' : '转出'}计` })
+          text: g.fromOrder
+            ? (into ? `${amount} 从 ${short(g.cp)} 退回了挂单，暂按资金转入计` : `挂单把 ${amount} 付给了 ${short(g.cp)}，暂按资金转出计`)
+            : `${into ? '收到' : '转出'} ${amount}，对方是不认识的合约 ${short(g.cp)}，暂按资金${into ? '转入' : '转出'}计` })
       }
       if (!legs.length) out.push({ block: f.block, time_cst: cstTime(tsOfBlock(f.block)), wallet, tx: f.hashes[0], usd: null, text: `这个区块里策略内部的进出对不上，差 $${Math.abs(f.net).toFixed(2)}` })
     }
