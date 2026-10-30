@@ -702,14 +702,16 @@
     const byChain = {};
     for (const [k, q] of want) (byChain[q.chain] ??= []).push([k, q]);
     try {
-      const read = await Promise.all(Object.entries(byChain).map(async ([chain, qs]) => {
+      // Each chain on its own, each sane quote kept: one chain's RPCs failing leaves the other live. A pool
+      // with no quote keeps its hourly state (applyLive); the Base reference price is needed for any.
+      const read = await Promise.allSettled(Object.entries(byChain).map(async ([chain, qs]) => {
         const out = await rpcBatch(chain, qs.map(([, q], id) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to: q.address, data: '0x3850c7bd' }, 'latest'] })));
         return qs.map(([k, q], i) => [k, slot0(out[i], q.invert)]);
       }));
-      const res = Object.fromEntries(read.flat());
       const hourly = S.data[0].eth_usd;
-      if (Object.values(res).some((x) => !(x.price > hourly / 2 && x.price < hourly * 2))) throw new Error('implausible price');
-      live = { ref: res[`base:${ref}`].price, pools: res, at: Date.now() };
+      const res = Object.fromEntries(read.flatMap((r) => (r.status === 'fulfilled' ? r.value : [])).filter(([, x]) => x.price > hourly / 2 && x.price < hourly * 2));
+      if (!res[`base:${ref}`]) throw new Error('no reference price');
+      live = { ref: res[`base:${ref}`].price, pools: res, at: Date.now(), partial: Object.keys(res).length < want.size };
       liveFailed = false;
     } catch (e) {
       liveFailed = true;
@@ -870,7 +872,7 @@
     const note = $('lp-live');
     note.className = s?.live_at ? 'lp-live-on' : '';
     note.textContent = (!s || hours ? '' : s.live_at
-      ? `价格实时 ${new Date(s.live_at).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}${liveFailed ? '（最新一次没取到）' : ''}`
+      ? `价格实时 ${new Date(s.live_at).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}${liveFailed ? '（最新一次没取到）' : live?.partial ? '（有的池子没取到，用整点的）' : ''}`
       : liveFailed ? '实时价格暂时取不到，用的是整点的价格' : '') + (dataFailed ? ' · 整点数据没刷新成功，稍后再试' : '');
   }
   function drawNumbers(s) {

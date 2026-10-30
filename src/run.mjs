@@ -138,10 +138,11 @@ async function startPositions(x) {
   const c = x.chain, cl = x.client, blockNumber = BigInt(c.scanFromBlock), out = []
   for (const [npm, n] of Object.entries(c.npms)) {
     for (const w of WALLETS) {
-      const held = await cl.readContract({ address: npm, abi: npmAbi, functionName: 'balanceOf', args: [w.address], blockNumber })
+      // Nothing to seed before the position manager existed (a start before Aero launched on the chain).
+      const held = (await tryRead(cl.readContract({ address: npm, abi: npmAbi, functionName: 'balanceOf', args: [w.address], blockNumber }))) ?? 0n
       for (let i = 0n; i < held; i++) out.push({ wallet: w.address, npm, tokenId: (await cl.readContract({ address: npm, abi: npmAbi, functionName: 'tokenOfOwnerByIndex', args: [w.address, i], blockNumber })).toString() })
     }
-    const count = Number(await cl.readContract({ address: n.factory, abi: factoryAbi, functionName: 'allPoolsLength', blockNumber }))
+    const count = Number((await tryRead(cl.readContract({ address: n.factory, abi: factoryAbi, functionName: 'allPoolsLength', blockNumber }))) ?? 0n)
     const pools = await pmap([...Array(count).keys()], 4, (i) => cl.readContract({ address: n.factory, abi: factoryAbi, functionName: 'allPools', args: [BigInt(i)], blockNumber }))
     const gauges = [...new Set((await pmap(pools, 4, (p) => tryRead(cl.readContract({ address: p, abi: clPoolAbi, functionName: 'gauge', blockNumber })))).filter((g) => g && lc(g) !== ZERO).map(lc))]
     await knownGauges(x, gauges)
@@ -158,7 +159,8 @@ for (const x of Object.values(ext)) {
   const c = x.chain, txs = Object.values(x.state.txs)
   const seedFile = path.resolve('data', 'cache', `seed-${c.key}.json`)
   let seeds = readJson(seedFile, null)
-  if (seeds?.block !== c.scanFromBlock) { seeds = { block: c.scanFromBlock, positions: await startPositions(x) }; writeJson(seedFile, seeds) }
+  const who = WALLETS.map((w) => w.address).sort().join(',')
+  if (seeds?.block !== c.scanFromBlock || seeds?.wallets !== who) { seeds = { block: c.scanFromBlock, wallets: who, positions: await startPositions(x) }; writeJson(seedFile, seeds) }
   const seed = seeds.positions
   const cands = new Set([...txs.flatMap((r) => r.logs.filter((l) => gaugeTopics.has(l.topics[0])).map((l) => l.address)), ...seed.filter((p) => p.gauge).map((p) => p.gauge)])
   await knownGauges(x, cands)
@@ -184,6 +186,7 @@ for (const x of Object.values(ext)) {
   const c = x.chain, L = extLedger[c.key]
   owedAtOf[c.key] = L.owedAt
   startBase[c.key] = (await timeline.blockBefore(c.startTs)) + 1
+  await timeline.ensure([startBase[c.key]]) // its time is needed and not otherwise read once the search is kept
   const toBase = new Map()
   for (const t of Object.values(x.state.txs)) if (!toBase.has(t.block)) toBase.set(t.block, Math.max(startBase[c.key], await timeline.blockBefore(t.ts + 1)))
   for (const w of WALLETS) {
@@ -209,8 +212,11 @@ for (const w of WALLETS) {
   if (Object.keys(ext).length) L.escrow.push(...matchCrossChain(L.events, hodlKey, decOf))
 }
 
-// Token pair and pool of each position, read on its chain at a block of that chain.
-const pairCache = new Map()
+// Token pair and pool of each position, read on its chain at a block of that chain. They never change,
+// so they are kept between runs (data/cache/pairs.json).
+const PAIR_CACHE = path.resolve('data/cache/pairs.json')
+const pairSaved = readJson(PAIR_CACHE, {})
+const pairCache = new Map(Object.entries(pairSaved).map(([k, v]) => [k, Promise.resolve(v)]))
 async function pairOf(chainKey, npm, tokenId, block) {
   const k = `${chainKey}:${npm}:${tokenId}`
   if (!pairCache.has(k)) {
@@ -219,7 +225,7 @@ async function pairOf(chainKey, npm, tokenId, block) {
     pairCache.set(k, read(block).catch(() => read(block - 1)).then(async (p) => ({
       token0: lc(p[2]), token1: lc(p[3]), tickLower: Number(p[5]), tickUpper: Number(p[6]),
       pool: lc(await cl.readContract({ address: c.npms[npm].factory, abi: factoryAbi, functionName: 'getPool', args: [p[2], p[3], p[4]] })),
-    })))
+    })).then((x) => (pairSaved[k] = x)))
   }
   return pairCache.get(k)
 }
@@ -372,8 +378,17 @@ for (const w of WALLETS) {
     const p = prices[e.block]
     for (const g of e.legs) {
       if (isExternal(g.cls)) flows.push({ block: e.block, ts: e.ts, asset: g.asset, amount: g.amount, usd: valueOf(g.asset, g.amount, p), kind: g.cls, bridge: e.bridge, hash: e.hash, cp: g.cp, chain: e.chain })
-      // AERO (or xAERO) leaving, except to the wallet's own other chain.
-      if (isAero(g.asset) && g.amount < 0n && !g.crossChain && !e.lp.length) aeroOut.push({ block: e.block, amount: -g.amount, usd: valueOf(g.asset, -g.amount, p), between: g.cls === 'between' })
+    }
+    // AERO (or xAERO) leaving, except to the wallet's own other chain and what went into its own positions
+    // in the same transaction (still held), net of AERO that came back in it other than as a reward.
+    let kept = 0n
+    for (const x of e.lp) if (x.type === 'increase') { const pr = await pairOf(e.chain, x.npm, x.tokenId, e.chainBlock); if (isAero(pr.token0)) kept += x.amount0; if (isAero(pr.token1)) kept += x.amount1 }
+    if (e.lp.length) for (const g of e.legs) if (isAero(g.asset) && g.amount > 0n && g.cls !== 'reward' && !g.crossChain) kept += g.amount
+    for (const g of e.legs) {
+      if (!isAero(g.asset) || g.amount >= 0n || g.crossChain) continue
+      const take = kept < -g.amount ? kept : -g.amount, out = -g.amount - take
+      kept -= take
+      if (out > 0n) aeroOut.push({ block: e.block, amount: out, usd: valueOf(g.asset, out, p), between: g.cls === 'between' })
     }
     for (const m of e.nftMoves) {
       const v = await positionValueAt(e.chain, m.npm, m.tokenId, e.chainBlock, p)
@@ -423,6 +438,7 @@ for (const w of WALLETS) {
   for (const g of byBlock.values()) if (g.review || Math.abs(g.net) > Math.max(25, 0.02 * g.gross)) flagged.push({ block: g.block, chain: g.chain, net: g.net, hashes: g.hashes })
 
   flows.sort((a, b) => a.block - b.block)
+  writeJson(PAIR_CACHE, pairSaved)
   walletData[w.key] = { L, ev, flows, rewards, fees, gas, aeroOut, lpEvents, nftFlows, flagged, warnings: L.warnings.filter((x) => x.block > openingBlock && x.block <= head) }
 }
 
@@ -757,7 +773,9 @@ for (const sc of SCOPES) {
     invested_usd: invested, value_usd: value, pnl_usd: pnl, pnl_pct: invested ? r6(pnl / invested) : null,
     hodl_usd: hodl, vs_hodl_usd: r2(value - hodl),
     earn_total_usd: r2(rewards + fees), rewards_usd: rewards, fees_usd: fees,
-    aero_earned: r6(n.aeroAccrued), aero_claimed: r6(units(n.c.claimed, 18)), aero_pending: r6(n.pendingAero), aero_held: r6(n.aeroHeld),
+    // Counted from the days, as rewards_usd is: AERO already unclaimed when a chain's tracking started
+    // was money put in, not earned.
+    aero_earned: r6(sum(rows, (r) => r.earn_aero)), aero_claimed: r6(units(n.c.claimed, 18)), aero_pending: r6(n.pendingAero), aero_held: r6(n.aeroHeld),
     aero_unsold_usd: r2((n.aeroHeld + n.pendingAero) * (pNow.aero ?? 0)), aero_drift_usd: r2(aeroNow - rewards),
     today_usd: last?.partial ? last.earn_usd : null, yesterday_usd: (last?.partial ? prevRow : last)?.earn_usd ?? null,
     apr_days: finished.length, earn_7d_usd: r2(earnN), apr_7d: twLp > 0 ? r6((earnN / twLp) * 365) : null,
@@ -835,7 +853,9 @@ const events = []
 for (const w of WALLETS) {
   const D = walletData[w.key]
   const flaggedHashes = new Set(D.flagged.flatMap((f) => f.hashes))
-  const seenMint = new Set()
+  // Positions the wallet already held at the opening or a chain's start were opened before: adds to them are 加仓.
+  const seenMint = new Set([...ledger[w.key].positions, ...Object.entries(extLedger).flatMap(([k, X]) => X[w.key].positions.map((p) => ({ ...p, chain: k })))]
+    .filter((p) => p.born == null).map((p) => `${p.chain ?? 'base'}:${p.npm}:${p.tokenId}`))
   for (const e of D.ev) {
     const p = prices[e.block]
     const base = { scope: w.key, scope_label: w.label, chain: e.chain, time_cst: cstTime(e.ts), day: cstDay(e.ts), block: e.block, tx: e.hash, flagged: flaggedHashes.has(e.hash) }
@@ -851,7 +871,8 @@ for (const w of WALLETS) {
       const k = `${e.chain}:${x.npm}:${x.tokenId}`
       const kind = x.type === 'decrease' ? '撤出流动性' : seenMint.has(k) ? '加仓' : '开仓'
       if (x.type === 'increase') seenMint.add(k)
-      events.push({ ...base, kind, detail: `#${x.tokenId} · ${r6(units(x.amount0, decOf(x.token0)))} ${symOf(x.token0)} + ${r2(units(x.amount1, decOf(x.token1)))} ${symOf(x.token1)}`, usd: r2(x.usd) })
+      const amt = (t, a) => (decOf(t) <= 6 ? r2(units(a, decOf(t))) : r6(units(a, decOf(t))))
+      events.push({ ...base, kind, detail: `#${x.tokenId} · ${amt(x.token0, x.amount0)} ${symOf(x.token0)} + ${amt(x.token1, x.amount1)} ${symOf(x.token1)}`, usd: r2(x.usd) })
     }
     const claimed = e.rewards.reduce((a, r) => a + r.amount, 0n)
     if (claimed > 0n) events.push({ ...base, kind: '领取奖励', detail: `${r6(units(claimed, 18))} ${symOf(ch.rewardToken)}${e.rewards.some((r) => r.recipient !== w.address) ? '（领给了别的地址）' : ''}`, usd: r2(valueOf(ch.rewardToken, claimed, p)) })
@@ -872,7 +893,7 @@ for (const w of WALLETS) {
     // Swaps: internal legs of a transaction with no liquidity change, netted per asset.
     if (!e.lp.length && !e.fees.length && !e.rewards.length && !(e.owed ?? []).length) {
       const net = {}
-      for (const g of e.legs.filter((x) => x.cls === 'internal' && !x.crossChain)) net[g.asset] = (net[g.asset] ?? 0n) + g.amount
+      for (const g of e.legs.filter((x) => x.cls === 'internal' && !x.crossChain && !x.bridgeFee)) net[g.asset] = (net[g.asset] ?? 0n) + g.amount
       const outs = Object.entries(net).filter(([, a]) => a < 0n), ins = Object.entries(net).filter(([, a]) => a > 0n)
       if (outs.length || ins.length) {
         const fmt = ([a, x]) => `${r6(Math.abs(units(x, decOf(a))))} ${symOf(a)}`

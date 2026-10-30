@@ -44,3 +44,10 @@ test('transfers in flight together pair with the closest arrival', () => {
   assert.equal(pair('0x23').amount, -1n * E)
   assert.equal(pair('0x24').received, 2n * E - 2n * 10n ** 15n)
 })
+
+test('a transfer pairs with its own arrival, not with a later one that lost less', () => {
+  const out = ev('0x31', 'base', 1000, 100, 'weth-base', -1n * E)
+  const real = ev('0x32', 'eth', 1300, 200, 'ETH', 99n * E / 100n), other = ev('0x33', 'eth', 8200, 900, 'ETH', 999n * E / 1000n)
+  matchCrossChain([out, real, other], canon, dec)
+  assert.deepEqual([out, real, other].map((e) => e.legs[0].cls), ['internal', 'internal', 'bridge'])
+})
