@@ -1,7 +1,8 @@
 // Hand-made transactions for situations the real history has not hit yet.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLedger, owedPrincipal } from '../lib/ledger.mjs'
+import { buildLedger, owedPrincipal, positionsAt, gaugesAt } from '../lib/ledger.mjs'
+import { escrowAt, cowOrder } from '../lib/orders.mjs'
 import { TOPIC } from '../lib/abi.mjs'
 import { USDC, WETH, AERO, ZERO } from '../lib/config.mjs'
 
@@ -169,4 +170,134 @@ test('ETH split: a reverted own transaction only pays gas', async () => {
   const rec = { hash: '0x62', block: 1, from: WB, to: POOL, selector: '0x12345678', value: '500', status: 'reverted', gasCost: '7', eth: {} }
   await assignEth([rec], WB, -7n, false)
   assert.deepEqual(rec.eth[WB], { delta: '-7', legs: [] })
+})
+
+// Native-ETH limit orders: the ETH sits in a contract made for the order until a fill or a refund.
+const FACTORY = '0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01'
+const ORDER = '0x00000000000000000000000000000000000c1013'
+const RESOLVER = '0x00000000000000000000000000000000000ad3b6'
+const TAKER = '0x0000000000000000000000000000000000007a4e'
+const SETTLEMENT = '0x2ad5004c60e16e54d5007c80ce329adde5b51ef5'
+const ETH2 = 2n * 10n ** 18n
+const ethLeg = (w, cp, v) => ({ [w]: { delta: v.toString(), legs: [{ cp, value: v.toString() }] } })
+const wethDeposit = (dst, amt) => ({ address: WETH, topics: [TOPIC.WethDeposit, pad(dst)], data: num(amt) })
+const wethWithdrawal = (src, amt) => ({ address: WETH, topics: [TOPIC.WethWithdrawal, pad(src)], data: num(amt) })
+const orderCreated = (factory, maker, order, amt) => ({ address: factory, topics: [TOPIC.NativeOrderCreated], data: words(maker, 0xabcn, order, amt) })
+const createOrder = (hash, factory = FACTORY, maker = WA) => ({ hash, from: WA, to: factory, eth: ethLeg(WA, factory, -ETH2), logs: [wethDeposit(ORDER, ETH2), orderCreated(factory, maker, ORDER, ETH2)] })
+
+test('a native-ETH order filled later: both sides are moves inside the strategy, and the ETH waiting counts as held', () => {
+  const L = ledgerOf([
+    createOrder('0x71'),
+    { hash: '0x72', from: EOA, to: SETTLEMENT, logs: [transfer(WETH, ORDER, TAKER, ETH2), transfer(USDC, SETTLEMENT, WA, 5000_000000n)] },
+  ])
+  assert.deepEqual(legsOf(L, 'a', '0x71'), [`ETH:${-ETH2}:internal`])
+  assert.deepEqual(legsOf(L, 'a', '0x72'), ['0x8335:5000000000:internal'])
+  assert.equal(escrowAt(L.a.escrow, 99), 0n)
+  assert.equal(escrowAt(L.a.escrow, 100), ETH2)
+  assert.equal(escrowAt(L.a.escrow, 101), 0n)
+  assert.deepEqual(L.b.escrow, [])
+})
+
+test('a native-ETH order refunded by a resolver or cancelled by the wallet: the ETH coming back is not money in', () => {
+  const L = ledgerOf([
+    createOrder('0x73'),
+    { hash: '0x74', from: EOA, to: RESOLVER, eth: ethLeg(WA, RESOLVER, ETH2 - 10n ** 15n), logs: [wethWithdrawal(ORDER, ETH2)] },
+  ])
+  assert.deepEqual(legsOf(L, 'a', '0x74'), [`ETH:${ETH2 - 10n ** 15n}:internal`])
+  assert.equal(escrowAt(L.a.escrow, 101), 0n)
+  const M = ledgerOf([createOrder('0x75'), { hash: '0x76', from: WA, to: ORDER, eth: ethLeg(WA, ORDER, ETH2), logs: [wethWithdrawal(ORDER, ETH2)] }])
+  assert.deepEqual(legsOf(M, 'a', '0x76'), [`ETH:${ETH2}:internal`])
+})
+
+test('an order contract counts only from the real factory and for its maker', () => {
+  for (const tx of [createOrder('0x77', FAKE), createOrder('0x77', FACTORY, WB)]) {
+    const L = ledgerOf([tx, { hash: '0x78', from: EOA, to: RESOLVER, eth: ethLeg(WA, RESOLVER, ETH2), logs: [wethWithdrawal(ORDER, ETH2)] }])
+    assert.deepEqual(legsOf(L, 'a', '0x78'), [`ETH:${ETH2}:transfer:review`])
+    assert.equal(escrowAt(L.a.escrow, 100), 0n)
+  }
+})
+
+test('a CoW order of native ETH and its fill are moves inside the strategy', () => {
+  const ETHFLOW = '0xba3cb449bd2b4adddbc894d8697f5170800eadec', GPV2 = '0x9008d19f58aabd9ed0d60971565aa8510560ab41'
+  const L = ledgerOf([
+    { hash: '0x79', from: WA, to: ETHFLOW, eth: ethLeg(WA, ETHFLOW, -ETH2), logs: [] },
+    { hash: '0x7a', from: EOA, to: GPV2, logs: [transfer(USDC, GPV2, WA, 5000_000000n)] },
+    { hash: '0x7b', from: EOA, to: ETHFLOW, eth: ethLeg(WA, ETHFLOW, ETH2), logs: [] },
+  ])
+  assert.deepEqual(['0x79', '0x7a', '0x7b'].map((h) => legsOf(L, 'a', h)), [[`ETH:${-ETH2}:internal`], ['0x8335:5000000000:internal'], [`ETH:${ETH2}:internal`]])
+})
+
+test('a position is read for the blocks it exists in, with the gauges it could be in by then', () => {
+  const L = ledgerOf([
+    { hash: '0x81', block: 100, from: WA, logs: [nft(ZERO, WA, 9), increase(9, 1000, 1n, 1n)] },
+    { hash: '0x82', block: 102, from: WA, logs: [nft(WA, GAUGE, 9), deposit(GAUGE, WA, 9)] },
+    { hash: '0x83', block: 105, from: WA, logs: [nft(GAUGE, WA, 9), decrease(9, 1000, 1n, 1n), collect(9, WA, 1n, 1n), nft(WA, ZERO, 9)] },
+    // Already staked before the scan: handed back by the gauge, so read from the start.
+    { hash: '0x84', block: 103, from: WB, logs: [nft(GAUGE, WB, 10)] },
+    // Bought from an outsider: nobody's here before it arrived.
+    { hash: '0x85', block: 104, from: EOA, logs: [nft(EOA, WB, 11)] },
+  ])
+  const ids = (k, b) => positionsAt(L[k].positions, b).map((p) => `${p.tokenId}:${p.gauges.length}`)
+  assert.deepEqual([99, 100, 101, 102, 104, 105].map((b) => ids('a', b)), [[], ['9:0'], ['9:0'], ['9:1'], ['9:1'], []])
+  assert.deepEqual([50, 103, 104].map((b) => ids('b', b)), [['10:1'], ['10:1'], ['10:1', '11:0']])
+})
+
+test('a native-ETH order filled by a resolver that pays the wallet itself: the proceeds are not money in', () => {
+  const L = ledgerOf([
+    createOrder('0x91'),
+    { hash: '0x92', from: EOA, to: RESOLVER, logs: [transfer(WETH, ORDER, RESOLVER, ETH2), transfer(USDC, RESOLVER, WA, 5000_000000n)] },
+  ])
+  assert.deepEqual(legsOf(L, 'a', '0x92'), ['0x8335:5000000000:internal'])
+  assert.equal(escrowAt(L.a.escrow, 101), 0n)
+})
+
+test('a native-ETH order paid out to someone else is money leaving: a bridge for a cross-chain order, flagged otherwise', () => {
+  const ESCROW = '0x00000000000000000000000000000000000e5c01', XFACTORY = '0x03a25b3215a0e5c15cf23ac4d2e5cf86c0ff7efa'
+  const cross = { address: XFACTORY, topics: ['0x1140dcf80f027f65ebd1c2e98c33e3ebf7ef025d944a079256037cd55271bf98'], data: words(WA) }
+  const L = ledgerOf([createOrder('0x93'), { hash: '0x94', from: EOA, to: RESOLVER, logs: [transfer(WETH, ORDER, ESCROW, ETH2), cross] }])
+  assert.deepEqual(legsOf(L, 'a', '0x94'), [`0x4200:${-ETH2}:bridge`])
+  assert.equal(escrowAt(L.a.escrow, 101), 0n)
+  const M = ledgerOf([createOrder('0x95'), { hash: '0x96', from: EOA, to: RESOLVER, logs: [transfer(WETH, ORDER, ESCROW, ETH2)] }])
+  assert.deepEqual(legsOf(M, 'a', '0x96'), [`0x4200:${-ETH2}:transfer:review`])
+})
+
+test('a token without a price bought by a native-ETH order is reported, not taken for spam', () => {
+  const ODD = '0x00000000000000000000000000000000000000dd'
+  const L = ledgerOf([createOrder('0x97'), { hash: '0x98', from: EOA, to: RESOLVER, logs: [transfer(WETH, ORDER, RESOLVER, ETH2), transfer(ODD, RESOLVER, WA, 7n)] }])
+  assert.deepEqual(L.a.unpriced, [ODD])
+  assert.equal(L.a.warnings.filter((w) => w.kind === 'unpriced').length, 1)
+})
+
+// A CoW order of native ETH: placed with EthFlow, filled (or refunded) by others, followed by its id.
+const ETHFLOW = '0xba3cb449bd2b4adddbc894d8697f5170800eadec', GPV2 = '0x9008d19f58aabd9ed0d60971565aa8510560ab41'
+const SELL = '0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775', ERC20 = '0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9'
+const placement = { address: ETHFLOW, topics: [TOPIC.CowOrderPlacement, pad(WA)], data: words(WETH, USDC, WA, ETH2, 5000_000000n, 0xffffffffn, 0n, 0n, SELL, 0n, ERC20, ERC20) }
+const uidBytes = (uid) => (uid.slice(2) + '0'.repeat(128 - (uid.length - 2)))
+const cowTrade = (uid, sold) => ({ address: GPV2, topics: [TOPIC.CowTrade, pad(ETHFLOW)], data: words(WETH, USDC, sold, 1n, 0n, 0xc0n, 56n) + uidBytes(uid) })
+const cowRefund = (uid) => ({ address: ETHFLOW, topics: [TOPIC.CowOrderRefund, pad(EOA)], data: words(0x20n, 56n) + uidBytes(uid) })
+
+test('a CoW order of native ETH counts as held until it is filled or refunded', () => {
+  const { uid, amount } = cowOrder(placement)
+  assert.equal(amount, ETH2)
+  assert.equal(uid.length, 2 + 112)
+  const L = ledgerOf([
+    { hash: '0xa1', from: WA, to: ETHFLOW, eth: ethLeg(WA, ETHFLOW, -ETH2), logs: [placement] },
+    { hash: '0xa2', from: EOA, to: GPV2, logs: [cowTrade(uid, ETH2 / 2n), transfer(USDC, GPV2, WA, 2500_000000n)] },
+    { hash: '0xa3', from: EOA, to: ETHFLOW, eth: ethLeg(WA, ETHFLOW, ETH2 / 2n), logs: [cowRefund(uid)] },
+  ])
+  assert.deepEqual([99, 100, 101, 102].map((b) => escrowAt(L.a.escrow, b)), [0n, ETH2, ETH2 / 2n, 0n])
+  assert.deepEqual(['0xa1', '0xa2', '0xa3'].map((h) => legsOf(L, 'a', h)), [[`ETH:${-ETH2}:internal`], ['0x8335:2500000000:internal'], [`ETH:${ETH2 / 2n}:internal`]])
+  // Someone else's order with the same EthFlow is not the wallet's.
+  const other = { ...placement, topics: [TOPIC.CowOrderPlacement, pad(EOA)] }
+  assert.deepEqual(ledgerOf([{ hash: '0xa4', from: EOA, to: ETHFLOW, logs: [other] }]).a.escrow, [])
+})
+
+test('the gauges a wallet\'s positions had joined stay listed after the positions are burned', () => {
+  const L = ledgerOf([
+    { hash: '0xb1', block: 100, from: WA, logs: [nft(ZERO, WA, 12), increase(12, 1000, 1n, 1n)] },
+    { hash: '0xb2', block: 101, from: WA, logs: [nft(WA, GAUGE, 12), deposit(GAUGE, WA, 12)] },
+    { hash: '0xb3', block: 102, from: WA, logs: [nft(GAUGE, WA, 12), decrease(12, 1000, 1n, 1n), collect(12, WA, 1n, 1n), nft(WA, ZERO, 12)] },
+  ])
+  assert.deepEqual([100, 101, 102, 200].map((b) => gaugesAt(L.a.positions, b)), [[], [GAUGE], [GAUGE], [GAUGE]])
+  assert.deepEqual(positionsAt(L.a.positions, 102), [])
 })

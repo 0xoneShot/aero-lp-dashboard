@@ -4,7 +4,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { client, pmap } from '../lib/rpc.mjs'
 import { scan } from '../lib/scan.mjs'
-import { buildLedger, isExternal, owedPrincipal } from '../lib/ledger.mjs'
+import { buildLedger, isExternal, owedPrincipal, positionsAt, gaugesAt } from '../lib/ledger.mjs'
+import { escrowAt } from '../lib/orders.mjs'
+import { hodlHeld } from '../lib/hodl.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf } from '../lib/prices.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, TOPIC } from '../lib/abi.mjs'
@@ -33,8 +35,14 @@ const sum = (xs, f = (x) => x) => xs.reduce((a, x) => a + f(x), 0)
 const cstTime = (ts) => new Date((ts + 8 * 3600) * 1000).toISOString().slice(0, 16).replace('T', ' ')
 const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
-function readJson(p, fallback) { return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : fallback }
-function writeJson(p, v) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? x.toString() : x), 1) + '\n') }
+// A cache file that cannot be read is started over (its contents are read again from the chain).
+function readJson(p, fallback) { try { return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : fallback } catch { log(`${path.basename(p)} unreadable, starting it over`); return fallback } }
+// Written whole or not at all, so a run stopped halfway never leaves half a file behind.
+function writeJson(p, v) {
+  fs.mkdirSync(path.dirname(p), { recursive: true })
+  fs.writeFileSync(p + '.tmp', JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? x.toString() : x), 1) + '\n')
+  fs.renameSync(p + '.tmp', p)
+}
 
 // Snapshots of finished days never change, so they are cached; BigInts round-trip through strings.
 const BIG_FIELDS = ['liquidity', 'amount0', 'amount1', 'pending', 'fees0', 'fees1', 'sqrtP']
@@ -118,19 +126,30 @@ const blocks = [openingBlock, ...days.map(dayBlock)]
 
 const snapCache = readJson(SNAP_CACHE, {})
 const snaps = {}
-for (const w of WALLETS) {
-  snaps[w.key] = {}
-  const positions = ledger[w.key].positions
-  const key = [SNAP_VERSION, Object.keys(TOKENS).sort().join('+'), ...positions.map((p) => `${p.npm}:${p.tokenId}:${p.gauges.join('+')}`).sort()].join(',')
-  await pmap(blocks, 3, async (b) => {
-    const cached = snapCache[`${w.key}:${b}`]
-    if (cached && cached.posKey === key) { snaps[w.key][b] = reviveSnap(structuredClone(cached.snap)); return }
-    const s = await snapshot(w, positions, b)
-    snaps[w.key][b] = s
-    if (b !== head) snapCache[`${w.key}:${b}`] = { posKey: key, snap: JSON.parse(JSON.stringify(s, (k, x) => (typeof x === 'bigint' ? x.toString() : x))) }
-  })
+const tokensKey = Object.keys(TOKENS).sort().join('+')
+try {
+  for (const w of WALLETS) {
+    snaps[w.key] = {}
+    await pmap(blocks, 3, async (b) => {
+      // Only the positions alive at b are read and make up the key, so opening a new position does not
+      // send every finished day back to the chain.
+      const positions = positionsAt(ledger[w.key].positions, b)
+      // Gauges only burned positions had joined may still hold deferred rewards for the wallet.
+      const left = gaugesAt(ledger[w.key].positions, b).filter((g) => !positions.some((p) => p.gauges.includes(g)))
+      const key = [SNAP_VERSION, tokensKey, ...positions.map((p) => `${p.npm}:${p.tokenId}:${p.gauges.join('+')}`).sort(), ...(left.length ? [`deferred:${left.join('+')}`] : [])].join(',')
+      const cached = snapCache[`${w.key}:${b}`]
+      if (cached && cached.posKey === key) { snaps[w.key][b] = reviveSnap(structuredClone(cached.snap)); return }
+      const s = await snapshot(w, positions, b, left)
+      snaps[w.key][b] = s
+      if (b !== head) snapCache[`${w.key}:${b}`] = { posKey: key, snap: JSON.parse(JSON.stringify(s, (k, x) => (typeof x === 'bigint' ? x.toString() : x))) }
+    })
+  }
+} finally {
+  // Kept even when a read failed, so the next run carries on from there instead of starting over.
+  writeJson(SNAP_CACHE, snapCache)
 }
-writeJson(SNAP_CACHE, snapCache)
+// WETH waiting in a wallet's open native-ETH orders (lib/ledger.mjs) is still the wallet's money.
+for (const w of WALLETS) for (const b of blocks) snaps[w.key][b].escrow = escrowAt(ledger[w.key].escrow, b)
 const prices = {}
 const eventBlocks = WALLETS.flatMap((w) => ledger[w.key].events.map((e) => e.block)).filter((b) => b > openingBlock && b <= head)
 await pmap([...new Set([...blocks, ...eventBlocks])], 4, async (b) => { prices[b] = await pricesAt(b) })
@@ -142,6 +161,7 @@ function valueSnapshot(s, p) {
   let wallet = 0, lp = 0, fees = 0, owedUsd = 0, lpEth = 0
   const tokens = {}, feeTok = {}
   for (const [asset, raw] of Object.entries(s.balances)) wallet += valueOf(asset, raw, p)
+  wallet += valueOf(WETH, s.escrow ?? 0n, p)
   for (const x of s.positions) {
     const owed = owedPrincipal(ledger.owedAt, x.npm, x.tokenId, s.block)
     const o0 = owed.owed0 < x.fees0 ? owed.owed0 : x.fees0, o1 = owed.owed1 < x.fees1 ? owed.owed1 : x.fees1
@@ -171,6 +191,7 @@ for (const w of WALLETS) {
   const flows = []
   const addOpening = (asset, raw) => { if (raw > 0n) flows.push({ block: openingBlock, ts: tsOfBlock(openingBlock), asset, amount: raw, usd: valueOf(asset, raw, po), kind: 'opening', hash: null, cp: null }) }
   for (const [asset, raw] of Object.entries(open.balances)) addOpening(asset, raw)
+  addOpening(WETH, open.escrow ?? 0n)
   for (const [asset, raw] of Object.entries(ov.lpTokens)) addOpening(asset, raw)
   for (const [asset, raw] of Object.entries(ov.feeTok)) addOpening(asset, raw)
   addOpening(AERO, open.positions.reduce((a, x) => a + x.pending, 0n) + open.deferred)
@@ -205,11 +226,17 @@ for (const w of WALLETS) {
   // Check per block: moves inside the strategy should roughly net to zero once liquidity added or
   // removed, fees and rewards are taken out. A block that does not, or that holds a transfer the
   // rules could only guess at, is flagged for a person to look at.
+  // WETH into or out of the wallet's open orders is the other side of an order's ETH, fill or refund; WETH
+  // an order paid to someone else is booked as money leaving.
   const byBlock = new Map()
+  const escrowIn = new Map()
+  for (const m of L.escrow) escrowIn.set(m.hash, (escrowIn.get(m.hash) ?? 0n) + m.amount)
   for (const e of ev) {
     const p = prices[e.block]
     const g = byBlock.get(e.block) ?? { net: 0, gross: 0, hashes: [], review: false }
     for (const leg of e.legs) if (leg.cls === 'internal') { const v = valueOf(leg.asset, leg.amount, p); g.net += v; g.gross += Math.abs(v) }
+    for (const leg of e.legs) if (leg.fromOrder) g.net -= valueOf(leg.asset, leg.amount, p)
+    if (escrowIn.has(e.hash)) g.net += valueOf(WETH, escrowIn.get(e.hash), p)
     for (const x of lpEvents.filter((y) => y.hash === e.hash)) g.net += x.type === 'increase' ? x.usd : -x.usd
     for (const f of fees.filter((y) => y.hash === e.hash)) g.net -= valueOf(f.token0, f.amount0, p) + valueOf(f.token1, f.amount1, p)
     g.hashes.push(e.hash)
@@ -228,13 +255,8 @@ function cumulative(keys, b) {
   const upTo = (xs) => xs.filter((x) => x.block <= b)
   const flows = keys.flatMap((k) => upTo(walletData[k].flows)).filter((f) => !(multi && f.kind === 'between'))
   const invested = sum(flows, (f) => f.usd)
-  // "Just held it": what came in stays in its own coin; what went out leaves at its value then.
-  const hodlIn = {}
-  let hodlOutUsd = 0
-  for (const f of flows) {
-    if (big(f.amount) > 0n) hodlIn[hodlKey(f.asset)] = (hodlIn[hodlKey(f.asset)] ?? 0n) + big(f.amount)
-    else hodlOutUsd += f.usd
-  }
+  // "Just held it" (lib/hodl.mjs): what came in stays in its own coin; what went out comes out of it.
+  const hodl = hodlHeld([...flows].sort((x, y) => x.block - y.block).map((f) => ({ ...f, prices: prices[f.block] })), hodlKey, valueOf)
   const claimed = keys.flatMap((k) => upTo(walletData[k].rewards)).reduce((a, r) => a + r.amount, 0n)
   const feeTok = {}
   for (const f of keys.flatMap((k) => upTo(walletData[k].fees))) {
@@ -245,7 +267,7 @@ function cumulative(keys, b) {
   // AERO that left (sold, sent) and AERO brought in from outside, for the AERO price step.
   const aeroOutUsd = sum(keys.flatMap((k) => upTo(walletData[k].aeroOut)).filter((x) => !(multi && x.between)), (x) => x.usd)
   const aeroInUnits = flows.filter((f) => f.asset === AERO && big(f.amount) > 0n).reduce((a, f) => a + big(f.amount), 0n)
-  return { invested, hodlIn, hodlOutUsd, claimed, feeTok, gasWei, aeroOutUsd, aeroInUnits }
+  return { invested, hodl, claimed, feeTok, gasWei, aeroOutUsd, aeroInUnits }
 }
 
 function scopeAt(keys, b) {
@@ -254,8 +276,7 @@ function scopeAt(keys, b) {
   const c = cumulative(keys, b)
   const feeAccrued = { ...c.feeTok }
   for (const v of vs) for (const [t, a] of Object.entries(v.feeTok)) feeAccrued[t] = (feeAccrued[t] ?? 0n) + a
-  let hodl = -c.hodlOutUsd
-  for (const [k, a] of Object.entries(c.hodlIn)) hodl += k === 'ETH' ? units(a, 18) * p.eth : usdOf(k, a, p) ?? 0
+  const hodl = sum([...c.hodl], ([k, a]) => valueOf(k, a, p))
   const pendingAero = sum(vs, (v) => v.pendingAero)
   const aeroHeld = units(keys.reduce((a, k) => a + (snaps[k][b].balances[AERO] ?? 0n), 0n), 18)
   return {
@@ -307,6 +328,7 @@ function ethCurve(keys) {
       if (hodlKey(asset) === 'ETH') ethUnits += units(raw, 18)
       else fixedUsd += valueOf(asset, raw, pNowCurve)
     }
+    ethUnits += units(s.escrow ?? 0n, 18)
     fixedUsd += units(s.positions.reduce((a, x) => a + x.pending, 0n) + s.deferred, 18) * (pNowCurve.aero ?? 0)
     for (const x of s.positions) {
       const extra0 = x.fees0, extra1 = x.fees1 // owed principal plus fees, both paid by collect()
@@ -441,7 +463,7 @@ function ethPrices(keys, invested, interest, value) {
   // Each live position's side, from its own pool: the page draws the ranges and the withdrawal from
   // the pool prices, so the state must agree with them rather than with the reference price.
   const sides = c.curves.map((x) => (x.inRange ? 'in' : x.pool < (x.low + x.high) / 2 ? 'below' : 'above'))
-  const wallEth = keys.reduce((a, k) => a + units((snaps[k][head].balances.ETH ?? 0n) + (snaps[k][head].balances[WETH] ?? 0n), 18), 0)
+  const wallEth = keys.reduce((a, k) => a + units((snaps[k][head].balances.ETH ?? 0n) + (snaps[k][head].balances[WETH] ?? 0n) + (snaps[k][head].escrow ?? 0n), 18), 0)
   const highest = Math.max(...keys.flatMap((k) => snaps[k][head].positions.filter((x) => x.liquidity > 0n).map((x) => priceAtTick(x.tickUpper, 18, 6))), -Infinity)
   // Withdrawing now pays each position out at its own pool's price, which can differ a little from
   // the reference price the rest is valued at.
@@ -480,6 +502,28 @@ const unpricedOf = (keys) => {
   }
   return [...out].sort()
 }
+// What the rules could not settle, newest first, for the page to list and the phone to report: a
+// one-way transfer with an unknown contract (booked as money in or out), a block whose moves inside
+// the strategy do not add up, and the ledger's warnings. Fixed by hand in config/overrides.json.
+const toCheck = (keys) => {
+  const out = []
+  for (const k of keys) {
+    const D = walletData[k], wallet = WALLETS.find((w) => w.key === k)?.label ?? k
+    for (const f of D.flagged) {
+      const legs = D.ev.filter((e) => f.hashes.includes(e.hash)).flatMap((e) => e.legs.filter((g) => g.review).map((g) => ({ e, g })))
+      for (const { e, g } of legs) {
+        const into = g.amount > 0n
+        out.push({ block: e.block, time_cst: cstTime(e.ts), wallet, tx: e.hash, usd: r2(valueOf(g.asset, g.amount, prices[e.block])),
+          text: `${into ? '收到' : '转出'} ${r6(Math.abs(units(g.amount, decOf(g.asset))))} ${symOf(g.asset)}，对方是不认识的合约 ${short(g.cp)}，暂按资金${into ? '转入' : '转出'}计` })
+      }
+      if (!legs.length) out.push({ block: f.block, time_cst: cstTime(tsOfBlock(f.block)), wallet, tx: f.hashes[0], usd: null, text: `这个区块里策略内部的进出对不上，差 $${Math.abs(f.net).toFixed(2)}` })
+    }
+    // Tokens without a price have their own notice and alert (summary.unpriced).
+    for (const x of D.warnings.filter((y) => y.kind !== 'unpriced')) out.push({ block: x.block, time_cst: cstTime(tsOfBlock(x.block)), wallet, tx: x.hash, usd: null, text: x.text })
+  }
+  return out.sort((a, b) => b.block - a.block)
+}
+
 const unpricedSymbols = {}
 for (const t of unpricedOf(WALLETS.map((w) => w.key))) {
   unpricedSymbols[t] = await client.readContract({ address: t, abi: erc20Abi, functionName: 'symbol', blockNumber: BigInt(head) }).catch(() => null)
@@ -492,6 +536,7 @@ const summary = [], attribution = []
 for (const sc of SCOPES) {
   const rows = daily.filter((r) => r.scope === sc.key)
   const n = scopeAt(sc.wallets, head)
+  const checks = toCheck(sc.wallets)
   const last = rows.at(-1), prevRow = rows.at(-2)
   const finished = rows.filter((r) => !r.partial).slice(-7)
   const twLp = sum(finished, (r) => r.lp_tw_usd), earnN = sum(finished, (r) => r.earn_usd)
@@ -517,6 +562,7 @@ for (const sc of SCOPES) {
     gas_eth: r6(gasEth), gas_usd: gasUsd, eth_usd: r2(pNow.eth), aero_usd: pNow.aero == null ? null : r6(pNow.aero),
     eth_ref_pool: PRICE.ethPool, // the page reads it live; a public pool, not a wallet
     flagged: sum(sc.wallets, (k) => walletData[k].flagged.length + walletData[k].warnings.length),
+    to_check_count: checks.length, to_check: checks.slice(0, 20).map(({ block, ...x }) => x), to_check_txs: [...new Set(checks.map((x) => x.tx))],
     ...ethPrices(sc.wallets, invested, r2(rewards + fees), value),
     unpriced: unpricedOf(sc.wallets).map((address) => ({ address, symbol: unpricedSymbols[address] })),
   })
@@ -566,6 +612,7 @@ for (const w of WALLETS) {
     if (raw === 0n) continue
     holdings.push({ scope: w.key, scope_label: w.label, place: '钱包', asset: symOf(asset), amount: r6(units(raw, decOf(asset))), value_usd: r2(valueOf(asset, raw, pNow)) })
   }
+  if (s.escrow > 0n) holdings.push({ scope: w.key, scope_label: w.label, place: '挂单中', asset: 'WETH', amount: r6(units(s.escrow, 18)), value_usd: r2(valueOf(WETH, s.escrow, pNow)) })
   const v = valueSnapshot(s, pNow)
   const lp = {}
   for (const [t, a] of Object.entries(v.lpTokens)) lp[t] = (lp[t] ?? 0n) + a

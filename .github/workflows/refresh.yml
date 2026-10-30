@@ -49,17 +49,28 @@ jobs:
           path: cache.enc
           key: scan-cache-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: scan-cache-
-      - run: node scripts/cache-crypt.mjs open
-      - run: npm run update
-      - run: npm test
-      # Phone alerts (lib/alerts.mjs); a failure here must not hold back the publish.
+      - id: open
+        run: node scripts/cache-crypt.mjs open
+      - id: update
+        run: npm run update
+      - id: test
+        run: npm test
+      # Phone alerts (lib/alerts.mjs); a failure here must not hold back the publish. When the update
+      # or its checks failed they still run, from the last good data at live pool prices.
       - name: Send price alerts
+        if: ${{ !cancelled() && steps.open.outcome == 'success' }}
         continue-on-error: true
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          UPDATE_OK: ${{ steps.update.outcome == 'success' && steps.test.outcome == 'success' }}
         run: node scripts/alerts.mjs
-      - run: node scripts/cache-crypt.mjs seal
+      # Saved even after a failed update, so what it read (snapshots, scan progress, alert state)
+      # carries over to the next run; nothing is published then. Not after a cancelled run, which may
+      # have stopped in the middle of writing.
+      - if: ${{ !cancelled() && steps.open.outcome == 'success' }}
+        run: node scripts/cache-crypt.mjs seal
       - uses: actions/cache/save@v4
+        if: ${{ !cancelled() && steps.open.outcome == 'success' }}
         continue-on-error: true # a lost save only means the next run rescans a little more
         with:
           path: cache.enc

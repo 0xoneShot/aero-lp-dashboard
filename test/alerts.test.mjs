@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evaluate } from '../lib/alerts.mjs'
+import { evaluate, withLivePrices, STALE_MS } from '../lib/alerts.mjs'
 
 // One wallet with two positions of the same range, as the summary publishes them.
 const row = (pool, extra = {}) => {
@@ -68,4 +68,66 @@ test('messages name the wallet, never an address', () => {
   assert.match(messages[0].title, /^A /)
   assert.ok(!/0x[0-9a-f]{6}/i.test(messages[0].title + messages[0].message))
   assert.match(messages[0].message, /\$2,300/)
+})
+
+test('a transaction to check is reported once, and again only when a new one appears', () => {
+  const c1 = { time_cst: '2026-10-30 12:00', tx: '0xaa', text: '收到 2 ETH，对方是不认识的合约 0xad3b…67bc，暂按资金转入计', usd: 5000 }
+  const c2 = { ...c1, tx: '0xbb', time_cst: '2026-10-31 09:00' }
+  const { out } = run(null, [row(2200), row(2200, { to_check: [c1] }), row(2201, { to_check: [c1] }), row(2202, { to_check: [c2, c1] }), row(2203, { to_check: [c2, c1] })])
+  assert.deepEqual(out, [[], ['check'], [], ['check'], []])
+  const { messages } = evaluate([row(2200, { to_check: [c2, c1] }), total], { 'a:2000-2500': 'in', 'a:cost': 'na', 'a:check': '0xaa' })
+  assert.match(messages[0].message, /^1 笔新的，最新一笔：2026-10-31 09:00/)
+})
+
+test('data the hourly update has not refreshed for a while is reported once, and so is its return', () => {
+  const at = Date.parse('2026-10-30T04:00:00Z')
+  const stamped = (r) => ({ ...r, as_of: '2026-10-30T04:00:00.000Z', as_of_cst: '2026-10-30 12:00' })
+  let prev = evaluate([stamped(row(2200)), total], null, { now: at }).state
+  const kinds = []
+  for (const h of [1, 2.5, 3, 5]) {
+    const r = evaluate([stamped(row(2200)), total], prev, { now: at + h * 3600e3 })
+    kinds.push(r.messages.map((m) => m.kind)); prev = r.state
+  }
+  assert.deepEqual(kinds, [[], ['stale'], [], []])
+  const back = evaluate([{ ...stamped(row(2200)), as_of: new Date(at + 5 * 3600e3).toISOString() }, total], prev, { now: at + 5 * 3600e3 + 60e3 })
+  assert.deepEqual(back.messages.map((m) => m.kind), ['fresh'])
+  assert.ok(STALE_MS === 2 * 3600e3)
+})
+
+// A 2000–2500 range holding exactly 1 ETH below it, $2,300 put in and nothing earned yet.
+const pool = '0x2a430bebd2082d8e05d56d64dede8944279bbc24'
+const sa = Math.sqrt(2000e-12), sb = Math.sqrt(2500e-12), L = 1e18 / (1 / sa - 1 / sb)
+const outage = { ...row(2200), invested_usd: 2300, earn_total_usd: 0, cost_eth_price: 2300, now_cost_eth_price: 2350,
+  curve: { eth: 0, usd: 0, positions: [{ low: 2000, high: 2500, pool: 2200, in_range: true, pool_address: pool, tick_lower: -200311, tick_upper: -198080, L, sa, sb }] } }
+
+test('while the update fails, ranges and the cost price follow live pool prices', () => {
+  const [below] = withLivePrices([outage], { [pool]: { tick: -201000, price: 1900 } }, 1901)
+  assert.deepEqual([below.range_state, below.eth_usd, below.curve.positions[0].in_range, below.curve.positions[0].pool, below.now_cost_eth_price], ['below', 1901, false, 1900, 2300])
+  // Inside the range the cost price is worked out on the curve at the pool's price, as src/run.mjs does.
+  const [inside] = withLivePrices([outage], { [pool]: { tick: -199134, price: 2250 } }, 2251)
+  const r = Math.sqrt(2250e-12), e = (L * (1 / r - 1 / sb)) / 1e18, u = (L * (r - sa)) / 1e6
+  assert.deepEqual([inside.range_state, inside.now_cost_eth_price], ['in', Math.round(((2300 - u) / e) * 100) / 100])
+  const { messages } = evaluate([below, total], { 'a:2000-2500': 'in', 'a:cost': 'na' })
+  assert.deepEqual(messages.map((m) => m.kind), ['below'])
+  assert.match(messages[0].message, /\$2,300\.00/)
+})
+
+test('from the last good data, a range coming back waits for fresh data; without live prices nothing price-driven moves', () => {
+  const prev = { 'a:2000-2500': 'below', 'a:cost': 'below' }
+  const [back] = withLivePrices([outage], { [pool]: { tick: -199134, price: 2250 } }, 2251)
+  const r = evaluate([back, total], prev, { lastGood: true })
+  assert.deepEqual([r.messages.map((m) => m.kind), r.state['a:2000-2500'], r.state['a:cost']], [[], 'below', 'below'])
+  const n = evaluate([outage, total], prev, { lastGood: true, noPrices: true })
+  assert.deepEqual([n.messages.map((m) => m.kind), n.state['a:2000-2500'], n.state['a:cost']], [[], 'below', 'below'])
+  // Still falling: the alert goes out at live prices.
+  const [down] = withLivePrices([outage], { [pool]: { tick: -201000, price: 1900 } }, 1901)
+  assert.deepEqual(evaluate([down, total], { 'a:2000-2500': 'in', 'a:cost': 'na' }, { lastGood: true }).messages.map((m) => m.kind), ['below'])
+})
+
+test('settling one of many transactions to check does not bring an older one back as new', () => {
+  const items = Array.from({ length: 25 }, (_, i) => ({ time_cst: `2026-10-${String(30 - i).padStart(2, '0')} 10:00`, tx: `0x${i}`, text: `item ${i}` }))
+  const at = (list) => row(2200, { to_check: list.slice(0, 20), to_check_txs: list.map((x) => x.tx) })
+  const settled = items.slice(1).filter((x) => x.tx !== '0x7')
+  const { out } = run(null, [row(2200), at(items), at(items), at(items.slice(1)), at(settled), at([{ ...items[0], tx: '0xnew' }, ...settled])])
+  assert.deepEqual(out, [[], ['check'], [], [], [], ['check']])
 })
