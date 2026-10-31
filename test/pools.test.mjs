@@ -212,12 +212,13 @@ test('a block is found near a time from the head and the average block time', as
 
 // A summary row with two pools and a switch suggestion (to the better one) as src/run.mjs publishes it;
 // the money now earns `current`, unstaked in the Ethereum pool.
-const sw = ({ eth = 1.7, arb = 1.0, current = 0.6, complete = true, ...extra } = {}) => {
+// `extra` changes the top option, which is also the steady one unless `steady` is given (null: none).
+const sw = ({ eth = 1.7, arb = 1.0, current = 0.6, complete = true, steady, ...extra } = {}) => {
   const pools = [{ chain: 'eth', label: 'CL50', staked: { median: eth }, fee: { median: current } }, { chain: 'arb', label: 'CL100', staked: { median: arb }, fee: { median: 0.4 } }]
   const to = eth >= arb ? { chain: 'eth', chain_label: '以太坊', label: 'CL50', median: eth, tracked: true } : { chain: 'arb', chain_label: 'Arbitrum', label: 'CL100', median: arb, tracked: false }
+  const top = { to: { mode: 'staked', p25: to.median - 0.2, days: 10, ...to }, here: false, gap: to.median - current, extra_day_usd: 84, cost_usd: 0.5, payback_days: 0.01, stable: true, ...extra }
   return { scope: 'a', scope_label: 'A', curve: { positions: [] }, pool_compare: { complete, pools, switch: {
-    to: { mode: 'staked', p25: to.median - 0.2, days: 10, ...to }, from: [{ chain: 'eth', chain_label: '以太坊', label: 'CL50', mode: 'fee', usd: 28000, rate: current }],
-    current, here: false, gap: to.median - current, extra_day_usd: 84, cost_usd: 0.5, payback_days: 0.01, stable: true, ...extra } } }
+    ...top, steady: steady === undefined ? top : steady, from: [{ chain: 'eth', chain_label: '以太坊', label: 'CL50', mode: 'fee', usd: 28000, rate: current }], current } } }
 }
 const total = { scope: 'total', scope_label: '合计', curve: { positions: [] } }
 
@@ -234,7 +235,10 @@ test('a better place for the money is said once, again only for another one, and
   assert.equal(state['a:switch'], 'none')
   ;[k, state] = kinds(sw(), state)
   assert.deepEqual(k, ['switch'])
-  // Another pool takes the lead: said once; then the two trading places says nothing more.
+  // Another pool takes the lead by a hair: nothing. By more than half the gap: said once; then the two
+  // trading places says nothing more.
+  ;[k, state] = kinds(sw({ arb: 1.75 }), state)
+  assert.deepEqual(k, [])
   ;[k, state, messages] = kinds(sw({ arb: 1.9 }), state)
   assert.deepEqual(k, ['switch'])
   assert.match(messages[0].message, /只追踪 Base 和以太坊/)
@@ -249,4 +253,11 @@ test('a better place for the money is said once, again only for another one, and
   }
   // From the last good summary while the update fails: wait.
   assert.deepEqual(evaluate([sw(), total], { 'a:switch': 'none' }, { lastGood: true }).messages, [])
+  // The top option leads by a hair and not steadily; staking where the money is meets every condition:
+  // that is the one said. With no option meeting them all, nothing is.
+  const stake = { to: { chain: 'eth', chain_label: '以太坊', label: 'CL50', mode: 'staked', median: 1.6, p25: 1.5, days: 10, tracked: true }, here: false, gap: 1.0, extra_day_usd: 80, cost_usd: 0.09, payback_days: 0, stable: true }
+  const r = evaluate([sw({ eth: 1.6, arb: 1.63, stable: false, steady: stake }), total], { 'a:switch': 'none' })
+  assert.deepEqual(r.messages.map((m) => m.title), ['A：以太坊 CL50 质押收益更高'])
+  assert.equal(r.state['a:switch'], 'eth:CL50:staked')
+  assert.deepEqual(evaluate([sw({ stable: false, steady: null }), total], { 'a:switch': 'none' }).messages, [])
 })
