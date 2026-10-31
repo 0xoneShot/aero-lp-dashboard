@@ -13,15 +13,17 @@ import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
 import { hodlHeld } from '../lib/hodl.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf, savePrices } from '../lib/prices.mjs'
+import { samplePools, blockFinder, poolStats } from '../lib/pools.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, gaugeAbi, TOPIC } from '../lib/abi.mjs'
 import { tryRead } from '../lib/errors.mjs'
-import { WALLETS, START_DAY, TOKENS, ALL_TOKENS, CHAINS, WETH, ZERO, LABELS, GAUGE_IMPLS, OVERRIDES_FILE, PRICE } from '../lib/config.mjs'
+import { WALLETS, START_DAY, TOKENS, ALL_TOKENS, CHAINS, COMPARE_CHAINS, WETH, ZERO, LABELS, GAUGE_IMPLS, OVERRIDES_FILE, PRICE } from '../lib/config.mjs'
 import { daysBetween, cstDay, cstDayStartTs, prevDay, createTimeline } from '../lib/time.mjs'
 import { priceAtTick, priceFromSqrt, amountsForLiquidity } from '../lib/univ3.mjs'
 
 const OUT = path.resolve('out')
 const SNAP_CACHE = path.resolve('data/cache/snapshots.json')
 const CODE_CACHE = path.resolve('data/cache/code.json')
+const POOLS_FILE = path.resolve('data/cache/pools.json')
 const SNAP_VERSION = 'snap-v2' // bump whenever lib/snapshot.mjs changes what it reads
 const log = (...a) => console.error('[update]', ...a)
 const lc = (a) => a.toLowerCase()
@@ -320,8 +322,37 @@ for (const w of WALLETS) for (const b of blocks) snaps[w.key][b].escrow = escrow
 const prices = {}
 const eventBlocks = WALLETS.flatMap((w) => ledger[w.key].events.map((e) => e.block)).filter((b) => b > openingBlock && b <= head)
 await pmap([...new Set([...blocks, ...eventBlocks, ...Object.values(startBase).filter((b) => b <= head)])], 4, async (b) => { prices[b] = await pricesAt(b) })
-await savePrices(head)
 log(`valued ${blocks.length} day-end blocks and ${new Set(eventBlocks).size} event blocks`)
+
+// Hourly samples of every gauged WETH/USDC pool on the chains (lib/pools.mjs), for the page's pool
+// card. Only pool contracts are read. A chain that cannot be read keeps its earlier samples, and a
+// first run that cannot fill the window in its time budget leaves the rest to the next runs.
+let poolCache = null
+try {
+  const atBase = async (t) => { const b = await timeline.blockBefore(t + 1); return { block: b, ts: tsOfBlock(b) } }
+  // The chains only compared are read to a little behind their latest block (their own time).
+  const others = await Promise.all(Object.values(COMPARE_CHAINS).map(async (c) => {
+    try {
+      const cl = clientOf(c), h = Number(await cl.getBlockNumber()) - 20, ts = Number((await cl.getBlock({ blockNumber: BigInt(h) })).timestamp)
+      return { chain: c, client: cl, head: h, headTs: ts, blockAt: blockFinder(cl, h, ts, c.compare.blockSecs) }
+    } catch (err) { log(`pools: ${c.key} not reached (${(err.shortMessage ?? err.message).slice(0, 120)})`); return null }
+  }))
+  const chains = [
+    { chain: CHAINS.base, client, head, headTs: tsOfBlock(head), blockAt: atBase },
+    ...Object.values(ext).map((x) => ({ chain: x.chain, client: x.client, head: x.head, headTs: x.headTs, blockAt: blockFinder(x.client, x.head, x.headTs, x.chain.compare.blockSecs) })),
+    ...others.filter(Boolean),
+  ].filter((x) => x.chain.compare)
+  const r = await samplePools({
+    chains, file: POOLS_FILE, pmap, log, deadline: Date.now() + 8 * 60e3,
+    // AERO and ETH in dollars at the hour, from Base's pools as every other price (xAERO counts as AERO).
+    priceAt: async (t) => { const p = await pricesAt((await atBase(t)).block); return { aero: p.aero, eth: p.eth } },
+  })
+  poolCache = r.cache
+  for (const m of r.errors) log(`pools: ${m.slice(0, 200)}`)
+} catch (err) {
+  log(`pools: not compared this run (${(err.shortMessage ?? err.message).slice(0, 200)})`)
+}
+await savePrices(head)
 const pNowCurve = prices[head]
 
 // A snapshot's static collect pays principal still owed first; only the rest is fees.
@@ -748,6 +779,102 @@ for (const t of unpricedOf(WALLETS.map((w) => w.key))) {
   unpricedSymbols[t.address] = await clientOf(c).readContract({ address: t.address, abi: erc20Abi, functionName: 'symbol', blockNumber: BigInt(c.key === 'base' ? head : ext[c.key].head) }).catch(() => null)
 }
 
+// The pools compared for some wallets: what a position as wide as theirs, holding all their money,
+// earned in each, staked or not (lib/pools.mjs). Their width is that of their largest live position
+// (a range ±5% wide when they have none); what of their money is already in a pool is not added to it
+// again, and the pool is marked, staked if any of it is staked there. A pool read more than a day ago
+// is not picked as the best, nor staking in one whose gauge has paid nothing for 3 hours (stopped).
+const DEFAULT_RATIO = (1.05 / 0.95)
+function poolCompare(keys, myUsd) {
+  if (!poolCache) return null
+  const live = keys.flatMap((k) => snaps[k][head].positions.filter((x) => x.liquidity > 0n).map((x) => ({ x, c: curveOf(x) }))).filter((p) => p.c)
+    .map((p) => { const [e, u] = amountsAtUsd(p.c, p.c.pool); return { ...p, usd: e * p.c.pool + u } }).sort((a, b) => b.usd - a.usd)
+  const ratio = live.length ? live[0].c.high / live[0].c.low : DEFAULT_RATIO
+  const inPool = new Map()
+  for (const { x, usd } of live) {
+    const k = `${x.chain ?? 'base'}:${lc(x.pool)}`, was = inPool.get(k) ?? { staked: 0, all: 0 }
+    inPool.set(k, { staked: was.staked + (x.staked ? usd : 0), all: was.all + usd })
+  }
+  const nowTs = tsOfBlock(head)
+  const rate = (x) => (x == null || !Number.isFinite(x) ? null : r6(x))
+  const pools = Object.entries(poolCache.pools).map(([k, e]) => {
+    const mine = inPool.get(k)
+    const st = poolStats(e, { ratio, myUsd: Math.max(0, myUsd), inStakedUsd: mine?.staked ?? 0, inPoolUsd: mine?.all ?? 0, nowTs })
+    const ch = CHAINS[e.chain] ?? COMPARE_CHAINS[e.chain]
+    const stopped = st.quietHours >= 3
+    const ageH = st.last ? Math.max(0, Math.floor((nowTs - st.last.ts) / 3600)) : null
+    return {
+      chain: e.chain, chain_label: ch?.label ?? e.chain, label: `CL${e.tickSpacing}`, pool_address: e.address, here: mine ? (mine.staked > 0 ? 'staked' : 'unstaked') : null,
+      tvl_usd: r2(units(e.tvl.weth, 18) * pNow.eth + units(e.tvl.usdc, 6)), staked_share: rate(st.last?.stakedShare), missing_hours: e.missing ?? null,
+      days: st.days, last_sample: st.last ? cstTime(st.last.ts) : null, age_h: ageH, stale: ageH == null || ageH > 3, stopped,
+      staked: Object.fromEntries(Object.entries(st.staked).map(([f, v]) => [f, stopped ? null : rate(v)])), fee: Object.fromEntries(Object.entries(st.fee).map(([f, v]) => [f, rate(v)])),
+      daily: st.daily.map((d) => ({ day: d.day, staked: rate(d.staked), fee: rate(d.fee) })),
+      // A week with under a day of data (the week under way at its start, or before a pool's gauge paid) says nothing yet.
+      weeks: st.weeks.filter((w) => w.hours >= 24).map((w) => ({ start: w.start, hours: w.hours, staked: rate(w.staked), fee: rate(w.fee), emitted_day: Math.round(w.emitted_day) })),
+    }
+  }).sort((a, b) => Math.max(b.staked.median ?? -1, b.fee.median ?? -1) - Math.max(a.staked.median ?? -1, a.fee.median ?? -1))
+  // Every pool read over the whole window and this run (the first runs fill it over a few hours, and a
+  // chain can fail for a while): until then the best option may be one whose rivals are not read, and
+  // the switch alert waits.
+  const complete = pools.every((p) => p.missing_hours === 0 && !p.stale)
+  return { ratio: r6(ratio), width_pct: r6(Math.sqrt(ratio) - 1), default_width: !live.length, my_usd: r2(myUsd), complete, pools, switch: switchTo(pools, live, myUsd) }
+}
+
+// Whether moving the money to the best option pays: the best option (a pool, staked or not) by its
+// median daily rate, against what the positions earn where they are now (each at its pool's rate for
+// how it is held), for all the money (money outside positions would go wherever the rest is), what
+// moving the positions costs, and how many days of the extra earnings pay for it. With no position the
+// money has only to go in. Pools with under 3 days of data are not picked. It leads steadily when
+// even its bad days (lower quartile) beat the best rate the money has now, and it also led in each of
+// the last two Aero weeks (the week under way counts once it has a day): emissions are reset weekly.
+//   cost: gas for leaving and entering at each chain's gas price now, in gas units of real transactions
+//   (2026-10, Aero's router on Base and Ethereum: unstake and withdraw 700-770k, mint and stake 790-930k,
+//   a swap 330-400k; L2 data fees not counted); swapping half the money back to the new range's ratio;
+//   and a bridge between chains (0.05%: live quotes for $28k were 0.01-0.02%, and Relay took about 0.02%
+//   on the owners' own move). Staking or unstaking in the same pool costs only that transaction.
+const GAS_UNITS = { exit: 300_000, unstake: 470_000, enter: 850_000, stake: 500_000, bridge: 150_000 }
+const SWAP_COST = 0.0005 / 2, BRIDGE_COST = 0.0005
+function switchTo(pools, live, myUsd) {
+  const options = pools.flatMap((p) => ['staked', 'fee'].map((mode) => ({ p, mode, median: p[mode].median, p25: p[mode].p25 }))).filter((o) => o.median != null && o.p.days >= 3 && o.p.age_h <= 24)
+  if (!options.length || !(myUsd > 0)) return null
+  const best = options.reduce((a, o) => (o.median > a.median ? o : a))
+  const gasUsd = (chain, units) => { const g = poolCache.gas?.[chain]; return g ? (units * Number(g.wei)) / 1e18 * (g.token === 'usd' ? 1 : pNow.eth) : 0 }
+  const now = live.map(({ x, usd }) => {
+    const p = pools.find((q) => q.chain === (x.chain ?? 'base') && q.pool_address === lc(x.pool)), mode = x.staked ? 'staked' : 'fee'
+    // Staked in a pool whose rewards stopped earns nothing.
+    return { x, usd, p, mode, rate: p ? (p.stopped && mode === 'staked' ? 0 : p[mode].median) : null }
+  })
+  // A position in a pool not compared (or not paying) has no rate: what the money earns now is unknown.
+  const known = now.filter((n) => n.rate != null), inKnown = sum(known, (n) => n.usd), allKnown = known.length === now.length
+  const current = inKnown > 0 ? sum(known, (n) => n.usd * n.rate) / inKnown : 0
+  const cost = sum(now, ({ x, usd, p, mode }) => {
+    const from = x.chain ?? 'base', to = best.p.chain
+    if (p === best.p) return mode === best.mode ? 0 : gasUsd(from, best.mode === 'staked' ? GAS_UNITS.stake : GAS_UNITS.unstake)
+    let c = gasUsd(from, GAS_UNITS.exit + (x.staked ? GAS_UNITS.unstake : 0)) + gasUsd(to, GAS_UNITS.enter + (best.mode === 'staked' ? GAS_UNITS.stake : 0)) + usd * SWAP_COST
+    if (from !== to) c += usd * BRIDGE_COST + gasUsd(from, GAS_UNITS.bridge)
+    return c
+  })
+  // With no position the money has only to go in (where it sits, and so any bridge, is not known).
+  const enterIdle = now.length ? 0 : gasUsd(best.p.chain, GAS_UNITS.enter + (best.mode === 'staked' ? GAS_UNITS.stake : 0)) + myUsd * SWAP_COST
+  const here = now.length > 0 && now.every((n) => n.p === best.p && n.mode === best.mode)
+  const extra = allKnown ? ((best.median - current) * myUsd) / 365 : null
+  // Week by week: the best option against the money where it is (positions at their own pool's week).
+  const weekOf = (p, mode, start) => p?.weeks.find((w) => w.start === start && w.hours >= 24)?.[mode] ?? null
+  const starts = best.p.weeks.filter((w) => w.hours >= 24).map((w) => w.start).slice(-2)
+  const weeksAhead = starts.filter((d) => {
+    const b = weekOf(best.p, best.mode, d), c = known.map((n) => [n.usd, weekOf(n.p, n.mode, d)])
+    return b != null && c.every(([, r]) => r != null) && b > (inKnown > 0 ? sum(c, ([u, r]) => u * r) / inKnown : 0)
+  }).length
+  return {
+    to: { chain: best.p.chain, chain_label: best.p.chain_label, label: best.p.label, mode: best.mode, median: r6(best.median), p25: r6(best.p25), days: best.p.days, tracked: best.p.chain in CHAINS },
+    from: now.map((n) => ({ chain: n.x.chain ?? 'base', chain_label: chainOf(n.x.chain)?.label, label: n.p?.label ?? null, mode: n.mode, usd: r2(n.usd), rate: n.rate == null ? null : r6(n.rate) })),
+    current: allKnown && known.length ? r6(current) : null, here,
+    gap: allKnown ? r6(best.median - current) : null, extra_day_usd: extra == null ? null : r2(extra), cost_usd: r2(cost + enterIdle), payback_days: extra > 0 ? r2((cost + enterIdle) / extra) : null,
+    weeks_ahead: weeksAhead, weeks_compared: starts.length,
+    stable: allKnown && best.p25 != null && known.length > 0 && best.p25 > Math.max(...known.map((n) => n.rate)) && starts.length === 2 && weeksAhead === 2,
+  }
+}
+
 // Summary and attribution. Money figures come from the rounded daily rows, so the cards, the
 // charts, the tables and the breakdown all show the same numbers.
 const pNow = prices[head]
@@ -786,6 +913,7 @@ for (const sc of SCOPES) {
     to_check_count: checks.length, to_check: checks.slice(0, 20).map(({ block, ...x }) => x), to_check_txs: [...new Set(checks.map((x) => x.tx))],
     ...ethPrices(sc.wallets, invested, r2(rewards + fees), value),
     unpriced: unpricedOf(sc.wallets).map(({ address, chain }) => ({ address, symbol: unpricedSymbols[address], chain })),
+    pool_compare: poolCompare(sc.wallets, value),
   })
   // From money put in to value now; the AERO step is aeroNow minus what it was worth when earned.
   const steps = { market: r2(hodl - invested), rewards, fees, aero_drift: r2(aeroNow - rewards), gas: -gasUsd }

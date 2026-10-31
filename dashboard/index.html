@@ -84,6 +84,15 @@
   .lp tr.lp-today td { font-style: italic; }
   .lp tr.lp-today td:not(.lp-pos):not(.lp-neg) { color: var(--color-fg-muted); }
   .lp td.lp-wrap { white-space: normal; }
+  .lp table.lp-pools td { vertical-align: top; }
+  .lp table.lp-pools td:first-child { white-space: normal; }
+  .lp-cell-sub { display: block; font-size: 11px; color: var(--color-fg-muted); white-space: nowrap; }
+  .lp table.lp-pools td.lp-best { color: var(--color-ok); font-weight: 600; }
+  .lp table.lp-pools td.lp-best .lp-cell-sub { color: var(--color-fg-muted); font-weight: 400; }
+  .lp-chip.lp-chip-here { color: var(--color-fg-muted); }
+  .lp-move { font-size: 13px; line-height: 1.6; }
+  .lp-more { font-size: 12px; color: var(--color-fg-muted); }
+  .lp-more summary { cursor: pointer; }
   .lp-chip { display: inline-block; white-space: nowrap; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-style: normal; color: var(--color-warn); border: 1px solid currentColor; }
   @media (max-width: 560px) {
     .lp .lp-hide-sm { display: none; }
@@ -139,6 +148,18 @@
       <div class="lp-exits" id="exit-custom"></div>
     </section>
   </div>
+
+  <section class="lp-card" id="pools" hidden>
+    <h2 id="pools-title">哪个池子利息高</h2>
+    <p class="lp-move" id="pools-move" hidden></p>
+    <p class="lp-note" id="pools-note"></p>
+    <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>质押<br>拿 AERO</th><th>不质押<br>拿手续费</th></tr></thead><tbody id="pools-body"></tbody></table></div>
+    <details class="lp-more"><summary>每周明细</summary>
+      <div class="lp-tablewrap"><table><thead id="pools-weeks-head"></thead><tbody id="pools-weeks-body"></tbody></table></div>
+      <p class="lp-note">按 Aero 的周（周四 8 点起），没过完的周注明天数。“发 …/天”是那一周每天发给这个池子的 AERO 奖励，每周四按投票重新定，本周的数说明接下来往哪走。</p>
+    </details>
+    <p class="lp-note">质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。大字是每天年化的中位数，“差的日子”是最差 1/4 天的水平。都假设仓位一直在区间正中，实际还要看在区间内的时间。“换过去”的成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）；本来就要重新开仓的话，多出来的只有跨链。某个钱包的去处数据满 7 天、中位数比现在的仓位高 20 个百分点以上、稳定领先（差的日子也比现在高、最近两个 Aero 周都领先）、3 天内回本时，手机提醒一次（看“合计”时不提醒，按各个钱包提醒）。</p>
+  </section>
 
   <div class="lp-viewbar" id="viewbar">
     <div class="lp-switch" role="group" aria-label="按什么时间看"><button type="button" data-period="day">按天</button><button type="button" data-period="week">按周</button><button type="button" data-period="month">按月</button></div>
@@ -630,6 +651,78 @@
     }));
   }
 
+  // ---------- pools: what a position like the owners' earned in each pool, staked or not ----------
+  const fmtRate = (v) => (v == null ? '—' : `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`);
+  const fmtCompact = (v) => (v == null ? '—' : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${Math.round(v / 1e3)}K` : fmtUsd(v));
+  function drawPools(s) {
+    const card = $('pools'), pc = s?.pool_compare;
+    card.hidden = !pc || !pc.pools.length;
+    if (card.hidden) return;
+    const days = Math.max(...pc.pools.map((p) => p.days));
+    $('pools-title').textContent = days >= 28 ? '哪个池子利息高（近 4 周）' : `哪个池子利息高（近 ${days} 天）`;
+    const width = `±${(pc.width_pct * 100).toFixed(1)}%`;
+    $('pools-note').textContent = `${pc.default_width ? `现在没有仓位，按 ${width} 的区间` : `按${s.scope === 'total' ? '最大那个' : '你的'}仓位的区间宽度（${width}）`}、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。`;
+    // Where the money earns most, against where it is now (src/run.mjs switchTo).
+    const sw = pc.switch, move = $('pools-move'), modeName = (m) => (m === 'staked' ? '质押' : '不质押');
+    move.hidden = !sw;
+    if (sw) {
+      const to = `${sw.to.chain_label} ${sw.to.label} ${modeName(sw.to.mode)}`;
+      const from = [...new Set(sw.from.filter((f) => f.label).map((f) => `${f.chain_label} ${f.label} ${modeName(f.mode)}`))].join('、');
+      move.replaceChildren();
+      if (sw.here) move.append('你现在的就是最高的：', el('b', null, to), `（中位 ${fmtRate(sw.to.median)}）。`);
+      else {
+        move.append('最高的是 ', el('b', null, to), `：中位 ${fmtRate(sw.to.median)}，差的日子 ${fmtRate(sw.to.p25)}`, sw.current == null ? '。' : `；你现在的仓位约 ${fmtRate(sw.current)}${from ? `（${from}）` : ''}。`);
+        if (sw.extra_day_usd == null) move.append('有的仓位不在比较的池子里，算不出现在挣多少。');
+        else if (sw.extra_day_usd > 0) move.append(`换过去每天多约 ${fmtUsd(sw.extra_day_usd)}，成本约 ${fmtUsd(sw.cost_usd)}，${sw.payback_days < 0.1 ? '不到 0.1 天' : `约 ${sw.payback_days.toFixed(1)} 天`}回本。`);
+        if (!sw.stable) {
+          const best = Math.max(...sw.from.filter((f) => f.rate != null).map((f) => f.rate));
+          const why = [sw.to.p25 != null && Number.isFinite(best) && sw.to.p25 <= best ? '它差的日子还不如你现在' : null,
+            sw.weeks_compared < 2 ? '数据还不满两个 Aero 周' : sw.weeks_ahead < 2 ? `最近两个 Aero 周只领先了 ${sw.weeks_ahead} 周` : null].filter(Boolean);
+          move.append(`不算稳定领先${why.length ? `：${why.join('，')}` : ''}。`);
+        }
+        if (!sw.to.tracked) move.append(`看板现在只追踪 Base 和以太坊上的仓位，换到 ${sw.to.chain_label} 后盈亏要先加上这条链才算得准。`);
+      }
+      if (!pc.complete) move.append('有的池子数据还在补，补齐前结论可能会变。');
+    }
+    // Green marks the top of each column among the pools that can be picked, as the line above does.
+    const pickable = (p) => p.days >= 3 && p.age_h != null && p.age_h <= 24;
+    const best = (f) => Math.max(...pc.pools.filter(pickable).map((p) => p[f].median ?? -Infinity));
+    const bestStaked = best('staked'), bestFee = best('fee');
+    $('pools-body').replaceChildren(...pc.pools.map((p) => {
+      const tr = document.createElement('tr');
+      const name = el('td');
+      name.append(`${p.chain_label} ${p.label}`);
+      if (p.here) name.append(el('span', 'lp-chip lp-chip-here', p.here === 'staked' ? '你在这 · 已质押' : '你在这 · 未质押'));
+      if (p.stopped) name.append(el('span', 'lp-chip', '奖励已停'));
+      name.append(el('span', 'lp-cell-sub', `池子 ${fmtCompact(p.tvl_usd)} · ${p.days ? `${p.days} 天` : '数据还在补'}${p.days && p.missing_hours ? ' · 还在补' : ''}`));
+      if (p.stale && p.last_sample) name.append(el('span', 'lp-cell-sub', `数据停在 ${p.last_sample}`));
+      const cell = (x, top) => {
+        const td = el('td', x.median != null && x.median === top ? 'lp-best' : null);
+        td.append(fmtRate(x.median), el('span', 'lp-cell-sub', `近 7 日 ${fmtRate(x.mean7)}`), el('span', 'lp-cell-sub', `差的日子 ${fmtRate(x.p25)}`));
+        if (!pickable(p) && x.median != null) td.classList.remove('lp-best');
+        return td;
+      };
+      tr.append(name, cell(p.staked, bestStaked), cell(p.fee, bestFee));
+      return tr;
+    }));
+    // Aero's weeks start on Thursday; a week not yet over (or before a pool existed) shows its days.
+    const starts = [...new Set(pc.pools.flatMap((p) => p.weeks.map((w) => w.start)))].sort();
+    const hr = document.createElement('tr');
+    hr.append(el('th', null, '池子'), ...starts.map((d) => el('th', null, `${dayLabel(parseDay(d))} 起`)));
+    $('pools-weeks-head').replaceChildren(hr);
+    $('pools-weeks-body').replaceChildren(...pc.pools.map((p) => {
+      const tr = document.createElement('tr');
+      tr.append(el('td', null, `${p.chain_label} ${p.label}`));
+      for (const d of starts) {
+        const w = p.weeks.find((x) => x.start === d), td = el('td');
+        if (w) td.append(`质押 ${fmtRate(w.staked)}`, el('span', 'lp-cell-sub', `手续费 ${fmtRate(w.fee)}`), el('span', 'lp-cell-sub', `发 ${fmtNum(w.emitted_day, 0)}/天${w.hours < 160 ? ` · ${Math.round(w.hours / 24)} 天` : ''}`));
+        else td.textContent = '—';
+        tr.append(td);
+      }
+      return tr;
+    }));
+  }
+
   // ---------- table ----------
   function drawDays(rowsAll, sc, period) {
     const rows = rowsAll.filter((r) => r.scope === sc).slice().reverse();
@@ -900,7 +993,7 @@
     const sc = scope();
     drawScopes(sc);
     const lives = allLive(), s = lives.find((r) => r.scope === sc) ?? null;
-    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc);
+    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc); drawPools(s);
     if (D.status === 'ok') {
       const v = viewRows(D, lives, sc);
       drawViewbar(v.n, v.range); drawInterest(v.grouped, sc, view.period); drawApr(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period);
