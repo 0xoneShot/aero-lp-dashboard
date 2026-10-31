@@ -14,7 +14,7 @@ import { hodlHeld } from '../lib/hodl.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf, savePrices } from '../lib/prices.mjs'
 import { samplePools, blockFinder, poolStats } from '../lib/pools.mjs'
-import { SWITCH } from '../lib/alerts.mjs'
+import { switchTo } from '../lib/switch.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, gaugeAbi, TOPIC } from '../lib/abi.mjs'
 import { tryRead } from '../lib/errors.mjs'
 import { WALLETS, START_DAY, TOKENS, ALL_TOKENS, CHAINS, COMPARE_CHAINS, WETH, ZERO, LABELS, GAUGE_IMPLS, OVERRIDES_FILE, PRICE } from '../lib/config.mjs'
@@ -818,74 +818,12 @@ function poolCompare(keys, myUsd) {
   // chain can fail for a while): until then the best option may be one whose rivals are not read, and
   // the switch alert waits.
   const complete = pools.every((p) => p.missing_hours === 0 && !p.stale)
-  return { ratio: r6(ratio), width_pct: r6(Math.sqrt(ratio) - 1), default_width: !live.length, my_usd: r2(myUsd), complete, pools, switch: switchTo(pools, live, myUsd) }
+  return { ratio: r6(ratio), width_pct: r6(Math.sqrt(ratio) - 1), default_width: !live.length, my_usd: r2(myUsd), complete, pools, switch: switchTo({
+    pools, myUsd, gas: poolCache.gas ?? {}, ethUsd: pNow.eth, tracked: (c) => c in CHAINS, chainLabel: (c) => chainOf(c)?.label ?? c,
+    positions: live.map(({ x, usd }) => ({ chain: x.chain ?? 'base', pool: lc(x.pool), staked: x.staked, usd })),
+  }) }
 }
 
-// Whether moving the money to the best option pays: the best option (a pool, staked or not) by its
-// median daily rate, against what the positions earn where they are now (each at its pool's rate for
-// how it is held), for all the money (money outside positions would go wherever the rest is), what
-// moving the positions costs, and how many days of the extra earnings pay for it. With no position the
-// money has only to go in. Pools with under 3 days of data are not picked. It leads steadily when
-// even its bad days (lower quartile) beat the best rate the money has now, and it also led in each of
-// the last two Aero weeks (the week under way counts once it has a day): emissions are reset weekly.
-//   cost: gas for leaving and entering at each chain's gas price now, in gas units of real transactions
-//   (2026-10, Aero's router on Base and Ethereum: unstake and withdraw 700-770k, mint and stake 790-930k,
-//   a swap 330-400k; L2 data fees not counted); swapping half the money back to the new range's ratio;
-//   and a bridge between chains (0.05%: live quotes for $28k were 0.01-0.02%, and Relay took about 0.02%
-//   on the owners' own move). Staking or unstaking in the same pool costs only that transaction.
-const GAS_UNITS = { exit: 300_000, unstake: 470_000, enter: 850_000, stake: 500_000, bridge: 150_000 }
-const SWAP_COST = 0.0005 / 2, BRIDGE_COST = 0.0005
-function switchTo(pools, live, myUsd) {
-  const options = pools.flatMap((p) => ['staked', 'fee'].map((mode) => ({ p, mode, median: p[mode].median, p25: p[mode].p25 }))).filter((o) => o.median != null && o.p.days >= 3 && o.p.age_h <= 24)
-  if (!options.length || !(myUsd > 0)) return null
-  const gasUsd = (chain, units) => { const g = poolCache.gas?.[chain]; return g ? (units * Number(g.wei)) / 1e18 * (g.token === 'usd' ? 1 : pNow.eth) : 0 }
-  const now = live.map(({ x, usd }) => {
-    const p = pools.find((q) => q.chain === (x.chain ?? 'base') && q.pool_address === lc(x.pool)), mode = x.staked ? 'staked' : 'fee'
-    // Staked in a pool whose rewards stopped earns nothing.
-    return { x, usd, p, mode, rate: p ? (p.stopped && mode === 'staked' ? 0 : p[mode].median) : null }
-  })
-  // A position in a pool not compared (or not paying) has no rate: what the money earns now is unknown.
-  const known = now.filter((n) => n.rate != null), inKnown = sum(known, (n) => n.usd), allKnown = known.length === now.length
-  const current = inKnown > 0 ? sum(known, (n) => n.usd * n.rate) / inKnown : 0
-  // Week by week: an option against the money where it is (positions at their own pool's week).
-  const weekOf = (p, mode, start) => p?.weeks.find((w) => w.start === start && w.hours >= 24)?.[mode] ?? null
-  // Moving to one option: what it costs, earns more, and whether it leads steadily.
-  // With no position the money has only to go in (where it sits, and so any bridge, is not known).
-  const judge = (o) => {
-    const cost = sum(now, ({ x, usd, p, mode }) => {
-      const from = x.chain ?? 'base', to = o.p.chain
-      if (p === o.p) return mode === o.mode ? 0 : gasUsd(from, o.mode === 'staked' ? GAS_UNITS.stake : GAS_UNITS.unstake)
-      let c = gasUsd(from, GAS_UNITS.exit + (x.staked ? GAS_UNITS.unstake : 0)) + gasUsd(to, GAS_UNITS.enter + (o.mode === 'staked' ? GAS_UNITS.stake : 0)) + usd * SWAP_COST
-      if (from !== to) c += usd * BRIDGE_COST + gasUsd(from, GAS_UNITS.bridge)
-      return c
-    }) + (now.length ? 0 : gasUsd(o.p.chain, GAS_UNITS.enter + (o.mode === 'staked' ? GAS_UNITS.stake : 0)) + myUsd * SWAP_COST)
-    const extra = allKnown ? ((o.median - current) * myUsd) / 365 : null
-    const starts = o.p.weeks.filter((w) => w.hours >= 24).map((w) => w.start).slice(-2)
-    const weeksAhead = starts.filter((d) => {
-      const b = weekOf(o.p, o.mode, d), c = known.map((n) => [n.usd, weekOf(n.p, n.mode, d)])
-      return b != null && c.every(([, r]) => r != null) && b > (inKnown > 0 ? sum(c, ([u, r]) => u * r) / inKnown : 0)
-    }).length
-    return {
-      to: { chain: o.p.chain, chain_label: o.p.chain_label, label: o.p.label, mode: o.mode, median: r6(o.median), p25: r6(o.p25), days: o.p.days, tracked: o.p.chain in CHAINS },
-      here: now.length > 0 && now.every((n) => n.p === o.p && n.mode === o.mode),
-      gap: allKnown ? r6(o.median - current) : null, extra_day_usd: extra == null ? null : r2(extra), cost_usd: r2(cost), payback_days: extra > 0 ? r2(cost / extra) : null,
-      weeks_ahead: weeksAhead, weeks_compared: starts.length,
-      stable: allKnown && o.p25 != null && known.length > 0 && o.p25 > Math.max(...known.map((n) => n.rate)) && starts.length === 2 && weeksAhead === 2,
-    }
-  }
-  const judged = options.map((o) => ({ o, j: judge(o) }))
-  const best = judged.reduce((a, x) => (x.o.median > a.o.median ? x : a))
-  // The best option that meets every condition of the switch alert (lib/alerts.mjs SWITCH): the top one
-  // may lead by a hair, or not steadily, while one just below it (staking where the money already is,
-  // say) clearly pays.
-  const meets = (j) => !j.here && j.stable && j.to.days >= SWITCH.days && j.gap >= SWITCH.gap && j.payback_days != null && j.payback_days <= SWITCH.payback
-  const steady = judged.filter((x) => meets(x.j)).reduce((a, x) => (!a || x.o.median > a.o.median ? x : a), null)
-  return {
-    ...best.j, steady: steady ? steady.j : null,
-    from: now.map((n) => ({ chain: n.x.chain ?? 'base', chain_label: chainOf(n.x.chain)?.label, label: n.p?.label ?? null, mode: n.mode, usd: r2(n.usd), rate: n.rate == null ? null : r6(n.rate) })),
-    current: allKnown && known.length ? r6(current) : null,
-  }
-}
 
 // Summary and attribution. Money figures come from the rounded daily rows, so the cards, the
 // charts, the tables and the breakdown all show the same numbers.
