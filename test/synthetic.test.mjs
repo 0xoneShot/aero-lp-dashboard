@@ -433,3 +433,13 @@ test('the ETH sent with an xAERO redeem is its fee, a cost, not money leaving', 
     logs: [transfer(XAERO, WA, ZERO, X), { address: LEAF, topics: [REDEEMED, pad(WA), pad(WA)], data: num(X) }] }])
   assert.deepEqual(legsOf(eth, 'a', '0xe7').sort(), [`0x9e14:${-X}:bridge`, `ETH:${-44n * 10n ** 12n}:internal`, `ETH:${2n * 10n ** 12n}:internal`].sort())
 })
+
+test('coins paid out by a Relay router or solver with no bridge log are a bridge arrival', () => {
+  const ROUTER = '0x0729e2a4716d9f7dd17858d5d504426d228697f7', SOLVER = '0xf70da97812cb96acdf810712aa562db8dfa3dbef'
+  const L = ledgerOn(ETHC, [
+    { hash: '0xd5', from: EOA, to: ROUTER, logs: [transfer(ETHC.weth, ROUTER, WA, 12n * 10n ** 18n)] },
+    { hash: '0xd6', from: SOLVER, to: ETHC.usdc, logs: [transfer(ETHC.usdc, SOLVER, WA, 415_000000n)] },
+  ])
+  assert.deepEqual([legsOf(L, 'a', '0xd5'), legsOf(L, 'a', '0xd6')], [[`0xc02a:${12n * 10n ** 18n}:bridge`], ['0xa0b8:415000000:bridge']])
+  assert.equal(L.a.events[0].bridge, 'Relay')
+})

@@ -17,7 +17,7 @@ test('a bridge out of one tracked chain and into another is a move inside the st
 
 test('what does not match stays money in or out', () => {
   const cases = [
-    [ev('0x3', 'base', 1000, 100, 'weth-base', -2n * E), ev('0x4', 'base', 1100, 150, 'weth-base', 2n * E)], // same chain
+    [ev('0x3', 'base', 1000, 100, 'weth-base', -2n * E), ev('0x4', 'base', 1000 + 15 * 60 + 1, 550, 'weth-base', 2n * E)], // same chain, later than a fill
     [ev('0x5', 'base', 1000, 100, 'weth-base', -2n * E), ev('0x6', 'eth', 1000 + MATCH_SECONDS + 1, 900, 'ETH', 2n * E)], // too late
     [ev('0x7', 'base', 1000, 100, 'weth-base', -2n * E), ev('0x8', 'eth', 1200, 200, 'usdc-eth', 5000n * 10n ** 6n)], // another coin
     [ev('0x9', 'base', 1000, 100, 'weth-base', -2n * E), ev('0xa', 'eth', 1200, 200, 'ETH', 19n * E / 10n)], // lost more than 3%
@@ -50,4 +50,10 @@ test('a transfer pairs with its own arrival, not with a later one that lost less
   const real = ev('0x32', 'eth', 1300, 200, 'ETH', 99n * E / 100n), other = ev('0x33', 'eth', 8200, 900, 'ETH', 999n * E / 1000n)
   matchCrossChain([out, real, other], canon, dec)
   assert.deepEqual([out, real, other].map((e) => e.legs[0].cls), ['internal', 'internal', 'bridge'])
+})
+
+test('a bridge out and in on the same chain moments apart is one move (a Relay fill)', () => {
+  const out = ev('0x41', 'base', 1000, 100, 'weth-base', -2n * E), fill = ev('0x42', 'base', 1002, 101, 'ETH', 2n * E)
+  matchCrossChain([out, fill], canon, dec)
+  assert.deepEqual([out, fill].map((e) => e.legs[0].cls), ['internal', 'internal'])
 })

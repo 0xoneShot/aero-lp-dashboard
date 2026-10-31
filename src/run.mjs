@@ -881,8 +881,13 @@ for (const w of WALLETS) {
     }
     // Moves between the tracked chains (lib/crosschain.mjs), and principal collected after it was removed.
     for (const g of e.legs.filter((x) => x.crossChain)) {
+      const amount = `${r6(Math.abs(units(g.amount, decOf(g.asset))))} ${symOf(g.asset)}`, via = e.bridge ? `（${e.bridge}）` : ''
+      if (g.sameChain) { // a bridge's fill on the same chain: a swap settled in two transactions
+        events.push({ ...base, kind: '兑换', detail: `${g.amount > 0n ? '收到' : '付出'} ${amount}${via}`, usd: r2(Math.abs(valueOf(g.asset, g.amount, p))) })
+        continue
+      }
       const other = Object.values(CHAINS).filter((c) => c.key !== e.chain).map((c) => c.label).join('、')
-      events.push({ ...base, kind: g.amount > 0n ? '跨链转入' : '跨链转出', detail: `${g.amount > 0n ? `来自${other}` : `转到${other}`}${e.bridge ? `（${e.bridge}）` : ''} · ${r6(Math.abs(units(g.amount, decOf(g.asset))))} ${symOf(g.asset)}`, usd: r2(valueOf(g.asset, g.amount, p)) })
+      events.push({ ...base, kind: g.amount > 0n ? '跨链转入' : '跨链转出', detail: `${g.amount > 0n ? `来自${other}` : `转到${other}`}${via} · ${amount}`, usd: r2(valueOf(g.asset, g.amount, p)) })
     }
     if (!e.lp.length && (e.owed ?? []).some((o) => o.amount0 < 0n || o.amount1 < 0n)) {
       for (const o of e.owed.filter((y) => y.amount0 < 0n || y.amount1 < 0n)) {
