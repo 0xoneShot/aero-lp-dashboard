@@ -682,6 +682,12 @@
         }
         if (!sw.to.tracked) move.append(`看板现在只追踪 Base 和以太坊上的仓位，换到 ${sw.to.chain_label} 后盈亏要先加上这条链才算得准。`);
       }
+      // The best option that meets every condition of the phone alert, when it is not the top one.
+      const st = sw.steady;
+      if (st && (st.to.chain !== sw.to.chain || st.to.label !== sw.to.label || st.to.mode !== sw.to.mode)) {
+        move.append(' 稳定领先、划算的是 ', el('b', null, `${st.to.chain_label} ${st.to.label} ${modeName(st.to.mode)}`),
+          `：中位 ${fmtRate(st.to.median)}，差的日子 ${fmtRate(st.to.p25)}，每天多约 ${fmtUsd(st.extra_day_usd)}，成本约 ${fmtUsd(st.cost_usd)}，${st.payback_days < 0.1 ? '不到 0.1 天' : `约 ${st.payback_days.toFixed(1)} 天`}回本。`);
+      }
       if (!pc.complete) move.append('有的池子数据还在补，补齐前结论可能会变。');
     }
     // Green marks the top of each column among the pools that can be picked, as the line above does.

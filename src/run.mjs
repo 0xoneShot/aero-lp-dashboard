@@ -14,6 +14,7 @@ import { hodlHeld } from '../lib/hodl.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf, savePrices } from '../lib/prices.mjs'
 import { samplePools, blockFinder, poolStats } from '../lib/pools.mjs'
+import { SWITCH } from '../lib/alerts.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, gaugeAbi, TOPIC } from '../lib/abi.mjs'
 import { tryRead } from '../lib/errors.mjs'
 import { WALLETS, START_DAY, TOKENS, ALL_TOKENS, CHAINS, COMPARE_CHAINS, WETH, ZERO, LABELS, GAUGE_IMPLS, OVERRIDES_FILE, PRICE } from '../lib/config.mjs'
@@ -837,7 +838,6 @@ const SWAP_COST = 0.0005 / 2, BRIDGE_COST = 0.0005
 function switchTo(pools, live, myUsd) {
   const options = pools.flatMap((p) => ['staked', 'fee'].map((mode) => ({ p, mode, median: p[mode].median, p25: p[mode].p25 }))).filter((o) => o.median != null && o.p.days >= 3 && o.p.age_h <= 24)
   if (!options.length || !(myUsd > 0)) return null
-  const best = options.reduce((a, o) => (o.median > a.median ? o : a))
   const gasUsd = (chain, units) => { const g = poolCache.gas?.[chain]; return g ? (units * Number(g.wei)) / 1e18 * (g.token === 'usd' ? 1 : pNow.eth) : 0 }
   const now = live.map(({ x, usd }) => {
     const p = pools.find((q) => q.chain === (x.chain ?? 'base') && q.pool_address === lc(x.pool)), mode = x.staked ? 'staked' : 'fee'
@@ -847,31 +847,43 @@ function switchTo(pools, live, myUsd) {
   // A position in a pool not compared (or not paying) has no rate: what the money earns now is unknown.
   const known = now.filter((n) => n.rate != null), inKnown = sum(known, (n) => n.usd), allKnown = known.length === now.length
   const current = inKnown > 0 ? sum(known, (n) => n.usd * n.rate) / inKnown : 0
-  const cost = sum(now, ({ x, usd, p, mode }) => {
-    const from = x.chain ?? 'base', to = best.p.chain
-    if (p === best.p) return mode === best.mode ? 0 : gasUsd(from, best.mode === 'staked' ? GAS_UNITS.stake : GAS_UNITS.unstake)
-    let c = gasUsd(from, GAS_UNITS.exit + (x.staked ? GAS_UNITS.unstake : 0)) + gasUsd(to, GAS_UNITS.enter + (best.mode === 'staked' ? GAS_UNITS.stake : 0)) + usd * SWAP_COST
-    if (from !== to) c += usd * BRIDGE_COST + gasUsd(from, GAS_UNITS.bridge)
-    return c
-  })
-  // With no position the money has only to go in (where it sits, and so any bridge, is not known).
-  const enterIdle = now.length ? 0 : gasUsd(best.p.chain, GAS_UNITS.enter + (best.mode === 'staked' ? GAS_UNITS.stake : 0)) + myUsd * SWAP_COST
-  const here = now.length > 0 && now.every((n) => n.p === best.p && n.mode === best.mode)
-  const extra = allKnown ? ((best.median - current) * myUsd) / 365 : null
-  // Week by week: the best option against the money where it is (positions at their own pool's week).
+  // Week by week: an option against the money where it is (positions at their own pool's week).
   const weekOf = (p, mode, start) => p?.weeks.find((w) => w.start === start && w.hours >= 24)?.[mode] ?? null
-  const starts = best.p.weeks.filter((w) => w.hours >= 24).map((w) => w.start).slice(-2)
-  const weeksAhead = starts.filter((d) => {
-    const b = weekOf(best.p, best.mode, d), c = known.map((n) => [n.usd, weekOf(n.p, n.mode, d)])
-    return b != null && c.every(([, r]) => r != null) && b > (inKnown > 0 ? sum(c, ([u, r]) => u * r) / inKnown : 0)
-  }).length
+  // Moving to one option: what it costs, earns more, and whether it leads steadily.
+  // With no position the money has only to go in (where it sits, and so any bridge, is not known).
+  const judge = (o) => {
+    const cost = sum(now, ({ x, usd, p, mode }) => {
+      const from = x.chain ?? 'base', to = o.p.chain
+      if (p === o.p) return mode === o.mode ? 0 : gasUsd(from, o.mode === 'staked' ? GAS_UNITS.stake : GAS_UNITS.unstake)
+      let c = gasUsd(from, GAS_UNITS.exit + (x.staked ? GAS_UNITS.unstake : 0)) + gasUsd(to, GAS_UNITS.enter + (o.mode === 'staked' ? GAS_UNITS.stake : 0)) + usd * SWAP_COST
+      if (from !== to) c += usd * BRIDGE_COST + gasUsd(from, GAS_UNITS.bridge)
+      return c
+    }) + (now.length ? 0 : gasUsd(o.p.chain, GAS_UNITS.enter + (o.mode === 'staked' ? GAS_UNITS.stake : 0)) + myUsd * SWAP_COST)
+    const extra = allKnown ? ((o.median - current) * myUsd) / 365 : null
+    const starts = o.p.weeks.filter((w) => w.hours >= 24).map((w) => w.start).slice(-2)
+    const weeksAhead = starts.filter((d) => {
+      const b = weekOf(o.p, o.mode, d), c = known.map((n) => [n.usd, weekOf(n.p, n.mode, d)])
+      return b != null && c.every(([, r]) => r != null) && b > (inKnown > 0 ? sum(c, ([u, r]) => u * r) / inKnown : 0)
+    }).length
+    return {
+      to: { chain: o.p.chain, chain_label: o.p.chain_label, label: o.p.label, mode: o.mode, median: r6(o.median), p25: r6(o.p25), days: o.p.days, tracked: o.p.chain in CHAINS },
+      here: now.length > 0 && now.every((n) => n.p === o.p && n.mode === o.mode),
+      gap: allKnown ? r6(o.median - current) : null, extra_day_usd: extra == null ? null : r2(extra), cost_usd: r2(cost), payback_days: extra > 0 ? r2(cost / extra) : null,
+      weeks_ahead: weeksAhead, weeks_compared: starts.length,
+      stable: allKnown && o.p25 != null && known.length > 0 && o.p25 > Math.max(...known.map((n) => n.rate)) && starts.length === 2 && weeksAhead === 2,
+    }
+  }
+  const judged = options.map((o) => ({ o, j: judge(o) }))
+  const best = judged.reduce((a, x) => (x.o.median > a.o.median ? x : a))
+  // The best option that meets every condition of the switch alert (lib/alerts.mjs SWITCH): the top one
+  // may lead by a hair, or not steadily, while one just below it (staking where the money already is,
+  // say) clearly pays.
+  const meets = (j) => !j.here && j.stable && j.to.days >= SWITCH.days && j.gap >= SWITCH.gap && j.payback_days != null && j.payback_days <= SWITCH.payback
+  const steady = judged.filter((x) => meets(x.j)).reduce((a, x) => (!a || x.o.median > a.o.median ? x : a), null)
   return {
-    to: { chain: best.p.chain, chain_label: best.p.chain_label, label: best.p.label, mode: best.mode, median: r6(best.median), p25: r6(best.p25), days: best.p.days, tracked: best.p.chain in CHAINS },
+    ...best.j, steady: steady ? steady.j : null,
     from: now.map((n) => ({ chain: n.x.chain ?? 'base', chain_label: chainOf(n.x.chain)?.label, label: n.p?.label ?? null, mode: n.mode, usd: r2(n.usd), rate: n.rate == null ? null : r6(n.rate) })),
-    current: allKnown && known.length ? r6(current) : null, here,
-    gap: allKnown ? r6(best.median - current) : null, extra_day_usd: extra == null ? null : r2(extra), cost_usd: r2(cost + enterIdle), payback_days: extra > 0 ? r2((cost + enterIdle) / extra) : null,
-    weeks_ahead: weeksAhead, weeks_compared: starts.length,
-    stable: allKnown && best.p25 != null && known.length > 0 && best.p25 > Math.max(...known.map((n) => n.rate)) && starts.length === 2 && weeksAhead === 2,
+    current: allKnown && known.length ? r6(current) : null,
   }
 }
 
