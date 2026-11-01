@@ -121,6 +121,22 @@ test('rewards streamed but not yet credited count; an hour the price leaves the 
   assert.ok(near(d.staked.median, dollarsPerL(2400, 1.12) / dollarsPerL(2400, 1.12, 2160), 1e-4))
 })
 
+test('the last 24 hours show where a rate is now, which the median of days follows only later', () => {
+  const steady = poolStats(pool({ hours: 24 * 6 }), { ratio: 1.12, nowTs: T0 + 6 * 86400 + 600 })
+  assert.ok(near(steady.recent.staked, 1) && near(steady.recent.fee, 0.5), JSON.stringify(steady.recent))
+  // Rewards per unit of liquidity halve over the last day (more liquidity staked): the median stays.
+  const e = pool({ hours: 24 * 6 }), ts = Object.keys(e.samples).map(Number).sort((a, b) => a - b), cut = ts.length - 1 - 24
+  const base = e.samples[ts[cut]]
+  for (const t of ts.slice(cut + 1)) {
+    const x = e.samples[t], rg = BigInt(base.rg) + (BigInt(x.rg) - BigInt(base.rg)) / 2n
+    x.rg = rg.toString(); x.share = ((rg * BigInt(x.staked)) / Q128).toString()
+  }
+  const fell = poolStats(e, { ratio: 1.12, nowTs: T0 + 6 * 86400 + 600 })
+  assert.ok(near(fell.staked.median, 1) && near(fell.recent.staked, 0.5, 1e-6) && near(fell.recent.fee, 0.5), `${fell.staked.median} ${fell.recent.staked}`)
+  // Too little of the last day sampled: not known.
+  assert.equal(poolStats(pool({ hours: 10 }), { ratio: 1.12, nowTs: T0 + 86400 }).recent.staked, null)
+})
+
 test('a gauge that has paid nothing for hours is seen as stopped', () => {
   const nowTs = T0 + 6 * 86400, e = pool()
   const ts = Object.keys(e.samples).map(Number).sort((a, b) => a - b), frozen = e.samples[ts.at(-5)]
