@@ -21,14 +21,16 @@ concurrency:
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 70
     environment: hourly
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       MIN_WAIT: ${{ inputs.min_wait || '30' }}
     steps:
-      # Without the environment's wait timer the chain would spin; stop it instead.
+      # Without the environment's wait timer the chain would spin. A run that did not wait makes up the
+      # hour itself instead of stopping the chain: on 2026-11-01 (the US clocks went back) GitHub let one
+      # run through at once and dated it an hour ahead, and stopping left the dashboard without updates.
       - name: Check that this run waited
         run: |
           case "$MIN_WAIT" in ''|*[!0-9]*) echo "::error::min_wait must be a number"; exit 1 ;; esac
@@ -36,8 +38,8 @@ jobs:
           waited=$(( ($(date +%s) - $(date -d "$created" +%s)) / 60 ))
           echo "waited $waited minutes"
           if [ "$waited" -lt "$MIN_WAIT" ]; then
-            echo "::error::the hourly environment's wait timer is missing or too short; the chain stops here"
-            exit 1
+            echo "::warning::the hourly environment's wait timer did not hold this run; waiting here for the rest of the hour"
+            sleep 3540
           fi
       - name: Queue the next tick, then start the refresh
         run: |
