@@ -57,3 +57,37 @@ test('a bridge out and in on the same chain moments apart is one move (a Relay f
   matchCrossChain([out, fill], canon, dec)
   assert.deepEqual([out, fill].map((e) => e.legs[0].cls), ['internal', 'internal'])
 })
+
+test('an arrival from a payer no rule knows pairs with a bridge out on another chain, never on the same one', () => {
+  const stray = (hash, chain, ts, block, asset, amount, extra = {}) => ({ hash, chain, ts, block, legs: [{ asset, amount, cls: 'transfer', review: true, ...extra }] })
+  const out = ev('0x31', 'base', 1000, 100, 'weth-base', -10n * E), arrive = stray('0x32', 'eth', 1200, 210, 'ETH', 10n * E - 6n * 10n ** 15n)
+  matchCrossChain([out, arrive], canon, dec)
+  assert.deepEqual([out.legs[0].cls, arrive.legs[0].cls, arrive.legs[0].review], ['internal', 'internal', false])
+  // The same chain, a leg a person set by hand, or more than left: untouched.
+  for (const [o, i] of [
+    [ev('0x33', 'base', 1000, 100, 'weth-base', -10n * E), stray('0x34', 'base', 1200, 210, 'weth-base', 10n * E - 10n ** 16n)],
+    [ev('0x35', 'base', 1000, 100, 'weth-base', -10n * E), stray('0x36', 'eth', 1200, 210, 'ETH', 10n * E - 10n ** 16n, { overridden: true })],
+    [ev('0x37', 'base', 1000, 100, 'weth-base', -10n * E), stray('0x38', 'eth', 1200, 210, 'ETH', 11n * E)],
+  ]) {
+    assert.deepEqual(matchCrossChain([o, i], canon, dec), [])
+    assert.deepEqual([o.legs[0].cls, i.legs[0].cls], ['bridge', 'transfer'])
+  }
+  // A bridge arrival is taken before an unknown payer's.
+  const o2 = ev('0x39', 'base', 1000, 100, 'weth-base', -2n * E), s2 = stray('0x3a', 'eth', 1100, 200, 'ETH', 2n * E - 10n ** 15n), b2 = ev('0x3b', 'eth', 1150, 205, 'ETH', 2n * E - 2n * 10n ** 15n)
+  matchCrossChain([o2, s2, b2], canon, dec)
+  assert.deepEqual([o2, s2, b2].map((e) => e.legs[0].cls), ['internal', 'transfer', 'internal'])
+})
+
+test('a bridge out that has not arrived is held on its way for six hours, then is money out', () => {
+  const out = ev('0x41', 'base', 1000, 100, 'weth-base', -2n * E)
+  const t = matchCrossChain([out], canon, dec, { headTs: 1000 + 600 })
+  assert.deepEqual([out.legs[0].cls, out.legs[0].pending], ['internal', true])
+  assert.deepEqual([99, 100, 500].map((b) => escrowByAsset(t, b).get('ETH') ?? 0n), [0n, 2n * E, 2n * E])
+  const late = ev('0x42', 'base', 1000, 100, 'weth-base', -2n * E)
+  assert.deepEqual(matchCrossChain([late], canon, dec, { headTs: 1000 + MATCH_SECONDS + 1 }), [])
+  assert.equal(late.legs[0].cls, 'bridge')
+  // Once it arrives it is an ordinary matched move.
+  const out3 = ev('0x43', 'base', 1000, 100, 'weth-base', -2n * E), in3 = ev('0x44', 'eth', 1300, 250, 'ETH', 2n * E - 10n ** 15n)
+  matchCrossChain([out3, in3], canon, dec, { headTs: 1400 })
+  assert.deepEqual([out3.legs[0].pending, out3.legs[0].cls, in3.legs[0].cls], [undefined, 'internal', 'internal'])
+})
