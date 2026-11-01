@@ -50,7 +50,7 @@ test('a pool paying steady rates reads back those rates, in either token order',
   for (const wethFirst of [true, false]) {
     const s = poolStats(pool({ wethFirst }), { ratio: 1.12, nowTs: T0 + 5 * 86400 + 600 })
     assert.equal(s.days, 5)
-    for (const f of ['median', 'p25', 'mean7']) assert.ok(near(s.staked[f], 1) && near(s.fee[f], 0.5), `${wethFirst} ${f}: ${s.staked[f]} ${s.fee[f]}`)
+    for (const f of ['median', 'p25']) assert.ok(near(s.staked[f], 1) && near(s.fee[f], 0.5), `${wethFirst} ${f}: ${s.staked[f]} ${s.fee[f]}`)
     // A week's emissions a day: the reward the staked liquidity was credited, in tokens.
     const perDay = (1 * dollarsPerL(2400, 1.12)) / YEAR / 0.5 * 86400 * 9e18
     for (const w of s.weeks) assert.ok(near(w.emitted_day, perDay, 1e-4), `${w.emitted_day} ${perDay}`)
@@ -119,6 +119,19 @@ test('rewards streamed but not yet credited count; an hour the price leaves the 
   for (const x of Object.values(drift.samples)) x.eth = 2400 * 0.9
   const d = poolStats(drift, { ratio: 1.12, nowTs })
   assert.ok(near(d.staked.median, dollarsPerL(2400, 1.12) / dollarsPerL(2400, 1.12, 2160), 1e-4))
+})
+
+test('the usual rate is the median of the last seven full days only', () => {
+  // Ten days paying 100% a year, then four paying 300%: the last seven are four at 300% and three at 100%.
+  const e = pool({ hours: 24 * 14 }), ts = Object.keys(e.samples).map(Number).sort((a, b) => a - b), cut = 24 * 10
+  const base = e.samples[ts[cut]]
+  for (const t of ts.slice(cut + 1)) {
+    const x = e.samples[t], rg = BigInt(base.rg) + (BigInt(x.rg) - BigInt(base.rg)) * 3n
+    x.rg = rg.toString(); x.share = ((rg * BigInt(x.staked)) / Q128).toString()
+  }
+  const s = poolStats(e, { ratio: 1.12, nowTs: T0 + 14 * 86400 + 600 })
+  assert.equal(s.days, 7)
+  assert.ok(near(s.staked.median, 3, 1e-6), `${s.staked.median}`)
 })
 
 test('the last 24 hours show where a rate is now, which the median of days follows only later', () => {

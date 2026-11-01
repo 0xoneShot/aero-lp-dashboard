@@ -143,7 +143,7 @@
     <p class="lp-move" id="pools-move" hidden></p>
     <p class="lp-note" id="pools-note"></p>
     <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>质押<br>拿 AERO</th><th>不质押<br>拿手续费</th></tr></thead><tbody id="pools-body"></tbody></table></div>
-    <p class="lp-note">质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。大字是每天年化的中位数（平常的水平），“最近 24 小时”是现在的水平，“差的日子”是最差 1/4 天的水平。划不划算按平常和最近 24 小时里较低的那个算：资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。“换过去”的成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）；本来就要重新开仓的话，多出来的只有跨链。差 30 个百分点以内算差不多：同一个币对的池子之间，最近谁领先并不会持续（资金跟着奖励走，把收益拉平；10-22 以来的数据和 Base 上一代池子半年的数据都是这样），你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉换过去的成本后一周多挣多少。值得换的是明显而持久的差别，比如质押和不质押。某个钱包的去处数据满 7 天、平常和最近 24 小时都比现在的仓位高 30 个百分点以上、稳定领先（差的日子也比现在高、最近两个 Aero 周都领先）、3 天内回本时，手机提醒一次（看“合计”时不提醒，按各个钱包提醒）。</p>
+    <p class="lp-note">质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。大字是用来比较的数：“平常”（近 7 天每天年化的中位数）和“最近 24 小时”里较低的那个。资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。“换过去”的成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）；本来就要重新开仓的话，多出来的只有跨链。差 30 个百分点以内算差不多：同一个币对的池子之间，最近谁领先并不会持续（资金跟着奖励走，把收益拉平；10-22 以来的数据和 Base 上一代池子半年的数据都是这样），你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉换过去的成本后一周多挣多少。值得换的是明显而持久的差别，比如质押和不质押。某个钱包的去处数据满 7 天、平常和最近 24 小时都比现在的仓位高 30 个百分点以上、稳定领先（近 7 天里较差的日子也比现在高、最近两个 Aero 周都领先）、3 天内回本时，手机提醒一次（看“合计”时不提醒，按各个钱包提醒）。</p>
   </section>
 
   <div class="lp-viewbar" id="viewbar">
@@ -609,7 +609,7 @@
     card.hidden = !pc || !pc.pools.length;
     if (card.hidden) return;
     const days = Math.max(...pc.pools.map((p) => p.days));
-    $('pools-title').textContent = days >= 28 ? '哪个池子利息高（近 4 周）' : `哪个池子利息高（近 ${days} 天）`;
+    $('pools-title').textContent = `哪个池子利息高（近 ${days} 天）`;
     const width = `±${(pc.width_pct * 100).toFixed(1)}%`;
     $('pools-note').textContent = `${pc.default_width ? `现在没有仓位，按 ${width} 的区间` : `按${s.scope === 'total' ? '最大那个' : '你的'}仓位的区间宽度（${width}）`}、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。`;
     // Where the money earns most, against where it is now (src/run.mjs switchTo).
@@ -635,7 +635,7 @@
         else move.append('按两者里较低的算，换过去现在并不多挣。');
         if (!pk.stable) {
           const best = Math.max(...sw.from.filter((f) => f.rate != null).map((f) => f.rate));
-          const why = [pk.to.p25 != null && Number.isFinite(best) && pk.to.p25 <= best ? '它差的日子还不如你现在' : null,
+          const why = [pk.to.p25 != null && Number.isFinite(best) && pk.to.p25 <= best ? '它近 7 天里较差的日子还不如你现在' : null,
             pk.weeks_compared < 2 ? '数据还不满两个 Aero 周' : pk.weeks_ahead < 2 ? `最近两个 Aero 周只领先了 ${pk.weeks_ahead} 周` : null].filter(Boolean);
           move.append(`还不算稳定领先${why.length ? `：${why.join('，')}` : ''}。`);
         }
@@ -664,9 +664,10 @@
       if (p.stopped) name.append(el('span', 'lp-chip', '奖励已停'));
       name.append(el('span', 'lp-cell-sub', `池子 ${fmtCompact(p.tvl_usd)} · ${p.days ? `${p.days} 天` : '数据还在补'}${p.days && p.missing_hours ? ' · 还在补' : ''}`));
       if (p.stale && p.last_sample) name.append(el('span', 'lp-cell-sub', `数据停在 ${p.last_sample}`));
+      // The number options are compared by: the lower of the usual (median day) and the last 24 hours.
       const cell = (x, mode) => {
         const td = el('td', isPick(p, mode) ? 'lp-best' : null);
-        td.append(fmtRate(x.median), el('span', 'lp-cell-sub', `最近 24 小时 ${fmtRate(x.recent)}`), el('span', 'lp-cell-sub', `差的日子 ${fmtRate(x.p25)}`));
+        td.append(fmtRate(x.median == null ? null : Math.min(x.median, x.recent ?? x.median)), el('span', 'lp-cell-sub', `平常 ${fmtRate(x.median)}`), el('span', 'lp-cell-sub', `最近 24 小时 ${fmtRate(x.recent)}`));
         return td;
       };
       tr.append(name, cell(p.staked, 'staked'), cell(p.fee, 'fee'));
