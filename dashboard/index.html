@@ -87,8 +87,6 @@
   .lp table.lp-pools td.lp-best .lp-cell-sub { color: var(--color-fg-muted); font-weight: 400; }
   .lp-chip.lp-chip-here { color: var(--color-fg-muted); }
   .lp-move { font-size: 13px; line-height: 1.6; }
-  .lp-more { font-size: 12px; color: var(--color-fg-muted); }
-  .lp-more summary { cursor: pointer; }
   .lp-chip { display: inline-block; white-space: nowrap; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-style: normal; color: var(--color-warn); border: 1px solid currentColor; }
   @media (max-width: 560px) {
     .lp .lp-hide-sm { display: none; }
@@ -145,11 +143,7 @@
     <p class="lp-move" id="pools-move" hidden></p>
     <p class="lp-note" id="pools-note"></p>
     <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>质押<br>拿 AERO</th><th>不质押<br>拿手续费</th></tr></thead><tbody id="pools-body"></tbody></table></div>
-    <details class="lp-more"><summary>每周明细</summary>
-      <div class="lp-tablewrap"><table><thead id="pools-weeks-head"></thead><tbody id="pools-weeks-body"></tbody></table></div>
-      <p class="lp-note">按 Aero 的周（周四 8 点起），没过完的周注明天数。“发 …/天”是那一周每天发给这个池子的 AERO 奖励，按投票和池子的发放上限定，周中也会变。</p>
-    </details>
-    <p class="lp-note">质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。大字是每天年化的中位数，“差的日子”是最差 1/4 天的水平。都假设仓位一直在区间正中，实际还要看在区间内的时间。“换过去”的成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）；本来就要重新开仓的话，多出来的只有跨链。差 30 个百分点以内算差不多：同一个币对的池子之间，最近谁领先并不会持续（资金跟着奖励走，把收益拉平；10-22 以来的数据和 Base 上一代池子半年的数据都是这样），你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉换过去的成本后一周多挣多少。值得换的是明显而持久的差别，比如质押和不质押。某个钱包的去处数据满 7 天、中位数比现在的仓位高 30 个百分点以上、稳定领先（差的日子也比现在高、最近两个 Aero 周都领先）、3 天内回本时，手机提醒一次（看“合计”时不提醒，按各个钱包提醒）。</p>
+    <p class="lp-note">质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。大字是每天年化的中位数（平常的水平），“最近 24 小时”是现在的水平，“差的日子”是最差 1/4 天的水平。划不划算按平常和最近 24 小时里较低的那个算：资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。“换过去”的成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）；本来就要重新开仓的话，多出来的只有跨链。差 30 个百分点以内算差不多：同一个币对的池子之间，最近谁领先并不会持续（资金跟着奖励走，把收益拉平；10-22 以来的数据和 Base 上一代池子半年的数据都是这样），你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉换过去的成本后一周多挣多少。值得换的是明显而持久的差别，比如质押和不质押。某个钱包的去处数据满 7 天、平常和最近 24 小时都比现在的仓位高 30 个百分点以上、稳定领先（差的日子也比现在高、最近两个 Aero 周都领先）、3 天内回本时，手机提醒一次（看“合计”时不提醒，按各个钱包提醒）。</p>
   </section>
 
   <div class="lp-viewbar" id="viewbar">
@@ -624,16 +618,21 @@
     const name = (j) => `${j.to.chain_label} ${j.to.label} ${modeName(j.to.mode)}`;
     const same = (a, b) => Boolean(a && b && a.to.chain === b.to.chain && a.to.label === b.to.label && a.to.mode === b.to.mode);
     const payback = (j) => (j.payback_days < 0.1 ? '不到 0.1 天' : `约 ${j.payback_days.toFixed(1)} 天`);
+    // The usual (median day) and now (last 24 hours); options are judged by the lower (lib/switch.mjs).
+    const both = (j) => `平常 ${fmtRate(j.to.median)}、最近 24 小时 ${fmtRate(j.to.recent)}`;
+    const lowerOf = (j) => Math.min(j.to.median, j.to.recent ?? j.to.median);
     const pk = sw?.pick ?? sw;
     if (sw) {
       const from = [...new Set(sw.from.filter((f) => f.label).map((f) => `${f.chain_label} ${f.label} ${modeName(f.mode)}`))].join('、');
       move.replaceChildren();
       // The one that suits the owners best (lib/switch.mjs: staying, or the pick), then the top median when it differs.
-      if (sw.stay || pk.here) move.append('对你最划算的就是现在这样：', el('b', null, from || name(pk)), `（约 ${fmtRate(sw.current ?? pk.to.median)}）。`);
+      const nowAt = sw.current == null ? null : `平常约 ${fmtRate(sw.current)}、最近 24 小时约 ${fmtRate(sw.current_recent ?? sw.current)}`;
+      if (sw.stay || pk.here) move.append('对你最划算的就是现在这样：', el('b', null, from || name(pk)), `（${nowAt ?? both(pk)}）。`);
       else {
-        move.append('对你最划算的是 ', el('b', null, name(pk)), `：中位 ${fmtRate(pk.to.median)}，差的日子 ${fmtRate(pk.to.p25)}`, sw.current == null ? '。' : `；你现在的仓位约 ${fmtRate(sw.current)}${from ? `（${from}）` : ''}。`);
+        move.append('对你最划算的是 ', el('b', null, name(pk)), `：${both(pk)}`, nowAt == null ? '。' : `；你现在的仓位${nowAt}${from ? `（${from}）` : ''}。`);
         if (pk.extra_day_usd == null) move.append('有的仓位不在比较的池子里，算不出现在挣多少。');
-        else if (pk.extra_day_usd > 0) move.append(`换过去每天多约 ${fmtUsd(pk.extra_day_usd)}，成本约 ${fmtUsd(pk.cost_usd)}，${payback(pk)}回本。`);
+        else if (pk.extra_day_usd > 0) move.append(`按两者里较低的算，换过去每天多约 ${fmtUsd(pk.extra_day_usd)}，成本约 ${fmtUsd(pk.cost_usd)}，${payback(pk)}回本。`);
+        else move.append('按两者里较低的算，换过去现在并不多挣。');
         if (!pk.stable) {
           const best = Math.max(...sw.from.filter((f) => f.rate != null).map((f) => f.rate));
           const why = [pk.to.p25 != null && Number.isFinite(best) && pk.to.p25 <= best ? '它差的日子还不如你现在' : null,
@@ -643,14 +642,15 @@
         if (!pk.to.tracked) move.append(`看板现在只追踪 Base 和以太坊上的仓位，换到 ${pk.to.chain_label} 后盈亏要先加上这条链才算得准。`);
       }
       if (sw.stay ? !sw.here : !same(pk, sw)) {
-        const lead = Math.round((sw.to.median - (sw.stay ? sw.current : pk.to.median)) * 100);
-        move.append(` 中位数最高的是 ${name(sw)}（${fmtRate(sw.to.median)}），${sw.stay ? '比你现在' : ''}只高 ${lead} 个百分点，算差不多${!sw.to.tracked ? '，看板也追踪不到它' : ''}。`);
+        const mine = sw.stay ? Math.min(sw.current, sw.current_recent ?? sw.current) : lowerOf(pk);
+        const lead = Math.max(0, Math.round((lowerOf(sw) - mine) * 100));
+        move.append(` 最高的是 ${name(sw)}（${both(sw)}），按较低的那个${sw.stay ? '比你现在' : ''}只高 ${lead} 个百分点，算差不多${!sw.to.tracked ? '，看板也追踪不到它' : ''}。`);
       }
       // The best option that meets every condition of the phone alert, when it is not the one above.
       const st = sw.steady;
       if (st && !same(st, pk)) {
         move.append(' 满足提醒条件的是 ', el('b', null, name(st)),
-          `：中位 ${fmtRate(st.to.median)}，差的日子 ${fmtRate(st.to.p25)}，每天多约 ${fmtUsd(st.extra_day_usd)}，成本约 ${fmtUsd(st.cost_usd)}，${payback(st)}回本。`);
+          `：${both(st)}，每天多约 ${fmtUsd(st.extra_day_usd)}，成本约 ${fmtUsd(st.cost_usd)}，${payback(st)}回本。`);
       }
       if (!pc.complete) move.append('有的池子数据还在补，补齐前结论可能会变。');
     }
@@ -666,26 +666,10 @@
       if (p.stale && p.last_sample) name.append(el('span', 'lp-cell-sub', `数据停在 ${p.last_sample}`));
       const cell = (x, mode) => {
         const td = el('td', isPick(p, mode) ? 'lp-best' : null);
-        td.append(fmtRate(x.median), el('span', 'lp-cell-sub', `差的日子 ${fmtRate(x.p25)}`));
+        td.append(fmtRate(x.median), el('span', 'lp-cell-sub', `最近 24 小时 ${fmtRate(x.recent)}`), el('span', 'lp-cell-sub', `差的日子 ${fmtRate(x.p25)}`));
         return td;
       };
       tr.append(name, cell(p.staked, 'staked'), cell(p.fee, 'fee'));
-      return tr;
-    }));
-    // Aero's weeks start on Thursday; a week not yet over (or before a pool existed) shows its days.
-    const starts = [...new Set(pc.pools.flatMap((p) => p.weeks.map((w) => w.start)))].sort();
-    const hr = document.createElement('tr');
-    hr.append(el('th', null, '池子'), ...starts.map((d) => el('th', null, `${dayLabel(parseDay(d))} 起`)));
-    $('pools-weeks-head').replaceChildren(hr);
-    $('pools-weeks-body').replaceChildren(...pc.pools.map((p) => {
-      const tr = document.createElement('tr');
-      tr.append(el('td', null, `${p.chain_label} ${p.label}`));
-      for (const d of starts) {
-        const w = p.weeks.find((x) => x.start === d), td = el('td');
-        if (w) td.append(`质押 ${fmtRate(w.staked)}`, el('span', 'lp-cell-sub', `手续费 ${fmtRate(w.fee)}`), el('span', 'lp-cell-sub', `发 ${fmtNum(w.emitted_day, 0)}/天${w.hours < 160 ? ` · ${Math.round(w.hours / 24)} 天` : ''}`));
-        else td.textContent = '—';
-        tr.append(td);
-      }
       return tr;
     }));
   }

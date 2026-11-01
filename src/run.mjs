@@ -808,12 +808,17 @@ function poolCompare(keys, myUsd) {
       chain: e.chain, chain_label: ch?.label ?? e.chain, label: `CL${e.tickSpacing}`, pool_address: e.address, here: mine ? (mine.staked > 0 ? 'staked' : 'unstaked') : null,
       tvl_usd: r2(units(e.tvl.weth, 18) * pNow.eth + units(e.tvl.usdc, 6)), staked_share: rate(st.last?.stakedShare), missing_hours: e.missing ?? null,
       days: st.days, last_sample: st.last ? cstTime(st.last.ts) : null, age_h: ageH, stale: ageH == null || ageH > 3, stopped,
-      staked: Object.fromEntries(Object.entries(st.staked).map(([f, v]) => [f, stopped ? null : rate(v)])), fee: Object.fromEntries(Object.entries(st.fee).map(([f, v]) => [f, rate(v)])),
+      staked: { ...Object.fromEntries(Object.entries(st.staked).map(([f, v]) => [f, stopped ? null : rate(v)])), recent: stopped ? null : rate(st.recent.staked) },
+      fee: { ...Object.fromEntries(Object.entries(st.fee).map(([f, v]) => [f, rate(v)])), recent: rate(st.recent.fee) },
       daily: st.daily.map((d) => ({ day: d.day, staked: rate(d.staked), fee: rate(d.fee) })),
       // A week with under a day of data (the week under way at its start, or before a pool's gauge paid) says nothing yet.
       weeks: st.weeks.filter((w) => w.hours >= 24).map((w) => ({ start: w.start, hours: w.hours, staked: rate(w.staked), fee: rate(w.fee), emitted_day: Math.round(w.emitted_day) })),
     }
-  }).sort((a, b) => Math.max(b.staked.median ?? -1, b.fee.median ?? -1) - Math.max(a.staked.median ?? -1, a.fee.median ?? -1))
+  }).sort((a, b) => {
+    // In the order the options are judged in: the lower of the usual and the last 24 hours (lib/switch.mjs).
+    const best = (p) => Math.max(...[p.staked, p.fee].map((x) => (x.median == null ? -1 : Math.min(x.median, x.recent ?? x.median))))
+    return best(b) - best(a)
+  })
   // Every pool read over the whole window and this run (the first runs fill it over a few hours, and a
   // chain can fail for a while): until then the best option may be one whose rivals are not read, and
   // the switch alert waits.
