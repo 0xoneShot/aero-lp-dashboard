@@ -443,3 +443,21 @@ test('coins paid out by a Relay router or solver with no bridge log are a bridge
   assert.deepEqual([legsOf(L, 'a', '0xd5'), legsOf(L, 'a', '0xd6')], [[`0xc02a:${12n * 10n ** 18n}:bridge`], ['0xa0b8:415000000:bridge']])
   assert.equal(L.a.events[0].bridge, 'Relay')
 })
+
+test('coins handed to LI.FI\'s contract with nothing back are a bridge; a swap through it stays a swap', () => {
+  const LIFI = '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae'
+  const L = ledgerOn(ETHC, [
+    { hash: '0xd7', from: WA, to: LIFI, logs: [transfer(ETHC.weth, WA, LIFI, 3n * 10n ** 18n)] },
+    { hash: '0xd8', from: WA, to: LIFI, logs: [transfer(ETHC.weth, WA, LIFI, 10n ** 18n), transfer(ETHC.usdc, LIFI, WA, 2250_000000n)] },
+  ])
+  assert.deepEqual(legsOf(L, 'a', '0xd7'), [`0xc02a:${-3n * 10n ** 18n}:bridge`])
+  assert.equal(L.a.events.find((e) => e.hash === '0xd7').bridge, 'LI.FI')
+  assert.deepEqual(legsOf(L, 'a', '0xd8').sort(), [`0xc02a:${-(10n ** 18n)}:internal`, '0xa0b8:2250000000:internal'].sort())
+})
+
+test('a staked position first seen when a router unstakes it for the wallet was the wallet\'s: not money in', () => {
+  const ROUTER = '0x00000000000000000000000000000000000000f0'
+  const unstake = { address: GAUGE, topics: [TOPIC.GaugeWithdraw, pad(ROUTER), pad(WA), num(41)], data: num(1) }
+  const L = ledgerOf([{ hash: '0x2a', from: WA, logs: [nft(GAUGE, ROUTER, 41), unstake, nft(ROUTER, WA, 41)] }])
+  assert.deepEqual(L.a.events.find((e) => e.hash === '0x2a')?.nftMoves ?? [], [])
+})

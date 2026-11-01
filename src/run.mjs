@@ -212,7 +212,7 @@ for (const w of WALLETS) {
   }
   L.events.sort((a, b) => a.block - b.block || a.ts - b.ts)
   L.warnings.sort((a, b) => a.block - b.block)
-  if (Object.keys(ext).length) L.escrow.push(...matchCrossChain(L.events, hodlKey, decOf))
+  if (Object.keys(ext).length) L.escrow.push(...matchCrossChain(L.events, hodlKey, decOf, { headTs: tsOfBlock(head) }))
 }
 
 // Token pair and pool of each position, read on its chain at a block of that chain. They never change,
@@ -953,7 +953,9 @@ for (const w of WALLETS) {
       events.push({ ...base, kind, detail: `#${x.tokenId} · ${amt(x.token0, x.amount0)} ${symOf(x.token0)} + ${amt(x.token1, x.amount1)} ${symOf(x.token1)}`, usd: r2(x.usd) })
     }
     const claimed = e.rewards.reduce((a, r) => a + r.amount, 0n)
-    if (claimed > 0n) events.push({ ...base, kind: '领取奖励', detail: `${r6(units(claimed, 18))} ${symOf(ch.rewardToken)}${e.rewards.some((r) => r.recipient !== w.address) ? '（领给了别的地址）' : ''}`, usd: r2(valueOf(ch.rewardToken, claimed, p)) })
+    // Claimed to another address, unless it passed the reward on to the wallet in the same transaction (a router).
+    const elsewhere = e.rewards.some((r) => r.recipient !== w.address && !e.legs.some((g) => g.cp === r.recipient && g.amount > 0n))
+    if (claimed > 0n) events.push({ ...base, kind: '领取奖励', detail: `${r6(units(claimed, 18))} ${symOf(ch.rewardToken)}${elsewhere ? '（领给了别的地址）' : ''}`, usd: r2(valueOf(ch.rewardToken, claimed, p)) })
     for (const f of D.fees.filter((y) => y.hash === e.hash)) {
       events.push({ ...base, kind: '收取手续费', detail: `#${f.tokenId} · ${r6(units(f.amount0, decOf(f.token0)))} ${symOf(f.token0)} + ${r6(units(f.amount1, decOf(f.token1)))} ${symOf(f.token1)}`, usd: r2(valueOf(f.token0, f.amount0, p) + valueOf(f.token1, f.amount1, p)) })
     }
@@ -965,7 +967,9 @@ for (const w of WALLETS) {
         continue
       }
       const other = Object.values(CHAINS).filter((c) => c.key !== e.chain).map((c) => c.label).join('、')
-      events.push({ ...base, kind: g.amount > 0n ? '跨链转入' : '跨链转出', detail: `${g.amount > 0n ? `来自${other}` : `转到${other}`}${via} · ${amount}`, usd: r2(valueOf(g.asset, g.amount, p)) })
+      // On its way, the chain it goes to is not known yet.
+      const where = g.pending ? '转出' : g.amount > 0n ? `来自${other}` : `转到${other}`
+      events.push({ ...base, kind: g.amount > 0n ? '跨链转入' : '跨链转出', detail: `${where}${via} · ${amount}${g.pending ? '（还在路上，6 小时内没到账就按转出计）' : ''}`, usd: r2(valueOf(g.asset, g.amount, p)) })
     }
     if (!e.lp.length && (e.owed ?? []).some((o) => o.amount0 < 0n || o.amount1 < 0n)) {
       for (const o of e.owed.filter((y) => y.amount0 < 0n || y.amount1 < 0n)) {
