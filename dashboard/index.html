@@ -666,7 +666,7 @@
       if (p.stale && p.last_sample) name.append(el('span', 'lp-cell-sub', `数据停在 ${p.last_sample}`));
       const cell = (x, mode) => {
         const td = el('td', isPick(p, mode) ? 'lp-best' : null);
-        td.append(fmtRate(x.median), el('span', 'lp-cell-sub', `近 7 日 ${fmtRate(x.mean7)}`), el('span', 'lp-cell-sub', `差的日子 ${fmtRate(x.p25)}`));
+        td.append(fmtRate(x.median), el('span', 'lp-cell-sub', `差的日子 ${fmtRate(x.p25)}`));
         return td;
       };
       tr.append(name, cell(p.staked, 'staked'), cell(p.fee, 'fee'));
