@@ -468,6 +468,22 @@ test('coins handed to LI.FI\'s contract with nothing back are a bridge; a swap t
   assert.deepEqual(legsOf(L, 'a', '0xd8').sort(), [`0xc02a:${-(10n ** 18n)}:internal`, '0xa0b8:2250000000:internal'].sort())
 })
 
+test('a little ETH from an unknown contract is money in with nothing to check; more of it, or a little going out, is flagged', () => {
+  const pay = (hash, value) => ({ hash, from: EOA, to: FAKE, eth: { [WA]: { delta: String(value), legs: [{ cp: FAKE, value: String(value) }] } }, logs: [] })
+  const L = ledgerOf([pay('0xd9', 2n * 10n ** 15n - 1n), pay('0xdb', 2n * 10n ** 15n), pay('0xdc', -(10n ** 15n))])
+  assert.deepEqual(legsOf(L, 'a', '0xd9'), [`ETH:${2n * 10n ** 15n - 1n}:transfer`])
+  assert.equal(L.a.events.find((e) => e.hash === '0xd9').review, false)
+  assert.deepEqual(legsOf(L, 'a', '0xdb'), [`ETH:${2n * 10n ** 15n}:transfer:review`])
+  assert.deepEqual(legsOf(L, 'a', '0xdc'), [`ETH:${-(10n ** 15n)}:transfer:review`])
+})
+
+test('WBTC has a price: a swap into cbBTC is a swap, not cbBTC from nowhere', () => {
+  const WBTC = '0x0555e30da8f98308edb960aa94c0db47230d2b9c', CBBTC = '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf', ROUTER = '0x00000000000000000000000000000000000000c3'
+  const L = ledgerOf([{ hash: '0xda', from: WA, to: ROUTER, logs: [transfer(WBTC, WA, ROUTER, 2300000n), transfer(CBBTC, FAKE, WA, 2298400n)] }])
+  assert.deepEqual(legsOf(L, 'a', '0xda'), ['0x0555:-2300000:internal', '0xcbb7:2298400:internal'])
+  assert.deepEqual(L.a.warnings, [])
+})
+
 test('a staked position first seen when a router unstakes it for the wallet was the wallet\'s: not money in', () => {
   const ROUTER = '0x00000000000000000000000000000000000000f0'
   const unstake = { address: GAUGE, topics: [TOPIC.GaugeWithdraw, pad(ROUTER), pad(WA), num(41)], data: num(1) }
