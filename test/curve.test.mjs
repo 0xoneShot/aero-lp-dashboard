@@ -25,14 +25,16 @@ test('the published ETH curve gives the same value and cost prices', { skip: !fs
     const c = s.curve
     assert.ok(c && Array.isArray(c.positions), `${s.scope}: curve`)
     const target = s.invested_usd + s.earn_total_usd
-    const [er, ur] = holdAt(c, s.eth_usd)
+    // WETH/cbBTC holds what its own pool price gives: the feed behind its dollar scale can lag the
+    // reference ETH price by more than the other positions' pools do.
+    const [er, ur] = c.positions.reduce(([e, u], p) => { const [a, b] = amountsAt(p, p.quote ? p.pool : s.eth_usd); return [e + a, u + b] }, [c.eth, c.usd])
     close(ur + er * s.eth_usd, s.value_usd, 1, `${s.scope} value at today's price`)
     const [en, un] = c.positions.reduce(([e, u], p) => { const [a, b] = amountsAt(p, p.pool); return [e + a, u + b] }, [c.eth, c.usd])
     close(en, s.eth_units_now, 1e-4, `${s.scope} ETH withdrawing now`)
     close(un, s.rest_now_usd, 0.02, `${s.scope} other assets withdrawing now`)
     close(needed(en, un, target), s.now_cost_eth_price, 0.02, `${s.scope} cost price withdrawing now`)
     close(needed(en, un, s.invested_usd), s.now_breakeven_eth_price, 0.02, `${s.scope} break-even withdrawing now`)
-    for (const p of c.positions) close(p.pool, s.eth_usd, s.eth_usd * 0.01, `${s.scope} pool price near the reference price`)
+    for (const p of c.positions) close(p.pool, s.eth_usd, s.eth_usd * (p.quote ? 0.05 : 0.01), `${s.scope} pool price near the reference price`)
     if (!c.positions.length) continue
     const low = Math.min(...c.positions.map((p) => p.low))
     const [eb, ub] = holdAt(c, low * 0.999)

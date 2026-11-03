@@ -39,10 +39,12 @@ const symOf = (asset) => (asset === 'ETH' ? 'ETH' : ALL_TOKENS[asset]?.symbol ??
 // just held it" and for transfers between the chains.
 const hodlKey = (asset) => (asset === 'ETH' || asset === WETH ? 'ETH' : ALL_TOKENS[asset]?.canon ?? asset)
 const isAero = (asset) => ALL_TOKENS[asset]?.price === 'aero'
-// ETH-like and six-decimal dollar tokens: the pairs whose positions follow the ETH curve.
+// ETH-like and six-decimal dollar tokens: the pairs whose positions follow the ETH curve. So does ETH
+// against a coin with its own dollar feed (cbBTC), the coin held at today's price as everything else is.
 const ethLike = (a) => ALL_TOKENS[a]?.price === 'eth' && ALL_TOKENS[a].decimals === 18
 const usdLike = (a) => ALL_TOKENS[a]?.price === 'usd' && ALL_TOKENS[a].decimals === 6
-const curveOf = (x) => usdCurve(x, { eth: ethLike, usd: usdLike })
+const feedCoin = (a) => { const t = ALL_TOKENS[a]; return t?.price.startsWith('feed:') && pNowCurve[t.price] > 0 ? { symbol: t.symbol, decimals: t.decimals, usd: pNowCurve[t.price] } : null }
+const curveOf = (x) => usdCurve(x, { eth: ethLike, usd: usdLike, coin: feedCoin })
 const chainOf = (key) => CHAINS[key ?? 'base']
 const valueOf = (asset, raw, prices) => (asset === 'ETH' ? units(raw, 18) * prices.eth : usdOf(asset, raw, prices) ?? 0)
 const r2 = (x) => Math.round(x * 100) / 100
@@ -50,6 +52,7 @@ const r6 = (x) => Math.round(x * 1e6) / 1e6
 const sum = (xs, f = (x) => x) => xs.reduce((a, x) => a + f(x), 0)
 const cstTime = (ts) => new Date((ts + 8 * 3600) * 1000).toISOString().slice(0, 16).replace('T', ' ')
 const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`
+const sig8 = (x) => Number(x.toPrecision(8))
 
 // A cache file that cannot be read is started over (its contents are read again from the chain).
 function readJson(p, fallback) { try { return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : fallback } catch { log(`${path.basename(p)} unreadable, starting it over`); return fallback } }
@@ -571,8 +574,8 @@ function ethCurve(keys) {
     }
     fixedUsd += units(s.positions.reduce((a, x) => a + x.pending, 0n) + s.deferred, 18) * (pNowCurve.aero ?? 0)
     for (const x of s.positions) {
-      // A WETH/USDC position in dollar terms, either token order (lib/curve.mjs); collect() also pays
-      // owed principal and fees (extraEth, extraUsd).
+      // A WETH/USDC or WETH/cbBTC position in dollar terms, either token order (lib/curve.mjs); collect()
+      // also pays owed principal and fees (extraEth, extraUsd).
       const c = curveOf(x)
       if (c) {
         // Only live positions follow a curve and set the lowest bound: one whose liquidity was all
@@ -694,7 +697,9 @@ for (const d of days) {
 function ethPrices(keys, invested, interest, value) {
   const c = ethCurve(keys)
   const now = pNow.eth
-  if (Math.abs(c.value(now) - value) > 1) log(`ETH curve check off by ${(c.value(now) - value).toFixed(2)} USD`)
+  // At the reference price, except a position against another coin at its own pool's: the coin's feed can lag.
+  const curveNow = c.fixedUsd + c.ethUnits * now + sum(c.curves, (x) => { const [e, u] = c.amounts(x, x.quote ? x.pool : now); return e * now + u })
+  if (Math.abs(curveNow - value) > 1) log(`ETH curve check off by ${(curveNow - value).toFixed(2)} USD`)
   const p0 = c.lowest != null ? Math.min(c.lowest * 0.999, now) : now
   const eth = c.ethAt(p0), rest = c.value(p0) - eth * p0
   // 0: what is held besides ETH already covers it; null: too little ETH for a price to mean anything.
@@ -727,8 +732,10 @@ function ethPrices(keys, invested, interest, value) {
     curve: {
       eth: c.ethUnits, usd: c.fixedUsd,
       // chain: which chain's RPCs the page reads the pool from; invert: its slot0 price is dollars per ETH
-      // inverted (USDC is token0 there).
-      positions: [...c.curves].sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key) || a.low - b.low).map((x) => ({ wallet: label(x.key), low: r2(x.low), high: r2(x.high), pool: r6(x.pool), in_range: x.inRange, pool_address: x.address, tick_lower: x.tickLower, tick_upper: x.tickUpper, L: x.L, sa: x.sa, sb: x.sb, chain: x.chain, invert: x.invert })),
+      // inverted (USDC is token0 there). Against another coin, low, high and pool are dollars per ETH at the
+      // coin's price now: scale turns the pool's raw price into them, quote gives the bounds in the coin.
+      positions: [...c.curves].sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key) || Boolean(a.quote) - Boolean(b.quote) || a.low - b.low).map((x) => ({ wallet: label(x.key), low: r2(x.low), high: r2(x.high), pool: r6(x.pool), in_range: x.inRange, pool_address: x.address, tick_lower: x.tickLower, tick_upper: x.tickUpper, L: x.L, sa: x.sa, sb: x.sb, chain: x.chain, invert: x.invert,
+        ...(x.quote ? { scale: x.scale, quote: { symbol: x.quote.symbol, usd: x.quote.usd, low: sig8(x.quote.low), high: sig8(x.quote.high) } } : {}) })),
     },
   }
 }
@@ -788,7 +795,8 @@ for (const t of unpricedOf(WALLETS.map((w) => w.key))) {
 const DEFAULT_RATIO = (1.05 / 0.95)
 function poolCompare(keys, myUsd) {
   if (!poolCache) return null
-  const live = keys.flatMap((k) => snaps[k][head].positions.filter((x) => x.liquidity > 0n).map((x) => ({ x, c: curveOf(x) }))).filter((p) => p.c)
+  // Only WETH/USDC pools are compared: money in a WETH/cbBTC position counts like money outside any pool.
+  const live = keys.flatMap((k) => snaps[k][head].positions.filter((x) => x.liquidity > 0n).map((x) => ({ x, c: curveOf(x) }))).filter((p) => p.c && !p.c.quote)
     .map((p) => { const [e, u] = amountsAtUsd(p.c, p.c.pool); return { ...p, usd: e * p.c.pool + u } }).sort((a, b) => b.usd - a.usd)
   const ratio = live.length ? live[0].c.high / live[0].c.low : DEFAULT_RATIO
   const inPool = new Map()
@@ -879,7 +887,8 @@ for (const sc of SCOPES) {
 }
 
 // What a WETH/USDC position turns into outside its range, and what was put into it: below the
-// range it is all ETH, so its cost price is the money put in divided by that ETH.
+// range it is all ETH, so its cost price is the money put in divided by that ETH. Above it, WETH/cbBTC
+// is all cbBTC: usdc_if_above is then its dollar value at today's price.
 function positionCost(key, x) {
   const D = walletData[key]
   const mine = (y) => y.npm === x.npm && y.tokenId === x.tokenId && (y.chain ?? 'base') === (x.chain ?? 'base')
@@ -905,7 +914,8 @@ for (const w of WALLETS) {
       pool_label: `${c?.invert ? `${symOf(x.token1)}/${symOf(x.token0)}` : `${symOf(x.token0)}/${symOf(x.token1)}`} · CL${x.tickSpacing}`,
       venue: `${ch.npms[x.npm]?.label ?? x.npm}${ch.key === 'base' ? '' : ` · ${ch.label}`}`, chain: ch.key,
       status: x.staked ? '质押中' : '未质押', in_range: x.inRange,
-      range_low: r2(c ? c.low : priceAtTick(x.tickLower, d0, d1)), range_high: r2(c ? c.high : priceAtTick(x.tickUpper, d0, d1)), price: r2(c ? c.pool : priceFromSqrt(x.sqrtP, d0, d1)),
+      // Against another coin, in that coin per ETH: its bounds are fixed there, not in dollars.
+      range_low: c?.quote ? sig8(c.quote.low) : r2(c ? c.low : priceAtTick(x.tickLower, d0, d1)), range_high: c?.quote ? sig8(c.quote.high) : r2(c ? c.high : priceAtTick(x.tickUpper, d0, d1)), price: c?.quote ? sig8(c.quote.pool) : r2(c ? c.pool : priceFromSqrt(x.sqrtP, d0, d1)),
       amount0: r6(units(a0, d0)), symbol0: symOf(x.token0), amount1: r6(units(a1, d1)), symbol1: symOf(x.token1),
       value_usd: r2(valueOf(x.token0, a0, pNow) + valueOf(x.token1, a1, pNow)),
       pending_aero: r6(pending), pending_usd: r2(pending * (pNow.aero ?? 0)),

@@ -15,8 +15,9 @@ const RPCS = {
   eth: ['https://ethereum-rpc.publicnode.com', 'https://rpc.mevblocker.io', 'https://eth.blockrazor.xyz'],
 }
 
-// slot0() of one chain's WETH/USDC pools (18 and 6 decimals), as the page reads them: [{ address, invert }]
-// -> [{ price, tick }], the price in dollars per ETH (inverted where USDC is token0).
+// slot0() of one chain's pools, as the page reads them: [{ address, invert, scale }] -> [{ price, tick }],
+// the price in dollars per ETH (inverted where USDC is token0). WETH/USDC's scale is 1e12, for its 18 and 6
+// decimals; another pair's is published with its position (src/run.mjs).
 async function slot0s(chain, pools) {
   const calls = pools.map((p, id) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to: p.address, data: '0x3850c7bd' }, 'latest'] }))
   for (const url of RPCS[chain] ?? []) {
@@ -26,7 +27,8 @@ async function slot0s(chain, pools) {
       if (!Array.isArray(out) || out.length !== calls.length || out.some((x) => x.error || typeof x.result !== 'string' || x.result.length < 130)) continue
       return out.sort((a, b) => a.id - b.id).map((x, i) => {
         const w = x.result.slice(2), q = Number(BigInt('0x' + w.slice(0, 64))) / 2 ** 96
-        return { price: pools[i].invert ? 1e12 / (q * q) : q * q * 1e12, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) }
+        const scale = pools[i].scale ?? 1e12
+        return { price: pools[i].invert ? scale / (q * q) : q * q * scale, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) }
       })
     } catch {}
   }
@@ -39,7 +41,7 @@ async function lastSummaryLive() {
   const ref = summary[0]?.eth_ref_pool, hourly = summary[0]?.eth_usd
   // The reference pool is on Base; each position's pool on its own chain.
   const want = new Map(ref ? [[`base:${ref}`, { chain: 'base', address: ref, invert: false }]] : [])
-  for (const p of summary.flatMap((r) => r.curve?.positions ?? [])) if (p.pool_address) want.set(`${p.chain ?? 'base'}:${p.pool_address}`, { chain: p.chain ?? 'base', address: p.pool_address, invert: Boolean(p.invert) })
+  for (const p of summary.flatMap((r) => r.curve?.positions ?? [])) if (p.pool_address) want.set(`${p.chain ?? 'base'}:${p.pool_address}`, { chain: p.chain ?? 'base', address: p.pool_address, invert: Boolean(p.invert), scale: p.scale })
   // Each sane quote counts on its own: one chain's RPCs being down leaves the other chain's alerts working
   // (lib/alerts.mjs holds the ranges whose pool had no quote).
   const live = {}
