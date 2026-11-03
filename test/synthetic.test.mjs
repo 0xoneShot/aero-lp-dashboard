@@ -172,6 +172,19 @@ test('ETH split: a reverted own transaction only pays gas', async () => {
   assert.deepEqual(rec.eth[WB], { delta: '-7', legs: [] })
 })
 
+test('ETH split: a payment from someone else\'s transaction in the same block is reported, then counted once that transaction is known', async () => {
+  const own = (hash, index, gas) => ({ hash, block: 1, index, from: WB, to: POOL, selector: '0x12345678', value: '0', status: 'success', gasCost: gas, eth: {} })
+  const relayed = { hash: '0x65', block: 1, index: 0, from: EOA, to: POOL, selector: '0x04cf862f', value: '0', status: 'success', gasCost: '50', eth: {} }
+  const paying = { '0x63': { from: POOL, to: WB, value: '900', type: 'CALL' }, '0x64': { from: WB, to: POOL, value: '100', type: 'CALL' }, '0x65': { from: POOL, to: WB, value: '333', type: 'CALL' } }
+  const trace = async (h) => paying[h]
+  const recs = [own('0x63', 1, '10'), own('0x64', 2, '20')]
+  await assert.rejects(assignEth(recs, WB, 1103n, false, trace), (e) => e.unexplained === 333n)
+  await assignEth([relayed, ...recs], WB, 1103n, false, trace)
+  assert.deepEqual(relayed.eth[WB], { delta: '333', legs: [{ cp: POOL, value: '333' }], traced: true })
+  assert.equal(recs[0].eth[WB].delta, '890')
+  assert.equal(recs[1].eth[WB].delta, '-120')
+})
+
 // Native-ETH limit orders: the ETH sits in a contract made for the order until a fill or a refund.
 const FACTORY = '0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01'
 const ORDER = '0x00000000000000000000000000000000000c1013'
