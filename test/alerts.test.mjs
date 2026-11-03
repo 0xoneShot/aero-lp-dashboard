@@ -20,6 +20,81 @@ const run = (states, rows) => {
   return { out, prev }
 }
 
+// A WETH/cbBTC position as the summary publishes it: dollars per ETH at the coin's price of that update,
+// and its bounds in the coin. Only the price of ETH in cbBTC moves it.
+const btcRow = (ratio, btc = 80000, extra = {}) => {
+  const low = 0.028, high = 0.031, in_range = ratio >= low && ratio < high
+  return {
+    scope: 'a', scope_label: 'A', eth_usd: ratio * btc, range_state: in_range ? 'in' : ratio < 0.0295 ? 'below' : 'above', now_cost_eth_price: 2400,
+    curve: { eth: 0, usd: 0, positions: [{ low: low * btc, high: high * btc, pool: ratio * btc, in_range, pool_address: '0xbbb', scale: 1e10 * btc, tick_lower: -270000, tick_upper: -269000, L: 1, sa: 1, sb: 2, quote: { symbol: 'cbBTC', usd: btc, low, high } }] },
+    ...extra,
+  }
+}
+
+test('a WETH/cbBTC range is said in cbBTC, and the coin\'s price moving its dollar bounds sends nothing', () => {
+  // cbBTC moves every update; the ratio stays inside the range.
+  const { out, prev } = run(null, [btcRow(0.0295, 80000), btcRow(0.0295, 81000), btcRow(0.0295, 79000)])
+  assert.deepEqual(out, [[], [], []])
+  assert.deepEqual(Object.keys(prev).filter((k) => /^a:[\d.]+-[\d.]+$/.test(k)), ['a:0.028-0.031'])
+  const sent = (rows) => { let s = null, last = []; for (const r of rows) { const e = evaluate([r, total], s); s = e.state; last = e.messages } return last }
+  const near = sent([btcRow(0.0295), btcRow(0.0282)])[0]
+  assert.equal(near.kind, 'near')
+  assert.ok(near.title.includes('WETH/cbBTC'), near.title)
+  assert.ok(near.message.includes('1 ETH = 0.028200 cbBTC') && near.message.includes('0.028000 cbBTC'), near.message)
+  const below = sent([btcRow(0.0295), btcRow(0.0275)])[0]
+  assert.equal(below.kind, 'below')
+  assert.ok(below.message.includes('全部变成了 ETH'), below.message)
+  const above = sent([btcRow(0.0295), btcRow(0.032)])[0]
+  assert.equal(above.kind, 'above')
+  assert.ok(above.message.includes('全部变成了 cbBTC') && !above.message.includes('USDC'), above.message)
+  const back = sent([btcRow(0.0295), btcRow(0.032), btcRow(0.0295)])[0]
+  assert.equal(back.kind, 'back')
+  assert.ok(back.message.includes('0.028000 cbBTC–0.031000 cbBTC'), back.message)
+  // Just past a bound it still reads as past it.
+  const past = sent([btcRow(0.0295), btcRow(0.027996)])[0]
+  assert.ok(past.message.includes('1 ETH = 0.027996 cbBTC') && past.message.includes('0.028000 cbBTC'), past.message)
+})
+
+test('out of a WETH/cbBTC range with ETH above its cost price already, the alert does not say to wait for it', () => {
+  const sent = (rows) => { let s = null, last = []; for (const r of rows) { const e = evaluate([r, total], s); s = e.state; last = e.messages } return last }
+  const m = sent([btcRow(0.0295, 100000), btcRow(0.0275, 102000, { now_cost_eth_price: 2100 })])[0]
+  assert.equal(m.kind, 'below')
+  assert.ok(m.message.includes('已经高于它') && !m.message.includes('涨到这个价以上再卖'), m.message)
+  const lower = sent([btcRow(0.0295), btcRow(0.0275, 80000, { now_cost_eth_price: 2500 })])[0]
+  assert.ok(lower.message.includes('涨到这个价以上再卖') && !lower.message.includes('已经高于它'), lower.message)
+})
+
+test('the cost alert follows the dollar ranges: a WETH/cbBTC position in range does not silence it', () => {
+  const usdPos = (P) => ({ low: 2000, high: 2500, pool: P, in_range: P >= 2000 && P < 2500 })
+  const mixed = (P, ratio = 0.0295) => {
+    const b = btcRow(ratio, P / ratio)
+    return { scope: 'a', scope_label: 'A', eth_usd: P, range_state: P < 2000 ? 'part' : 'in', now_cost_eth_price: 1900, curve: { ...b.curve, positions: [usdPos(P), ...b.curve.positions] } }
+  }
+  const { out } = run(null, [mixed(2100), mixed(1800), mixed(1850), mixed(1905)])
+  assert.deepEqual(out, [[], ['below'], [], ['cost']])
+  // Only a WETH/cbBTC position left: as after withdrawing, the ETH cost price still applies.
+  const alone = (P, ratio = 0.0295) => ({ ...btcRow(ratio, P / ratio), now_cost_eth_price: 2400 })
+  assert.deepEqual(run(null, [alone(2300), alone(2390), alone(2410)]).out, [[], [], ['cost']])
+})
+
+test('while the update fails, the cost price moves the coin with its pool, unless that pool had no quote', () => {
+  // Above its range, so all cbBTC: worth $20 at the published $80,000. ETH and cbBTC are then both up 10%, the ratio unchanged.
+  const sa = Math.sqrt(2000e-12), sb = Math.sqrt(2200e-12), L = 20e6 / (sb - sa)
+  const held = { scope: 'a', scope_label: 'A', eth_usd: 2400, invested_usd: 50, earn_total_usd: 0, range_state: 'above', now_cost_eth_price: 30,
+    curve: { eth: 1, usd: 0, positions: [{ low: 2000, high: 2200, pool: 2400, in_range: false, pool_address: '0xbbb', tick_lower: 1, tick_upper: 2, L, sa, sb, quote: { symbol: 'cbBTC', usd: 80000, low: 0.025, high: 0.0275 } }] } }
+  const [live] = withLivePrices([held], { 'base:0xbbb': { tick: 3, price: 2400 } }, 2640)
+  assert.ok(Math.abs(live.now_cost_eth_price - 28) < 0.01, `${live.now_cost_eth_price}`)
+  const [none] = withLivePrices([held], {}, 2640)
+  assert.ok(Math.abs(none.now_cost_eth_price - 30) < 0.01, `${none.now_cost_eth_price}`)
+})
+
+test('live prices move a WETH/cbBTC range through its dollar scale', () => {
+  const [row1] = withLivePrices([btcRow(0.0295)], { 'base:0xbbb': { tick: -272000, price: 0.0275 * 80000 } }, 2200)
+  assert.equal(row1.curve.positions[0].pool, 0.0275 * 80000)
+  assert.equal(row1.curve.positions[0].in_range, false)
+  assert.equal(row1.range_state, 'below')
+})
+
 test('the first run only records the state', () => {
   const { messages, state } = evaluate([row(1990), total], null)
   assert.deepEqual(messages, [])

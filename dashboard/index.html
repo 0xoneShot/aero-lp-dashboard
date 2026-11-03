@@ -228,7 +228,9 @@
 
   // ---------- the ETH curve: what the wallets hold at any ETH price ----------
   // Each live WETH/USDC position turns into ETH as the price falls and into USDC as it rises; the
-  // rest (wallet ETH, USDC, AERO at today's price) stays as it is. Same maths as src/run.mjs.
+  // rest (wallet ETH, USDC, AERO at today's price) stays as it is. Same maths as src/run.mjs. A position
+  // against another coin (p.quote, WETH/cbBTC) is published the same way: its low, high, pool and the
+  // dollars here are at the coin's price of the last update, which p.coin_up (applyLive) brings to now.
   const amountsAt = (p, P) => {
     const r = Math.sqrt(P * 1e-12);
     if (r <= p.sa) return [(p.L * (1 / p.sa - 1 / p.sb)) / 1e18, 0];
@@ -239,6 +241,7 @@
   // null when there is too little ETH for a price to mean anything. Shown rounded up, as a floor to sell at.
   const needed = (e, u, target) => (target <= u ? 0 : e < 0.05 ? null : Math.ceil((target - u) / e));
   const pct = (v) => `${(Math.abs(v) * 100).toFixed(1)}%`;
+  const ratio = (v) => v.toPrecision(4);
   const walletColor = (label) => { const i = walletKeys().findIndex((k) => labelOf(k) === label); return dash.colors[Math.max(0, i) % dash.colors.length]; };
 
   const STATES = {
@@ -257,7 +260,9 @@
     state.replaceChildren(); list.replaceChildren();
     if (!s) { state.textContent = '—'; return; }
     const b = el('b', null, fmtUsd(s.eth_usd));
-    state.append('ETH 现价 ', b, '，', STATES[s.range_state] ?? '');
+    const held = s.curve?.positions ?? [], coins = [...new Set(held.filter((p) => p.quote).map((p) => p.quote.symbol))];
+    const above = [...(held.some((p) => !p.quote) ? ['USDC'] : []), ...coins].join(' 或 ');
+    state.append('ETH 现价 ', b, '，', s.range_state === 'above' && coins.length ? `已经涨过区间，仓位全部变成了 ${above}，现在不赚利息。` : STATES[s.range_state] ?? '');
     // Positions of one wallet with the same range move together: show them as one.
     const ps = [];
     for (const p of s.curve?.positions ?? []) {
@@ -274,16 +279,19 @@
       const row = el('div', 'lp-range');
       const at0 = p.pool ?? now, inside = p.in_range ?? (at0 >= p.low && at0 < p.high), under = at0 < (p.low + p.high) / 2;
       const head = el('div', 'lp-range-head');
-      head.append(el('span', null, `${several ? p.wallet + ' · ' : ''}${CHAIN_NAMES[p.chain] ? CHAIN_NAMES[p.chain] + ' · ' : ''}${fmtUsd(p.low)} – ${fmtUsd(p.high)}`),
+      // A range against another coin is set in that coin per ETH, and only its price against the coin moves it.
+      const q = p.quote, bounds = q ? `WETH/${q.symbol} · ${ratio(q.low)} – ${ratio(q.high)}` : `${fmtUsd(p.low)} – ${fmtUsd(p.high)}`;
+      head.append(el('span', null, `${several ? p.wallet + ' · ' : ''}${CHAIN_NAMES[p.chain] ? CHAIN_NAMES[p.chain] + ' · ' : ''}${bounds}`),
         el('span', `lp-range-tag ${inside ? 'in' : 'out'}`, inside ? '区间内' : under ? '已跌破' : '已涨破'));
       const track = el('div', 'lp-track');
       const seg = el('i', 'lp-seg'); seg.style.left = at(p.low); seg.style.width = `calc(${at(p.high)} - ${at(p.low)})`; seg.style.background = walletColor(p.wallet);
-      const mark = el('i', 'lp-now'); mark.style.left = at(at0); mark.title = `现价 ${fmtUsd(at0)}`;
+      const mark = el('i', 'lp-now'); mark.style.left = at(at0); mark.title = q ? `现价 1 ETH = ${ratio(at0 / q.usd)} ${q.symbol}` : `现价 ${fmtUsd(at0)}`;
       track.append(seg, mark);
       const [e, u] = amountsAt(p, at0);
       const where = inside ? `跌 ${pct((at0 - p.low) / at0)} 到下沿 · 涨 ${pct((p.high - at0) / at0)} 到上沿`
         : under ? `要涨 ${pct(Math.max(0, p.low - at0) / at0)} 才回到区间` : `要跌 ${pct(Math.max(0, at0 - p.high) / at0)} 才回到区间`;
-      row.append(head, track, el('div', 'lp-range-sub', `${where} · 池子里 ${fmtNum(e, 2)} ETH + ${fmtUsd(u)} USDC`));
+      const sub = q ? `1 ETH = ${ratio(at0 / q.usd)} ${q.symbol} · ETH 对 ${q.symbol} ${where} · 池子里 ${fmtNum(e, 2)} ETH + ${fmtNum(u / q.usd, 4)} ${q.symbol}` : `${where} · 池子里 ${fmtNum(e, 2)} ETH + ${fmtUsd(u)} USDC`;
+      row.append(head, track, el('div', 'lp-range-sub', sub));
       list.appendChild(row);
     }
   }
@@ -294,7 +302,7 @@
     const b = el('div', 'lp-exit');
     const h = el('div', 'lp-exit-head', head[0]);
     if (head[1]) h.append(' ', el('span', null, head[1]));
-    const [pe, pu] = withdraw, e = s.curve.eth + pe, u = s.curve.usd + pu;
+    const [pe, pu, coins = {}] = withdraw, e = s.curve.eth + pe, u = s.curve.usd + pu;
     const c = needed(e, u, s.invested_usd + s.earn_total_usd), even = needed(e, u, s.invested_usd);
     const price = el('div', 'lp-exit-price');
     const short = `比本金加利息少 ${fmtUsd(s.invested_usd + s.earn_total_usd - u)}`;
@@ -305,13 +313,21 @@
       const g = c / compare[1] - 1;
       price.append(el('span', 'lp-kpi-value', fmtUsd(c)), el('span', 'lp-exit-gap', g > 0 ? `比${compare[0]} ${fmtUsd(compare[1])} 高 ${pct(g)}` : `${compare[0]} ${fmtUsd(compare[1])} 就已经够了`));
     }
-    const got = pe < 0.005 && pu < 0.5 ? '' : `池子给你 ${pe >= 0.005 ? `${fmtNum(pe, 2)} ETH` : ''}${pe >= 0.005 && pu >= 0.5 ? ' + ' : ''}${pu >= 0.5 ? `${fmtUsd(pu)} USDC` : ''}；加上钱包里已有的，`;
+    // What the pools pay besides ETH: dollars and other coins.
+    const held = Object.entries(coins), dollars = pu - held.reduce((a, [, x]) => a + x.usd, 0);
+    const paid = [pe >= 0.005 && `${fmtNum(pe, 2)} ETH`, dollars >= 0.5 && `${fmtUsd(dollars)} USDC`, ...held.filter(([, x]) => x.usd >= 0.5).map(([k, x]) => `${fmtNum(x.amount, 4)} ${k}`)].filter(Boolean);
+    const got = paid.length ? `池子给你 ${paid.join(' + ')}；加上钱包里已有的，` : '';
     const parts = [`${sub ? sub + '。' : ''}${got}共 ${fmtNum(e, 2)} ETH、${fmtUsd(u)} 其他资产`];
+    for (const [k, x] of held) if (x.usd >= 0.5) parts.push(`${k} 按现价 ${fmtUsd(x.usd / x.amount)} 算`);
     if (c && c <= 5 * s.eth_usd && even != null) parts.push(even === 0 ? '回本价：任何价格都不亏本金' : `回本价 ${fmtUsd(even)}`);
     b.append(h, price, el('div', 'lp-range-sub', parts.join(' · ')));
     return b;
   }
-  const poolOut = (ps, at) => ps.reduce(([e, u], p) => { const [a, b] = amountsAt(p, at(p)); return [e + a, u + b]; }, [0, 0]);
+  const poolOut = (ps, at) => ps.reduce(([e, u, coins], p) => {
+    const [a, b] = amountsAt(p, at(p)), up = p.coin_up ?? 1;
+    if (p.quote) { const x = coins[p.quote.symbol] ??= { amount: 0, usd: 0 }; x.amount += b / p.quote.usd; x.usd += b * up; }
+    return [e + a, u + b * up, coins];
+  }, [0, 0, {}]);
   function drawExit(s) {
     const rows = $('exit-rows');
     rows.replaceChildren();
@@ -611,7 +627,7 @@
     const days = Math.max(...pc.pools.map((p) => p.days));
     $('pools-title').textContent = `哪个池子利息高（近 ${days} 天）`;
     const width = `±${(pc.width_pct * 100).toFixed(1)}%`;
-    $('pools-note').textContent = `${pc.default_width ? `现在没有仓位，按 ${width} 的区间` : `按${s.scope === 'total' ? '最大那个' : '你的'}仓位的区间宽度（${width}）`}、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。`;
+    $('pools-note').textContent = `${pc.default_width ? `${s.curve?.positions?.length ? '现在的仓位不在这些池子里' : '现在没有仓位'}，按 ${width} 的区间` : `按${s.scope === 'total' ? '最大那个' : '你的'}仓位的区间宽度（${width}）`}、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。`;
     // Where the money earns most, against where it is now (src/run.mjs switchTo).
     const sw = pc.switch, move = $('pools-move'), modeName = (m) => (m === 'staked' ? '质押' : '不质押');
     move.hidden = !sw;
@@ -724,11 +740,12 @@
     }
     throw err;
   }
-  // A WETH/USDC pool's dollar price and tick from slot0 (18 and 6 decimals); `invert` where USDC is
-  // token0 (Ethereum), so its raw price is ETH per dollar.
-  const slot0 = (hex, invert) => {
-    const w = hex.slice(2), x = Number(BigInt('0x' + w.slice(0, 64))) / 2 ** 96;
-    return { price: invert ? 1e12 / (x * x) : x * x * 1e12, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) };
+  // A pool's dollar price and tick from slot0: `scale` turns its raw price into dollars per ETH (1e12 for
+  // WETH/USDC's 18 and 6 decimals; another pair's comes with its position); `invert` where USDC is token0
+  // (Ethereum), so its raw price is ETH per dollar.
+  const slot0 = (hex, invert, scale = 1e12) => {
+    const w = hex.slice(2), x = Number(BigInt('0x' + w.slice(0, 64))) / 2 ** 96, raw = x * x;
+    return { raw, invert, price: invert ? scale / raw : raw * scale, tick: Number(BigInt.asIntN(24, BigInt('0x' + w.slice(64, 128)))) };
   };
   // One read at a time; a caller during a read waits for it.
   function readLive() {
@@ -743,7 +760,7 @@
     if (!ref) return;
     // The reference pool is on Base; each position's pool is read on its own chain.
     const want = new Map([[`base:${ref}`, { chain: 'base', address: ref, invert: false }]]);
-    for (const p of S.data.flatMap((r) => r.curve?.positions ?? [])) if (p.pool_address) want.set(`${p.chain ?? 'base'}:${p.pool_address}`, { chain: p.chain ?? 'base', address: p.pool_address, invert: Boolean(p.invert) });
+    for (const p of S.data.flatMap((r) => r.curve?.positions ?? [])) if (p.pool_address) want.set(`${p.chain ?? 'base'}:${p.pool_address}`, { chain: p.chain ?? 'base', address: p.pool_address, invert: Boolean(p.invert), scale: p.scale });
     const byChain = {};
     for (const [k, q] of want) (byChain[q.chain] ??= []).push([k, q]);
     try {
@@ -751,7 +768,7 @@
       // with no quote keeps its hourly state (applyLive); the Base reference price is needed for any.
       const read = await Promise.allSettled(Object.entries(byChain).map(async ([chain, qs]) => {
         const out = await rpcBatch(chain, qs.map(([, q], id) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to: q.address, data: '0x3850c7bd' }, 'latest'] })));
-        return qs.map(([k, q], i) => [k, slot0(out[i], q.invert)]);
+        return qs.map(([k, q], i) => [k, slot0(out[i], q.invert, q.scale)]);
       }));
       const hourly = S.data[0].eth_usd;
       const res = Object.fromEntries(read.flatMap((r) => (r.status === 'fulfilled' ? r.value : [])).filter(([, x]) => x.price > hourly / 2 && x.price < hourly * 2));
@@ -785,10 +802,14 @@
     if (!live || !s?.curve || staleHours(s)) return s;
     const ps = s.curve.positions.map((p) => {
       const q = live.pools[`${p.chain ?? 'base'}:${p.pool_address}`];
-      return q ? { ...p, pool: q.price, in_range: q.tick >= p.tick_lower && q.tick < p.tick_upper } : p;
+      if (!q) return p;
+      // By this row's own scale: a coin's changes with every update, and this quote may be older than the row.
+      const scale = p.scale ?? 1e12, pool = q.invert ? scale / q.raw : q.raw * scale;
+      // The other coin moves too: its price now is ETH's over the pool's coin per ETH.
+      return { ...p, pool, in_range: q.tick >= p.tick_lower && q.tick < p.tick_upper, ...(p.quote ? { coin_up: live.ref / pool } : {}) };
     });
     let value = s.curve.usd + s.curve.eth * live.ref;
-    for (const p of ps) { const [e, u] = amountsAt(p, p.pool); value += e * live.ref + u; }
+    for (const p of ps) { const [e, u] = amountsAt(p, p.pool); value += e * live.ref + u * (p.coin_up ?? 1); }
     const sides = ps.map((p) => (p.in_range ? 'in' : p.pool < (p.low + p.high) / 2 ? 'below' : 'above'));
     const range_state = !sides.length ? 'none' : sides.every((x) => x === 'in') ? 'in' : sides.some((x) => x === 'in') ? 'part'
       : sides.every((x) => x === 'below') ? 'below' : sides.every((x) => x === 'above') ? 'above' : 'gap';
