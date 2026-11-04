@@ -13,7 +13,8 @@ import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
 import { hodlHeld } from '../lib/hodl.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf, savePrices } from '../lib/prices.mjs'
-import { samplePools, blockFinder, poolStats } from '../lib/pools.mjs'
+import { samplePools, blockFinder, poolStats, stayShare } from '../lib/pools.mjs'
+import { sampleStockPools, stockRows } from '../lib/stocks.mjs'
 import { switchTo } from '../lib/switch.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, gaugeAbi, TOPIC } from '../lib/abi.mjs'
 import { tryRead } from '../lib/errors.mjs'
@@ -25,6 +26,7 @@ const OUT = path.resolve('out')
 const SNAP_CACHE = path.resolve('data/cache/snapshots.json')
 const CODE_CACHE = path.resolve('data/cache/code.json')
 const POOLS_FILE = path.resolve('data/cache/pools.json')
+const STOCKS_FILE = path.resolve('data/cache/stocks.json')
 const SNAP_VERSION = 'snap-v2' // bump whenever lib/snapshot.mjs changes what it reads
 const log = (...a) => console.error('[update]', ...a)
 const lc = (a) => a.toLowerCase()
@@ -355,6 +357,20 @@ try {
   for (const m of r.errors) log(`pools: ${m.slice(0, 200)}`)
 } catch (err) {
   log(`pools: not compared this run (${(err.shortMessage ?? err.message).slice(0, 200)})`)
+}
+// The stock/USDC pools, only listed beside those (lib/stocks.mjs). The reference prices of the hours are those
+// just read for the pools above, and a failure here costs nothing but the list.
+let stockCache = null
+try {
+  const r = await sampleStockPools({
+    client, chain: CHAINS.base, head, headTs: tsOfBlock(head), file: STOCKS_FILE, pmap, log, deadline: Date.now() + 5 * 60e3,
+    blockAt: async (t) => { const b = await timeline.blockBefore(t + 1); return { block: b, ts: tsOfBlock(b) } },
+    priceAt: async (t) => ({ aero: (await pricesAt(await timeline.blockBefore(t + 1))).aero }),
+  })
+  stockCache = r.cache
+  for (const m of r.errors) log(`stocks: ${m.slice(0, 200)}`)
+} catch (err) {
+  log(`stocks: not listed this run (${(err.shortMessage ?? err.message).slice(0, 200)})`)
 }
 await savePrices(head)
 const pNowCurve = prices[head]
@@ -815,7 +831,7 @@ function poolCompare(keys, myUsd) {
     return {
       chain: e.chain, chain_label: ch?.label ?? e.chain, label: `CL${e.tickSpacing}`, pool_address: e.address, here: mine ? (mine.staked > 0 ? 'staked' : 'unstaked') : null,
       tvl_usd: r2(units(e.tvl.weth, 18) * pNow.eth + units(e.tvl.usdc, 6)), staked_share: rate(st.last?.stakedShare), missing_hours: e.missing ?? null,
-      days: st.days, last_sample: st.last ? cstTime(st.last.ts) : null, age_h: ageH, stale: ageH == null || ageH > 3, stopped,
+      days: st.days, last_sample: st.last ? cstTime(st.last.ts) : null, age_h: ageH, stale: ageH == null || ageH > 3, stopped, in_range_72h: rate(stayShare(e, ratio, { nowTs })),
       staked: { ...Object.fromEntries(Object.entries(st.staked).map(([f, v]) => [f, stopped ? null : rate(v)])), recent: stopped ? null : rate(st.recent.staked) },
       fee: { ...Object.fromEntries(Object.entries(st.fee).map(([f, v]) => [f, rate(v)])), recent: rate(st.recent.fee) },
       daily: st.daily.map((d) => ({ day: d.day, staked: rate(d.staked), fee: rate(d.fee) })),
@@ -837,6 +853,18 @@ function poolCompare(keys, myUsd) {
   }) }
 }
 
+// The stock pools to list for some wallets (lib/stocks.mjs), at the same width and money as their pools
+// above, with the top of those to read them against.
+function stockList(pc, myUsd) {
+  if (!stockCache) return null
+  const ratio = pc?.ratio ?? DEFAULT_RATIO, rows = stockRows(stockCache, { ratio, myUsd, nowTs: tsOfBlock(head) })
+  if (!rows.length) return null
+  const lower = (x) => (x?.median == null ? null : Math.min(x.median, x.recent ?? x.median))
+  const top = pc?.pools.find((p) => !p.stale && (lower(p.staked) != null || lower(p.fee) != null))
+  const mode = top && ((lower(top.fee) ?? -1) > (lower(top.staked) ?? -1) ? 'fee' : 'staked')
+  return { width_pct: r6(Math.sqrt(ratio) - 1), my_usd: r2(Math.max(0, myUsd)), rows,
+    ref: top ? { chain_label: top.chain_label, label: top.label, tvl_usd: top.tvl_usd, days: top.days, mode, rate: lower(top[mode]), median: top[mode].median, recent: top[mode].recent, in_range_72h: top.in_range_72h } : null }
+}
 
 // Summary and attribution. Money figures come from the rounded daily rows, so the cards, the
 // charts, the tables and the breakdown all show the same numbers.
@@ -856,6 +884,7 @@ for (const sc of SCOPES) {
   // What the earned AERO is worth now (held or unclaimed at today's price, sold or sent at the price
   // then) against what it was worth when earned.
   const aeroNow = (n.aeroHeld + n.pendingAero - units(n.c.aeroInUnits, 18)) * (pNow.aero ?? 0) + n.c.aeroOutUsd
+  const pools = poolCompare(sc.wallets, value)
   summary.push({
     scope: sc.key, scope_label: sc.label,
     as_of: new Date(tsOfBlock(head) * 1000).toISOString(), as_of_cst: cstTime(tsOfBlock(head)), as_of_block: head,
@@ -876,7 +905,8 @@ for (const sc of SCOPES) {
     to_check_count: checks.length, to_check: checks.slice(0, 20).map(({ block, ...x }) => x), to_check_txs: [...new Set(checks.map((x) => x.tx))],
     ...ethPrices(sc.wallets, invested, r2(rewards + fees), value),
     unpriced: unpricedOf(sc.wallets).map(({ address, chain }) => ({ address, symbol: unpricedSymbols[address], chain })),
-    pool_compare: poolCompare(sc.wallets, value),
+    pool_compare: pools,
+    stock_pools: stockList(pools, value),
   })
   // From money put in to value now; the AERO step is aeroNow minus what it was worth when earned.
   const steps = { market: r2(hodl - invested), rewards, fees, aero_drift: r2(aeroNow - rewards), gas: -gasUsd }
