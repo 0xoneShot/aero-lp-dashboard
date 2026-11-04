@@ -81,7 +81,7 @@
   .lp tr.lp-today td:not(.lp-pos):not(.lp-neg) { color: var(--color-fg-muted); }
   .lp td.lp-wrap { white-space: normal; }
   .lp table.lp-pools td { vertical-align: top; }
-  .lp table.lp-pools td:first-child { white-space: normal; }
+  .lp table.lp-pools td:first-child, .lp table.lp-pools td:first-child .lp-cell-sub { white-space: normal; }
   .lp-cell-sub { display: block; font-size: 11px; color: var(--color-fg-muted); white-space: nowrap; }
   .lp table.lp-pools td.lp-best { color: var(--color-ok); font-weight: 600; }
   .lp table.lp-pools td.lp-best .lp-cell-sub { color: var(--color-fg-muted); font-weight: 400; }
@@ -144,6 +144,14 @@
     <p class="lp-note" id="pools-note"></p>
     <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>质押<br>拿 AERO</th><th>不质押<br>拿手续费</th></tr></thead><tbody id="pools-body"></tbody></table></div>
     <p class="lp-note">质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。大字是用来比较的数：“平常”（近 7 天每天年化的中位数）和“最近 24 小时”里较低的那个。资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。“换过去”的成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）；本来就要重新开仓的话，多出来的只有跨链。差 30 个百分点以内算差不多：同一个币对的池子之间，最近谁领先并不会持续（资金跟着奖励走，把收益拉平；10-22 以来的数据和 Base 上一代池子半年的数据都是这样），你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉换过去的成本后一周多挣多少。值得换的是明显而持久的差别，比如质押和不质押。某个钱包的去处数据满 7 天、平常和最近 24 小时都比现在的仓位高 30 个百分点以上、稳定领先（近 7 天里较差的日子也比现在高、最近两个 Aero 周都领先）、3 天内回本时，手机提醒一次（看“合计”时不提醒，按各个钱包提醒）。</p>
+  </section>
+
+  <section class="lp-card" id="stocks" hidden>
+    <h2>股票池的利息（只看）</h2>
+    <p class="lp-note" id="stocks-note"></p>
+    <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>年化</th><th>72 小时<br>在区间</th></tr></thead><tbody id="stocks-body"></tbody></table></div>
+    <p><button type="button" class="lp-refresh" id="stocks-more" hidden></button></p>
+    <p class="lp-note">这里只是看收益率，不参与上面的比较，也不发提醒：换过去等于把 ETH 换成了股票的涨跌，看板现在也算不了股票仓位的盈亏和成本价。大字是“平常”（近 7 天每天年化的中位数）和“最近 24 小时”里较低的那个，质押和不质押取高的；这个数假设价格一直在区间内，也没算来回被套利的损耗；资金频繁进出的池子还会偏高（抽查一天，NFLXc 是实际的 1.3–2 倍，ORCLc 约 1.2 倍）。“72 小时在区间”是这几天任何一小时设好同样宽的区间不动，接下来 72 小时价格还在区间内的比例：比例低说明波动大，实际拿到的利息会打折，来回被套利的损耗也更大。</p>
   </section>
 
   <div class="lp-viewbar" id="viewbar">
@@ -691,6 +699,36 @@
     }));
   }
 
+  // ---------- the stock pools, only listed ----------
+  const STOCKS_SHOWN = 8;
+  let stocksAll = false;
+  function drawStocks(s) {
+    const card = $('stocks'), st = s?.stock_pools;
+    card.hidden = !st?.rows.length;
+    if (card.hidden) return;
+    $('stocks-note').textContent = `和上面一样的算法：按 ±${(st.width_pct * 100).toFixed(1)}% 的区间、把 ${fmtUsd(st.my_usd)} 全部放进去算，已算上这笔钱带来的摊薄。只列 Aero 上资金超过 $10 万的股票/USDC 池，现在都在 Base 上。`;
+    const row = (name, sub, r, chip) => {
+      const tr = document.createElement('tr'), td = el('td');
+      td.append(name);
+      if (chip) td.append(el('span', 'lp-chip', chip));
+      td.append(el('span', 'lp-cell-sub', sub));
+      if (r.stale && r.last_sample) td.append(el('span', 'lp-cell-sub', `数据停在 ${r.last_sample}`));
+      const rate = el('td');
+      rate.append(fmtRate(r.rate));
+      if (r.mode) rate.append(el('span', 'lp-cell-sub', r.mode === 'fee' ? '不质押' : '质押'), el('span', 'lp-cell-sub', `平常 ${fmtRate(r.median)}`), el('span', 'lp-cell-sub', `24 小时 ${fmtRate(r.recent)}`));
+      tr.append(td, rate, el('td', null, r.in_range_72h == null ? '—' : `${Math.round(r.in_range_72h * 100)}%`));
+      return tr;
+    };
+    const shown = stocksAll ? st.rows : st.rows.slice(0, STOCKS_SHOWN);
+    $('stocks-body').replaceChildren(
+      ...(st.ref ? [row(`${st.ref.chain_label} ${st.ref.label}`, `WETH/USDC 里最高 · 池子 ${fmtCompact(st.ref.tvl_usd)}`, st.ref, '对照')] : []),
+      ...shown.map((r) => row(r.symbol, `${r.label} · 池子 ${fmtCompact(r.tvl_usd)} · ${r.days ? `${r.days} 天` : '数据还在补'}${r.days && r.missing_hours ? ' · 还在补' : ''}`, r, r.stopped ? '奖励已停' : null)));
+    const more = $('stocks-more');
+    more.hidden = st.rows.length <= STOCKS_SHOWN;
+    more.textContent = stocksAll ? '收起' : `展开全部 ${st.rows.length} 个`;
+  }
+  $('stocks-more').addEventListener('click', () => { stocksAll = !stocksAll; drawStocks(current()); });
+
   // ---------- table ----------
   function drawDays(rowsAll, sc, period) {
     const rows = rowsAll.filter((r) => r.scope === sc).slice().reverse();
@@ -966,7 +1004,7 @@
     const sc = scope();
     drawScopes(sc);
     const lives = allLive(), s = lives.find((r) => r.scope === sc) ?? null;
-    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc); drawPools(s);
+    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc); drawPools(s); drawStocks(s);
     if (D.status === 'ok') {
       const v = viewRows(D, lives, sc);
       drawViewbar(v.n, v.range); drawInterest(v.grouped, sc, view.period); drawApr(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period);
