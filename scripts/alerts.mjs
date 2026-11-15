@@ -7,8 +7,10 @@
 // Only counts are printed: the hourly job's logs are public, and the alerts name the wallets.
 import fs from 'node:fs'
 import { evaluate, withLivePrices } from '../lib/alerts.mjs'
-import { BASE_WALLETS, EXTRA_WALLETS, PAUSED_WALLETS } from '../lib/config.mjs'
 
+// The step has 3 minutes (refresh.yml): sending stops a little before, and what is left waits for the next
+// run, rather than the step being stopped before the state is written (and everything sent again).
+const started = Date.now(), SEND_UNTIL = started + 140_000
 const topic = process.env.NTFY_TOPIC?.trim()
 const STATE = 'data/cache/alerts.json', LAST = 'data/cache/last-summary.json', SITE = 'https://0xoneshot.github.io/aero-lp-dashboard/'
 const RPCS = {
@@ -93,12 +95,18 @@ if (updated) {
 let prev = null
 try { if (fs.existsSync(STATE)) prev = JSON.parse(fs.readFileSync(STATE, 'utf8')) } catch { console.log('alerts: state unreadable, starting over') }
 // Every wallet tracked now, configured or added on the page (paused in this hour's update or not): one
-// missing from this summary keeps its state (lib/alerts.mjs keepAbsent).
-const tracked = new Set([...BASE_WALLETS, ...EXTRA_WALLETS, ...PAUSED_WALLETS].map((w) => w.key))
+// missing from this summary keeps its state, one let go since the last good data is not alerted for
+// (lib/alerts.mjs). Read apart, so a configuration the update fails on still leaves the alerts running.
+let tracked
+try {
+  const c = await import('../lib/config.mjs')
+  tracked = new Set([...c.BASE_WALLETS, ...c.EXTRA_WALLETS, ...c.PAUSED_WALLETS].map((w) => w.key))
+} catch { console.log('alerts: the tracked wallets could not be read; alerting on the data alone') }
 const { messages, state } = evaluate(summary, prev, { lastGood: !updated, noPrices: !live, tracked })
-let sent = 0
+let sent = 0, left = 0
 if (topic) {
   for (const m of messages) {
+    if (Date.now() > SEND_UNTIL) { if (prev && m.key in prev) state[m.key] = prev[m.key]; left++; continue }
     try { await send(m); sent++ } catch (e) {
       // Keep the previous state for what was not sent, so the next run tries again.
       if (prev && m.key in prev) state[m.key] = prev[m.key]
@@ -108,4 +116,4 @@ if (topic) {
 }
 fs.mkdirSync('data/cache', { recursive: true })
 fs.writeFileSync(STATE, JSON.stringify(state))
-console.log(`${updated ? '' : '(from the last good data) '}${topic ? `alerts: ${sent} of ${messages.length} sent` : `alerts: off (${messages.length} would have been sent)`}`)
+console.log(`${updated ? '' : '(from the last good data) '}${topic ? `alerts: ${sent} of ${messages.length} sent${left ? ` (${left} left for the next run: out of time)` : ''}` : `alerts: off (${messages.length} would have been sent)`}`)

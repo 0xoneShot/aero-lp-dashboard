@@ -343,3 +343,15 @@ test('an added wallet missing for an hour (its update ran without it) keeps its 
   assert.ok(!Object.keys(evaluate([row(1990), total], state, { tracked: new Set(['a']) }).state).some((k) => k.startsWith('x1:')))
   assert.ok(!Object.keys(evaluate([row(1990), total], state).state).some((k) => k.startsWith('x1:')))
 })
+
+test('a wallet let go since the last good data is not alerted for: the alerts from it while the update fails', () => {
+  const added = (p) => ({ ...row(p), scope: 'x1', scope_label: '新', added: true })
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:2000-2500': 'in', 'x1:cost': 'na', update: 'ok' }
+  // Removed on the page this hour, while the last good summary still holds it.
+  const gone = evaluate([row(1990), added(1990), total], prev, { lastGood: true, tracked: new Set(['a']) })
+  assert.deepEqual(gone.messages.map((m) => [m.key, m.kind]), [['a:2000-2500', 'below']])
+  assert.ok(!Object.keys(gone.state).some((k) => k.startsWith('x1:')))
+  // Still tracked: alerted as before.
+  const kept = evaluate([row(1990), added(1990), total], prev, { lastGood: true, tracked: new Set(['a', 'x1']) })
+  assert.deepEqual(kept.messages.map((m) => [m.key, m.kind]).sort(), [['a:2000-2500', 'below'], ['x1:2000-2500', 'below']])
+})
