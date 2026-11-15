@@ -46,7 +46,8 @@
   .lp-exit-gap { font-size: 12px; color: var(--color-fg-muted); }
 
   .lp-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  @media (max-width: 760px) { .lp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .lp-kpis > .lp-kpi:last-child:nth-child(3n + 1) { grid-column: 1 / -1; }
+  @media (max-width: 760px) { .lp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .lp-kpis > .lp-kpi:last-child:nth-child(3n + 1) { grid-column: auto; } .lp-kpis > .lp-kpi:last-child:nth-child(odd) { grid-column: 1 / -1; } }
   .lp-kpi { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .lp-kpi-label { font-size: 12px; color: var(--color-fg-muted); }
   .lp-kpi-value { font-family: var(--font-anthropic-serif); font-size: 26px; line-height: 1.15; white-space: nowrap; }
@@ -111,6 +112,7 @@
   <section class="lp-kpis" aria-label="主要数字">
     <div class="lp-kpi"><span class="lp-kpi-label">现值</span><span class="lp-kpi-value" id="k-value">—</span><span class="lp-kpi-sub" id="k-invested">—</span></div>
     <div class="lp-kpi"><span class="lp-kpi-label">对比一直持有 USDC</span><span class="lp-kpi-value" id="k-pnl">—</span><span class="lp-kpi-sub" id="k-pnl-pct">—</span></div>
+    <div class="lp-kpi"><span class="lp-kpi-label">对比拿着原币不动</span><span class="lp-kpi-value" id="k-hodl">—</span><span class="lp-kpi-sub" id="k-hodl-sub">—</span></div>
     <div class="lp-kpi"><span class="lp-kpi-label">累计利息收益</span><span class="lp-kpi-value" id="k-earn">—</span><span class="lp-kpi-sub" id="k-earn-sub">—</span></div>
     <div class="lp-kpi"><span class="lp-kpi-label">昨日利息收益</span><span class="lp-kpi-value" id="k-yday">—</span><span class="lp-kpi-sub" id="k-today">—</span></div>
     <div class="lp-kpi"><span class="lp-kpi-label" id="k-apr-label">近 7 日年化</span><span class="lp-kpi-value" id="k-apr">—</span><span class="lp-kpi-sub" id="k-apr-sub">—</span></div>
@@ -608,6 +610,7 @@
       ['投入', (r) => fmtUsd(r.invested_usd)],
       ['现值', (r) => fmtUsd(r.value_usd)],
       ['对比持有 USDC', (r) => fmtSigned(r.pnl_usd), (r) => r.pnl_usd],
+      ['对比拿着原币不动', (r) => (r.vs_hodl_usd == null ? '—' : fmtSigned(r.vs_hodl_usd)), (r) => r.vs_hodl_usd],
       ['盈亏比例', (r) => fmtPct(r.pnl_pct), (r) => r.pnl_pct],
       ['累计利息', (r) => fmtUsd(r.earn_total_usd)],
       ['昨日利息', (r) => fmtUsd(r.yesterday_usd)],
@@ -640,8 +643,10 @@
     // extra a day and the alert at the positions' own width. Older data has no fixed width: then both are the position's.
     const own = pc.default_width ? `${s.curve?.positions?.length ? '现在的仓位不在这些池子里' : '现在没有仓位'}，按 ${fixedLabel ?? width} 的区间` : `按${s.scope === 'total' ? '最大那个' : '你的'}仓位的区间宽度（${width}）`;
     const mine = s.apr_7d != null ? `你${s.apr_days && s.apr_days < 7 ? `近 ${s.apr_days} 天` : '近 7 天'}实际拿到的年化 ${(s.apr_7d * 100).toFixed(1)}%（按池子里的钱算，就是页面顶部的那个数）。` : '';
+    const cl = pc.cost_line;
+    const bar = cl?.rate != null && fixedLabel ? `按近 ${cl.days} 天 ETH 的波动（年波动 ${fmtRate(cl.vol)}），${fixedLabel} 的仓位在区间里时，平均每年比拿着原币不动少赚约 ${fmtRate(cl.rate)}，表格里的年化要高过它才划算；这没算涨跌方向，看涨 ETH 时门槛更高。` : '';
     $('pools-note').textContent = fixedLabel
-      ? `表格里每个池子都按 ${fixedLabel} 的区间（和 Aero 页面上选 ${fixedLabel} 一样宽）、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。${mine}${pc.default_width ? '' : `上面那段话里的年化、每天多挣多少和手机提醒都${own}算，${pc.ratio > pc.fixed_ratio ? '所以比表格里同一个池子的数低' : '所以和表格里的数不一样'}。`}`
+      ? `表格里每个池子都按 ${fixedLabel} 的区间（和 Aero 页面上选 ${fixedLabel} 一样宽）、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。${bar}${mine}${pc.default_width ? '' : `上面那段话里的年化、每天多挣多少和手机提醒都${own}算，${pc.ratio > pc.fixed_ratio ? '所以比表格里同一个池子的数低' : '所以和表格里的数不一样'}。`}`
       : `${own}、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。`;
     // Where the money earns most, against where it is now (src/run.mjs switchTo).
     const sw = pc.switch, move = $('pools-move'), modeName = (m) => (m === 'staked' ? '质押' : '不质押');
@@ -860,7 +865,10 @@
     const range_state = !sides.length ? 'none' : sides.every((x) => x === 'in') ? 'in' : sides.some((x) => x === 'in') ? 'part'
       : sides.every((x) => x === 'below') ? 'below' : sides.every((x) => x === 'above') ? 'above' : 'gap';
     const pnl = value - s.invested_usd;
-    return { ...s, eth_usd: live.ref, value_usd: value, pnl_usd: pnl, pnl_pct: s.invested_usd ? pnl / s.invested_usd : null, range_state, curve: { ...s.curve, positions: ps }, live_at: live.at };
+    // The coins brought in, held as they were: their ETH moves with the live price, the rest stays as published.
+    const hodl = s.hodl_eth != null && s.hodl_rest_usd != null ? s.hodl_eth * live.ref + s.hodl_rest_usd : null;
+    return { ...s, eth_usd: live.ref, value_usd: value, pnl_usd: pnl, pnl_pct: s.invested_usd ? pnl / s.invested_usd : null,
+      ...(hodl != null ? { hodl_usd: hodl, vs_hodl_usd: value - hodl } : {}), range_state, curve: { ...s.curve, positions: ps }, live_at: live.at };
   }
   const cstDay = (t) => new Date(t + 8 * 3600e3).toISOString().slice(0, 10);
   // Today's row follows the live figures, its 区间外 mark included (its interest stays hourly). Just
@@ -993,6 +1001,8 @@
     put('k-invested', s ? `投入 ${fmtUsd(s.invested_usd)}` : '—');
     put('k-pnl', s ? fmtSigned(s.pnl_usd) : '—', s?.pnl_usd);
     put('k-pnl-pct', s ? fmtPct(s.pnl_pct) : '—', s?.pnl_pct);
+    put('k-hodl', s?.vs_hodl_usd != null ? fmtSigned(s.vs_hodl_usd) : '—', s?.vs_hodl_usd);
+    put('k-hodl-sub', s?.hodl_usd != null ? `原币现在值 ${fmtUsd(s.hodl_usd)}，差额含利息、无常损失和换币` : '—');
     put('k-earn', s ? fmtUsd(s.earn_total_usd) : '—');
     put('k-earn-sub', s ? `${fmtNum(s.aero_earned, 2)} 个 AERO + 手续费 ${fmtUsd(s.fees_usd)}` : '—');
     put('k-yday', s ? fmtUsd(s.yesterday_usd) : '—');

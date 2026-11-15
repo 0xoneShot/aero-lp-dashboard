@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { dollarsPerL, poolStats, samplePools, blockFinder } from '../lib/pools.mjs'
+import { dollarsPerL, poolStats, samplePools, blockFinder, ethVol, rangeLoss } from '../lib/pools.mjs'
 import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
 import { evaluate } from '../lib/alerts.mjs'
 
@@ -289,4 +289,19 @@ test('a better place for the money is said once, again only for another one, and
   assert.deepEqual(r.messages.map((m) => m.title), ['A：以太坊 CL50 质押收益更高'])
   assert.equal(r.state['a:switch'], 'eth:CL50:staked')
   assert.deepEqual(evaluate([sw({ stable: false, steady: null }), total], { 'a:switch': 'none' }).messages, [])
+})
+
+test('ethVol is the realised yearly volatility of the hourly reference prices, and rangeLoss its cost for a centred range', () => {
+  // Prices alternating by +-1% each hour for 7 days: per-step log return about 0.00995.
+  const t0 = 1_800_000_000, samples = {}
+  for (let i = 0; i <= 7 * 24; i++) samples[t0 + i * 3600] = { ts: t0 + i * 3600, eth: i % 2 ? 2020 : 2000 }
+  const vol = ethVol({ samples }, { days: 7, nowTs: t0 + 7 * 86400 })
+  const r = Math.log(2020 / 2000)
+  assert.ok(Math.abs(vol - Math.sqrt(r * r * 8760)) < 1e-9, String(vol))
+  // A gap longer than 3 hours is skipped, and under two days of steps gives no answer.
+  assert.equal(ethVol({ samples: { [t0]: { ts: t0, eth: 2000 }, [t0 + 86400 * 3]: { ts: t0 + 86400 * 3, eth: 2100 } } }, { days: 7, nowTs: t0 + 86400 * 3 }), null)
+  // A range of ratio 1.12 (about ±5.8%): 1/(8 (1 - 1.12^-1/4)) = 4.47 times the variance; Aero's ±3.5%: 7.20.
+  assert.ok(Math.abs(rangeLoss(1, 1.12) - 4.475) < 0.01)
+  assert.ok(Math.abs(rangeLoss(1, 1.035 / 0.965) - 7.202) < 0.01)
+  assert.equal(rangeLoss(null, 1.1), null)
 })

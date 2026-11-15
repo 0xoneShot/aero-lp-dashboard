@@ -13,9 +13,10 @@ import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
 import { hodlHeld } from '../lib/hodl.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf, savePrices } from '../lib/prices.mjs'
-import { samplePools, blockFinder, poolStats, stayShare } from '../lib/pools.mjs'
+import { samplePools, blockFinder, poolStats, stayShare, ethVol, rangeLoss } from '../lib/pools.mjs'
 import { sampleStockPools, stockRows } from '../lib/stocks.mjs'
 import { switchTo } from '../lib/switch.mjs'
+import { overrideLookup, unmatchedOverrides } from '../lib/overrides.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, gaugeAbi, TOPIC } from '../lib/abi.mjs'
 import { tryRead } from '../lib/errors.mjs'
 import { WALLETS, START_DAY, TOKENS, ALL_TOKENS, CHAINS, COMPARE_CHAINS, WETH, ZERO, LABELS, GAUGE_IMPLS, OVERRIDES_FILE, PRICE } from '../lib/config.mjs'
@@ -104,7 +105,8 @@ for (const c of Object.values(CHAINS).filter((x) => x.key !== 'base')) {
 let head = baseHead
 for (const x of Object.values(ext)) head = Math.min(head, await timeline.blockBefore(x.headTs + 1))
 // Hand corrections are read strictly: a mistake in the file stops the run rather than drop them all.
-const overrides = fs.existsSync(path.resolve(OVERRIDES_FILE)) ? JSON.parse(fs.readFileSync(path.resolve(OVERRIDES_FILE), 'utf8')) : {}
+// Their keys may be keyed hashes of the transaction (lib/overrides.mjs), so the public file names none.
+const overrides = overrideLookup(fs.existsSync(path.resolve(OVERRIDES_FILE)) ? JSON.parse(fs.readFileSync(path.resolve(OVERRIDES_FILE), 'utf8')) : {}, WALLETS.map((w) => w.address))
 
 // A gauge counts only if it is a minimal-proxy clone of a known gauge implementation.
 const codeCache = readJson(CODE_CACHE, {})
@@ -248,6 +250,12 @@ async function positionValueAt(chainKey, npm, tokenId, block, prices) {
   const { amount0, amount1 } = amountsForLiquidity(sqrtP, pair.tickLower, pair.tickUpper, pos[7])
   const a0 = amount0 + pos[10], a1 = amount1 + pos[11]
   return { ...pair, amount0: a0, amount1: a1, usd: valueOf(pair.token0, a0, prices) + valueOf(pair.token1, a1, prices) }
+}
+
+// A hand correction that matched no transaction is said in the log by its key, which names no transaction.
+{
+  const left = unmatchedOverrides(overrides)
+  if (left.length) log(`overrides: ${left.length} entr${left.length === 1 ? 'y matches' : 'ies match'} no transaction (${left.map((k) => k.slice(0, 10)).join(', ')}): a wrong hash, or the tracked wallets changed and the entry must be added again`)
 }
 
 // ---------- day-end snapshots ----------
@@ -861,10 +869,16 @@ function poolCompare(keys, myUsd) {
   // chain can fail for a while): until then the best option may be one whose rivals are not read, and
   // the switch alert waits.
   const complete = pools.every((p) => p.missing_hours === 0 && !p.stale)
+  // What ETH's swings cost a range of the table's width kept centred (lib/pools.mjs rangeLoss): the bar a
+  // rate in the table has to clear before the direction of the price is even counted. The median over the
+  // pools of their 7-day volatility: all of them read the same reference price, so any would do.
+  const vols = Object.values(poolCache.pools).map((e) => ethVol(e, { days: 7, nowTs })).filter((v) => v != null)
+  const vol = vols.length ? vols.sort((a, b) => a - b)[vols.length >> 1] : null
+  const cost_line = vol == null ? null : { days: 7, vol: r6(vol), rate: r6(rangeLoss(vol, COMPARE_RATIO)) }
   // The pick sees the pools in the order it always did (by its own width's numbers), so ties fall as before.
   const judged = (x) => (x.median == null ? -1 : Math.min(x.median, x.recent ?? x.median))
   const byOwn = [...pools].sort((a, b) => Math.max(judged(b.staked), judged(b.fee)) - Math.max(judged(a.staked), judged(a.fee)))
-  return { ratio: r6(ratio), width_pct: r6(Math.sqrt(ratio) - 1), default_width: !live.length, fixed_ratio: r6(COMPARE_RATIO), fixed_label: COMPARE_LABEL, my_usd: r2(myUsd), complete, pools, switch: switchTo({
+  return { ratio: r6(ratio), width_pct: r6(Math.sqrt(ratio) - 1), default_width: !live.length, fixed_ratio: r6(COMPARE_RATIO), fixed_label: COMPARE_LABEL, cost_line, my_usd: r2(myUsd), complete, pools, switch: switchTo({
     pools: byOwn, myUsd, gas: poolCache.gas ?? {}, ethUsd: pNow.eth, tracked: (c) => c in CHAINS, chainLabel: (c) => chainOf(c)?.label ?? c,
     positions: live.map(({ x, usd }) => ({ chain: x.chain ?? 'base', pool: lc(x.pool), staked: x.staked, usd })),
   }) }
@@ -908,6 +922,8 @@ for (const sc of SCOPES) {
     start_day: rows[0]?.day ?? null,
     invested_usd: invested, value_usd: value, pnl_usd: pnl, pnl_pct: invested ? r6(pnl / invested) : null,
     hodl_usd: hodl, vs_hodl_usd: r2(value - hodl),
+    // The held coins split so the page can move them with the live ETH price: the ETH, and the rest in dollars.
+    hodl_eth: r6(units(n.c.hodl.get('ETH') ?? 0n, 18)), hodl_rest_usd: r2(hodl - units(n.c.hodl.get('ETH') ?? 0n, 18) * pNow.eth),
     earn_total_usd: r2(rewards + fees), rewards_usd: rewards, fees_usd: fees,
     // Counted from the days, as rewards_usd is: AERO already unclaimed when a chain's tracking started
     // was money put in, not earned.

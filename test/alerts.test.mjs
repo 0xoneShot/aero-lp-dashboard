@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evaluate, withLivePrices, STALE_MS } from '../lib/alerts.mjs'
+import { evaluate, withLivePrices, STALE_MS, OUT_MS } from '../lib/alerts.mjs'
 
 // One wallet with two positions of the same range, as the summary publishes them.
 const row = (pool, extra = {}) => {
@@ -224,4 +224,76 @@ test('from the last good data, a range whose chain could not be read waits; the 
   const r = evaluate([live, total], { 'a:2000-2500': 'in', 'a:eth:2000-2500': 'in', 'a:cost': 'na' }, { lastGood: true })
   assert.deepEqual(r.messages.map((m) => m.key), ['a:2000-2500'])
   assert.deepEqual([r.state['a:eth:2000-2500'], r.state['a:cost']], ['in', 'na'])
+})
+
+// A day out of a range: said once per time out, counted from the first update that found it out.
+const timed = (steps) => {
+  let prev = null
+  return steps.map(([pool, h, opts = {}]) => { const e = evaluate([row(pool, opts.extra), total], prev, { now: Date.UTC(2026, 10, 15) + h * 3600e3, ...opts.o }); prev = e.state; return { kinds: e.messages.map((m) => m.kind), messages: e.messages, state: e.state } })
+}
+
+test('a range out for a day is said once, then again only after it has been back in', () => {
+  const r = timed([[2200, 0], [1900, 1], [1900, 12], [1900, 24.9], [1900, 25], [1900, 40], [2200, 41], [1900, 42], [1900, 66]])
+  assert.deepEqual(r.map((x) => x.kinds), [[], ['below'], [], [], ['out24'], [], ['back'], ['below'], ['out24']])
+  const m = r[4].messages[0]
+  assert.ok(m.title.includes('出区间已满 24 小时'), m.title)
+  assert.ok(m.message.includes('全是 ETH') && m.message.includes('不赚利息'), m.message)
+  assert.ok(!/0x[0-9a-f]{6}/i.test(m.title + m.message), 'no address in the message')
+})
+
+test('a day above a range says all USDC, and names the fixed-width rate of its pool when the table has it', () => {
+  const pc = { fixed_label: '±3.5%', pools: [{ chain: 'base', pool_address: '0xabc', fixed: { staked: { median: 4.05 } } }] }
+  const withPool = (pool) => { const x = row(pool, { pool_compare: pc }); x.curve.positions = x.curve.positions.map((p) => ({ ...p, pool_address: '0xABC' })); return x }
+  let prev = null
+  const kinds = []
+  let last
+  for (const [pool, h] of [[2200, 0], [2600, 1], [2600, 25]]) { const e = evaluate([withPool(pool), total], prev, { now: h * 3600e3 }); prev = e.state; kinds.push(e.messages.map((m) => m.kind)); last = e.messages }
+  assert.deepEqual(kinds, [[], ['above'], ['out24']])
+  assert.ok(last[0].message.includes('全是 USDC') && last[0].message.includes('±3.5% 区间质押的“平常”年化是 405%'), last[0].message)
+})
+
+test('a range already out on the first run starts its day from then, and sends nothing on that run', () => {
+  const r = timed([[1900, 0], [1900, 23], [1900, 24]])
+  assert.deepEqual(r.map((x) => x.kinds), [[], [], ['out24']])
+})
+
+test('a range already out when the clock first appears (state from before it existed) is not said a day later', () => {
+  const old = { 'a:2000-2500': 'below', update: 'ok' }
+  let prev = old
+  const kinds = []
+  for (const h of [1, 25, 50]) { const e = evaluate([row(1900), total], prev, { now: h * 3600e3 }); prev = e.state; kinds.push(e.messages.map((m) => m.kind)) }
+  assert.deepEqual(kinds, [[], [], []])
+  // Once it comes back and goes out again, the next day out is said.
+  const later = []
+  for (const [pool, h] of [[2200, 51], [1900, 52], [1900, 76]]) { const e = evaluate([row(pool), total], prev, { now: h * 3600e3 }); prev = e.state; later.push(e.messages.map((m) => m.kind)) }
+  assert.deepEqual(later, [['back'], ['below'], ['out24']])
+})
+
+test('a price back just inside the bound (within BACK) ends the clock, and no day-out is said while it stays there', () => {
+  // 1990 is out; 2005 is inside but within BACK of the lower bound, so the side stays "below".
+  const r = timed([[2200, 0], [1990, 1], [2005, 2], [2005, 30], [1990, 31], [1990, 54], [1990, 55]])
+  assert.deepEqual(r.map((x) => x.kinds), [[], ['below'], [], [], [], [], ['out24']])
+})
+
+test('the day-out message quotes the loss line next to the rate when the table has both', () => {
+  const pc = { fixed_label: '±3.5%', cost_line: { days: 7, vol: 0.55, rate: 2.15 }, pools: [{ chain: 'base', pool_address: '0xabc', fixed: { staked: { median: 4.04 } } }] }
+  const withPool = (pool) => { const x = row(pool, { pool_compare: pc }); x.curve.positions = x.curve.positions.map((p) => ({ ...p, pool_address: '0xabc' })); return x }
+  let prev = null, last
+  for (const [pool, h] of [[2200, 0], [1900, 1], [1900, 25]]) { const e = evaluate([withPool(pool), total], prev, { now: h * 3600e3 }); prev = e.state; last = e.messages }
+  assert.equal(last[0].kind, 'out24')
+  assert.ok(last[0].message.includes('年化是 404%') && last[0].message.includes('少赚约 215%'), last[0].message)
+})
+
+test('from the last good data a day out waits, and without live prices its clock is kept as it was', () => {
+  let prev = null
+  for (const [pool, h] of [[2200, 0], [1900, 1], [1900, 10]]) prev = evaluate([row(pool), total], prev, { now: h * 3600e3 }).state
+  const stale = evaluate([row(1900), total], prev, { now: 30 * 3600e3, lastGood: true })
+  assert.deepEqual(stale.messages.map((m) => m.kind), [])
+  assert.equal(stale.state['a:2000-2500:out'], prev['a:2000-2500:out'])
+  const blind = evaluate([row(1900), total], prev, { now: 30 * 3600e3, noPrices: true })
+  assert.deepEqual(blind.messages.map((m) => m.kind), [])
+  assert.equal(blind.state['a:2000-2500:out'], prev['a:2000-2500:out'])
+  const fresh = evaluate([row(1900), total], prev, { now: 30 * 3600e3 })
+  assert.deepEqual(fresh.messages.map((m) => m.kind), ['out24'])
+  assert.ok(OUT_MS === 24 * 3600e3)
 })
