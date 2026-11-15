@@ -24,6 +24,11 @@ import { daysBetween, cstDay, cstDayStartTs, prevDay, createTimeline } from '../
 import { priceAtTick, priceFromSqrt, amountsForLiquidity } from '../lib/univ3.mjs'
 
 const OUT = path.resolve('out')
+// While an address added on the page is tracked (paused this run or not), the run's totals in the public log
+// say no number: one hour's against the next would tell what it alone did (lib/scan.mjs says nothing of
+// its scan either).
+const ADDED_ANY = EXTRA_WALLETS.length > 0 || PAUSED_WALLETS.length > 0
+const tally = (n) => (ADDED_ANY ? '…' : n)
 const SNAP_CACHE = path.resolve('data/cache/snapshots.json')
 const CODE_CACHE = path.resolve('data/cache/code.json')
 const POOLS_FILE = path.resolve('data/cache/pools.json')
@@ -87,7 +92,7 @@ const tsOfBlock = timeline.tsOf
 // Every transaction takes its block's real time, whatever the cache recorded (a release before the
 // fix kept computing 2-second times).
 for (const t of Object.values(state.txs)) t.ts = tsOfBlock(t.block)
-log(`scanned to ${state.scannedTo}, ${Object.keys(state.txs).length} transactions`)
+log(`scanned to ${state.scannedTo}, ${tally(Object.keys(state.txs).length)} transactions`)
 
 // The other chains, each to its own safe head. Everything is valued at one moment on every chain, so
 // Base's head is held back to the earliest of their heads.
@@ -102,7 +107,7 @@ for (const c of Object.values(CHAINS).filter((x) => x.key !== 'base')) {
   await tl.ensure([c.scanFromBlock, ...Object.values(st.txs).map((t) => t.block)])
   for (const t of Object.values(st.txs)) t.ts = tl.tsOf(t.block)
   ext[c.key] = { chain: c, client: cl, state: st, timeline: tl, head: h, headTs: tl.tsOf(h) }
-  log(`${c.key}: scanned to ${st.scannedTo}, ${Object.keys(st.txs).length} transactions`)
+  log(`${c.key}: scanned to ${st.scannedTo}, ${tally(Object.keys(st.txs).length)} transactions`)
 }
 let head = baseHead
 for (const x of Object.values(ext)) head = Math.min(head, await timeline.blockBefore(x.headTs + 1))
@@ -193,7 +198,7 @@ await pmap([...asked.values()].filter(([a, b]) => !(`${a}@${b}` in codeCache)), 
 })
 const ledger = books((wallets) => buildLedger(stateFor(state, wallets), (a, b) => codeCache[`${a}@${b}`] ?? 'contract', { gaugeOk, overrides, wallets, seed: wallets === BASE_READY ? [] : baseSeed }))
 writeJson(CODE_CACHE, codeCache) // kept now too: a stopped run keeps what it looked up (src/update.mjs)
-log(`checked ${asked.size} counterparties, ${gaugeCands.size} gauge candidates`)
+log(`checked ${tally(asked.size)} counterparties, ${tally(gaugeCands.size)} gauge candidates`)
 
 // The same on every other chain, its code lookups kept apart by chain.
 const extLedger = {}
@@ -264,7 +269,7 @@ for (const x of Object.values(ext)) {
     codeCache[k] = !code || code === '0x' || code.startsWith('0xef0100') ? 'eoa' : 'contract'
   })
   extLedger[c.key] = books((wallets) => buildLedger(stateFor(x.state, wallets), (a, b) => codeCache[`${c.key}:${a}@${b}`] ?? 'contract', { gaugeOk: ok, overrides, chain: c, wallets, seed: seedOf(wallets) }))
-  log(`${c.key}: checked ${ask.size} counterparties, ${cands.size} gauge candidates, ${seed.length} positions held at the start`)
+  log(`${c.key}: checked ${tally(ask.size)} counterparties, ${tally(cands.size)} gauge candidates, ${tally(seed.length)} positions held at the start`)
 }
 writeJson(CODE_CACHE, codeCache)
 
@@ -430,7 +435,7 @@ const prices = {}
 const eventBlocks = WALLETS.flatMap((w) => ledger[w.key].events.map((e) => e.block)).filter((b) => b > openingBlock && b <= head)
 await pmap([...new Set([...blocks, ...eventBlocks, ...Object.values(startBase).filter((b) => b <= head)])], 4, async (b) => { prices[b] = await pricesAt(b) })
 await savePrices(head) // kept now too: a stopped run keeps what it read (src/update.mjs)
-log(`valued ${blocks.length} day-end blocks and ${new Set(eventBlocks).size} event blocks`)
+log(`valued ${blocks.length} day-end blocks and ${tally(new Set(eventBlocks).size)} event blocks`)
 
 // Hourly samples of every gauged WETH/USDC pool on the chains (lib/pools.mjs), for the page's pool
 // card. Only pool contracts are read. A chain that cannot be read keeps its earlier samples, and a
@@ -837,7 +842,8 @@ function ethPrices(keys, invested, interest, value) {
   const now = pNow.eth
   // At the reference price, except a position against another coin at its own pool's: the coin's feed can lag.
   const curveNow = c.fixedUsd + c.ethUnits * now + sum(c.curves, (x) => { const [e, u] = c.amounts(x, x.quote ? x.pool : now); return e * now + u })
-  if (Math.abs(curveNow - value) > 1) log(`ETH curve check off by ${(curveNow - value).toFixed(2)} USD`)
+  // A view with an address added on the page says no amount: the public log says nothing of what those hold.
+  if (Math.abs(curveNow - value) > 1) log(keys.every((k) => BASE_KEYS.includes(k)) ? `ETH curve check off by ${(curveNow - value).toFixed(2)} USD` : 'ETH curve check off in a view with an address added on the page')
   const p0 = c.lowest != null ? Math.min(c.lowest * 0.999, now) : now
   const eth = c.ethAt(p0), rest = c.value(p0) - eth * p0
   // 0: what is held besides ETH already covers it; null: too little ETH for a price to mean anything.
@@ -1197,4 +1203,4 @@ writeJson(path.join(OUT, 'holdings.json'), holdings)
 writeJson(path.join(OUT, 'events.json'), events)
 writeJson(path.join(OUT, 'flows.json'), WALLETS.flatMap((w) => walletData[w.key].flows.map((f) => ({ scope: w.key, ...f, amount: units(f.amount, decOf(f.asset)), asset: symOf(f.asset) }))))
 // Only counts are printed: the hourly job's logs are public.
-log(`wrote out/ as of block ${head} (${cstTime(tsOfBlock(head))} CST): ${daily.length} daily rows, ${events.length} ledger rows, ${summary.find((s) => s.scope === 'total')?.to_check_count ?? 0} to check, ${Object.keys(unpricedSymbols).length} tokens without a price`)
+log(`wrote out/ as of block ${head} (${cstTime(tsOfBlock(head))} CST): ${tally(daily.length)} daily rows, ${tally(events.length)} ledger rows, ${summary.find((s) => s.scope === 'total')?.to_check_count ?? 0} to check, ${tally(Object.keys(unpricedSymbols).length)} tokens without a price`)

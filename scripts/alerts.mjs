@@ -64,6 +64,9 @@ async function send(m) {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ topic, title: m.title, message: m.message, priority: m.priority, tags: m.tags, click: SITE }),
+    // A slow ntfy fails the message (tried again next run) rather than holding the step past its limit
+    // before the state below is written, which would send everything again next run.
+    signal: AbortSignal.timeout(15_000),
   })
   if (!r.ok) throw new Error(`ntfy answered ${r.status}`)
 }

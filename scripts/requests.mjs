@@ -31,6 +31,9 @@ const INBOX = process.env.NTFY_INBOX_URL ?? 'https://ntfy.sh'
 // the inbox); the step itself is stopped at 5 minutes.
 const BUDGET_MS = 3 * 60_000, MAX_REQUESTS = 12, PER_INBOX = 4
 const started = Date.now(), now = started, deadline = started + BUDGET_MS
+// The job's key for requests: made on the first run, kept in the encrypted cache; the page gets its
+// public half (scripts/build-site.mjs). First, so the page can ask even if something below fails.
+const keys = await jobKeys({ create: true })
 let store = readStore()
 // What the chains said about an address lately, kept across runs: a request held because its checks ran out
 // of time picks up where it was next run, rather than starting over and running out of time again.
@@ -86,9 +89,6 @@ for (const c of Object.values(CHAINS)) {
   for (const x of gone) log(`${x.key}: more transactions than an added address may have; no longer tracked`)
   if (gone.length) dropExtras(gone, 'too busy')
 }
-// The job's key for requests: made on the first run, kept in the encrypted cache; the page gets its
-// public half (scripts/build-site.mjs).
-const keys = await jobKeys({ create: true })
 save()
 
 // ---- the inboxes ----
