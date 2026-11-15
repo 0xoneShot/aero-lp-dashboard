@@ -297,3 +297,30 @@ test('from the last good data a day out waits, and without live prices its clock
   assert.deepEqual(fresh.messages.map((m) => m.kind), ['out24'])
   assert.ok(OUT_MS === 24 * 3600e3)
 })
+
+test('a combined view asked for on the page repeats its wallets\' ranges: it never alerts on its own', () => {
+  const group = { ...row(1990), scope: 'g1', scope_label: '合计', group: true }
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'g1:2000-2500': 'in', 'g1:cost': 'na' }
+  const { messages, state } = evaluate([row(1990), group, total], prev)
+  assert.deepEqual(messages.map((m) => [m.key, m.kind]), [['a:2000-2500', 'below']])
+  assert.ok(!Object.keys(state).some((k) => k.startsWith('g1:')), 'no state is kept for it')
+})
+
+test('a wallet seen for the first time (an address just added) starts quiet, then alerts like any other', () => {
+  const c1 = { time_cst: '2026-10-30 12:00', tx: '0xaa', text: '收到 2 ETH，对方是不认识的合约 0xad3b…67bc，暂按资金转入计', usd: 5000 }
+  const nv = { address: '0xb20000000000000000000078ee7ce2fe4908108c', symbol: 'NVDAc' }
+  const added = (p, extra) => ({ ...row(p, extra), scope: 'x1', scope_label: '新' })
+  // An update has run before (prev holds the other wallet), but never with this one.
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', update: 'ok' }
+  const first = evaluate([row(2200), added(1990, { to_check: [c1], unpriced: [nv] }), total], prev)
+  assert.deepEqual(first.messages, [])
+  assert.equal(first.state['x1:2000-2500'], 'below')
+  const next = evaluate([row(2200), added(2210, { to_check: [c1, { ...c1, tx: '0xbb' }], unpriced: [nv] }), total], first.state)
+  assert.deepEqual(next.messages.map((m) => [m.key, m.kind]).sort(), [['x1:2000-2500', 'back'], ['x1:check', 'check']])
+})
+
+test('an address added on the page is named as such: its name cannot pass for a configured wallet\'s', () => {
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:2000-2500': 'in', 'x1:cost': 'na', update: 'ok' }
+  const { messages } = evaluate([row(1990), { ...row(1990), scope: 'x1', scope_label: 'A', added: true }, total], prev)
+  assert.deepEqual(messages.map((m) => m.title), ['A 跌出区间', '网页加的·A 跌出区间'])
+})

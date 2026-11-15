@@ -15,6 +15,7 @@
   .lp-refresh:disabled { color: var(--color-fg-muted); cursor: default; }
   .lp-refresh:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
   .lp-scope, .lp-switch { display: inline-flex; border: 1px solid var(--color-border-line); border-radius: 10px; padding: 2px; gap: 2px; }
+  .lp-scope { flex-wrap: wrap; max-width: 100%; }
   .lp-scope button, .lp-switch button { font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--color-fg-muted); padding: 4px 14px; border-radius: 8px; cursor: pointer; }
   .lp-scope button[aria-pressed="true"], .lp-switch button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
   .lp-scope button:focus-visible, .lp-switch button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
@@ -426,7 +427,7 @@
       i.className = 'lp-sw'; i.style.background = color(k); s.append(i, document.createTextNode(labelOf(k))); return s;
     }));
     const rows = rowsAll.filter((r) => r.scope === sc);
-    if (!rows.length) return;
+    if (!rows.length) { box.textContent = '还没有利息记录。'; return; }
     const by = {};
     for (const r of rowsAll) if (keys.includes(r.scope)) (by[r.day] ??= {})[r.scope] = r;
     const W = box.clientWidth || 600, H = 220, m = { t: 8, r: 4, b: 24 };
@@ -544,7 +545,7 @@
     const box = $('pnl-chart');
     box.replaceChildren();
     const series = seriesFor(sc).map((x) => ({ ...x, rows: rowsAll.filter((r) => r.scope === x.k).map((r) => ({ ...r, date: parseDay(r.day) })) })).filter((x) => x.rows.length);
-    if (!series.length) { drawLegend('pnl-legend', []); return; }
+    if (!series.length) { drawLegend('pnl-legend', []); box.textContent = '还没有盈亏记录。'; return; }
     const multi = series.length > 1;
     const main = series.at(-1), rows = main.rows, last = rows.at(-1);
     // One series keeps the sign colour (green above zero, red below); several are coloured by wallet.

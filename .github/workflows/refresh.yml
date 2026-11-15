@@ -25,7 +25,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -49,9 +49,41 @@ jobs:
           path: cache.enc
           key: scan-cache-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: scan-cache-
+      # What was asked on the page, saved apart right after it is read (below), so a run that later fails
+      # or times out does not lose it.
+      - uses: actions/cache/restore@v4
+        with:
+          path: requests.enc
+          key: requests-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: requests-
       - id: open
         run: node scripts/cache-crypt.mjs open
+      - name: Mask added addresses in the logs
+        run: node scripts/mask.mjs extras
+      # Addresses asked for on the page (lib/requests.mjs); trouble reading them must not hold back the
+      # update. It gives up on what is left after 3 minutes itself; the limit here is for a hang.
+      - id: requests
+        name: Read requests from the page
+        continue-on-error: true
+        timeout-minutes: 5
+        run: node scripts/requests.mjs
+      # Whatever the step saved (it writes the store whole each time), even if it failed or was stopped.
+      - if: ${{ !cancelled() && steps.open.outcome == 'success' }}
+        continue-on-error: true
+        run: node scripts/cache-crypt.mjs seal-requests
+      - uses: actions/cache/save@v4
+        if: ${{ !cancelled() && steps.open.outcome == 'success' }}
+        continue-on-error: true
+        with:
+          path: requests.enc
+          key: requests-${{ github.run_id }}-${{ github.run_attempt }}
+      # With addresses added on the page, src/update.mjs runs the update with them for at most 13 minutes
+      # and, if that fails or runs out of time, at once without them, its pool samples stopping by minute
+      # 29: the configured wallets are updated whatever an added address does. The limit here is for a hang,
+      # well above what the configured wallets alone have needed; what was read so far is still sealed into
+      # the cache below. Setup, requests (5), update (40), checks, alerts (3) and the seal fit the job's 55.
       - id: update
+        timeout-minutes: 40
         run: npm run update
       - id: test
         run: npm test
@@ -60,6 +92,7 @@ jobs:
       - name: Send price alerts
         if: ${{ !cancelled() && steps.open.outcome == 'success' }}
         continue-on-error: true
+        timeout-minutes: 3
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           UPDATE_OK: ${{ steps.update.outcome == 'success' && steps.test.outcome == 'success' }}

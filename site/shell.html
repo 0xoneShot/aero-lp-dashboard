@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="light dark">
+<meta name="aero-job-key" content="__AERO_JOB_KEY__">
 <title>Aero LP 收益看板</title>
 <style>
   /* Tokens the dashboard page is written against (same names as the Claude Dashboard type). */
@@ -22,6 +23,9 @@
     --series-1: #2c63d6;
     --series-2: #d9822b;
     --series-3: #2a9d8f;
+    --series-4: #8e5bd0;
+    --series-5: #c2477a;
+    --series-6: #6b7d16;
     --cds-gap-xs: 4px; --cds-gap-sm: 8px; --cds-gap-md: 12px; --cds-gap-lg: 16px; --cds-gap-xl: 24px;
     --cds-pad-xs: 4px; --cds-pad-sm: 8px; --cds-pad-md: 12px; --cds-pad-lg: 16px; --cds-pad-xl: 24px;
     --cds-radius: 10px;
@@ -52,6 +56,9 @@
       --series-1: #6d9bff;
       --series-2: #f0a35a;
       --series-3: #4fc1b3;
+      --series-4: #b48cf0;
+      --series-5: #ec7aa6;
+      --series-6: #b5c94c;
       --cds-chart-grid: #222830;
       --cds-chart-axis: #3a424c;
       --cds-chart-muted: #6b7581;
@@ -80,13 +87,30 @@
   .gate-fine { font-size: 12px; }
   .gate-form { display: flex; flex-direction: column; gap: 8px; background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: 16px; }
   .gate-form label { font-size: 12px; color: var(--color-fg-muted); }
-  .gate-form textarea { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--color-fg); background: var(--color-bg); border: 1px solid var(--color-border-line); border-radius: 8px; padding: 10px; resize: vertical; min-width: 0; }
+  .gate-form textarea { font: 16px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--color-fg); background: var(--color-bg); border: 1px solid var(--color-border-line); border-radius: 8px; padding: 10px; resize: vertical; min-width: 0; }
   .gate-form textarea:focus-visible, .gate-form button:focus-visible, .site-bar button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
   .gate-form button { align-self: flex-start; font: inherit; font-weight: 600; color: #fff; background: var(--series-1); border: 0; border-radius: 8px; padding: 8px 20px; cursor: pointer; }
   .gate-form button:disabled { opacity: .6; cursor: progress; }
   .gate-msg { margin: 0; min-height: 1.5em; font-size: 13px; color: var(--color-fg-muted); }
-  .site-bar { display: flex; justify-content: flex-end; align-items: center; gap: 10px; font-size: 12px; color: var(--color-fg-muted); margin-bottom: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .site-bar button { font: 12px var(--font-anthropic-sans); color: var(--color-fg); background: transparent; border: 1px solid var(--color-border-line); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+  .site-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px 10px; font-size: 12px; color: var(--color-fg-muted); margin-bottom: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .site-bar button { font: 12px var(--font-anthropic-sans); color: var(--color-fg); background: transparent; border: 1px solid var(--color-border-line); border-radius: 999px; padding: 3px 12px; cursor: pointer; white-space: nowrap; }
+  .site-add { display: flex; flex-direction: column; gap: 8px; max-width: 560px; margin: 0 0 12px auto; background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: 14px; font-size: 13px; }
+  .site-add label { font-size: 12px; color: var(--color-fg-muted); }
+  .site-add input { font: 16px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--color-fg); background: var(--color-bg); border: 1px solid var(--color-border-line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .site-add input.site-add-name { font-family: var(--font-anthropic-sans); }
+  .site-add-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .site-add button { font: inherit; border-radius: 8px; padding: 6px 16px; cursor: pointer; border: 1px solid var(--color-border-line); background: transparent; color: var(--color-fg); }
+  .site-add button.primary { font-weight: 600; color: #fff; background: var(--series-1); border-color: transparent; }
+  .site-add button:disabled { opacity: .6; cursor: progress; }
+  .site-add-note, .site-add-msg { margin: 0; color: var(--color-fg-muted); line-height: 1.6; font-size: 12px; }
+  .site-add-msg { min-height: 1.4em; font-size: 13px; }
+  .site-add-list { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--color-border-line); padding-top: 10px; }
+  .site-add-list div { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .site-add-list button { padding: 2px 10px; font-size: 12px; }
+  .site-req { max-width: 1200px; margin: -4px auto 12px; font-size: 13px; line-height: 1.6; color: var(--color-fg-muted); text-align: right; }
+  .site-req.bad { color: var(--color-bad); }
+  .site-req button, .gate-form .gate-track { font: inherit; font-size: 12px; color: var(--color-fg); background: transparent; border: 1px solid var(--color-border-line); border-radius: 999px; padding: 2px 10px; margin-left: 6px; cursor: pointer; }
+  .site-add input:focus-visible, .site-add button:focus-visible, .site-req button:focus-visible, .gate-form .gate-track:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
   .dash-skeleton { color: transparent !important; background: var(--skeleton); border-radius: 6px; }
   .ae-chart.dash-skeleton { min-height: 240px; }
   @media (prefers-reduced-motion: no-preference) {
@@ -99,28 +123,69 @@
   // A small stand-in for the Claude Dashboard runtime the page was written for. Nothing is shown
   // until someone enters wallet address(es): the matching data file's name and key are derived
   // from the addresses (PBKDF2, same parameters as lib/views.mjs), then it is fetched and decrypted.
+  // The same derivation names a wallet's inbox, where the page asks the hourly job to track another
+  // address (lib/requests.mjs), sealed to the job's own public key (lib/views.mjs): only the job reads it.
   window.dash = (() => {
     const IDS = ['summary', 'daily']
-    const ITERATIONS = 200000, SALT = 'aero-lp-dashboard/v1'
+    const ITERATIONS = 200000, SALT = 'aero-lp-dashboard/v1', REQUEST_AAD = 'aero-lp-dashboard/request/v2'
+    const JOB_KEY = document.querySelector('meta[name="aero-job-key"]')?.content ?? ''
+    const INBOX = 'https://ntfy.sh'
     const enc = new TextEncoder()
     let store = Object.fromEntries(IDS.map((id) => [id, { status: 'loading', data: [] }]))
+    let requests = [] // what became of the requests sent from the open view's wallets
+    let added = [] // the open view's wallets that were added on the page, by key
+    let gone = false // the open view's data file was not there at the last reload
     const subs = []
     let params = { scope: 'total' }
     let current = null
     const fire = () => { for (const fn of subs) { try { fn() } catch (e) { console.error(e) } } }
     const norm = (list) => [...new Set(list.map((a) => a.trim().toLowerCase()))].sort().join(',')
     const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
-    // Deriving takes a noticeable moment on a phone; the periodic reloads reuse the last result.
-    let derived = null
+    const b64 = (u8) => { let s = ''; for (const b of u8) s += String.fromCharCode(b); return btoa(s) }
+    const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('')
+    // Deriving takes a noticeable moment on a phone; the periodic reloads and the checks on added
+    // addresses reuse earlier results. 512 bits: the first 384 name and open the data file as they always
+    // have; the rest names the inbox.
+    const derived = new Map()
     async function derive(list) {
       const id = norm(list)
-      if (derived?.id === id) return derived
-      const base = await crypto.subtle.importKey('raw', enc.encode(norm(list)), 'PBKDF2', false, ['deriveBits'])
-      const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(SALT), iterations: ITERATIONS }, base, 384))
-      const key = await crypto.subtle.importKey('raw', bits.slice(0, 32), 'AES-GCM', false, ['decrypt'])
-      const name = [...bits.slice(32, 48)].map((b) => b.toString(16).padStart(2, '0')).join('')
-      derived = { id, name, key }
-      return derived
+      if (derived.has(id)) return derived.get(id)
+      const base = await crypto.subtle.importKey('raw', enc.encode(id), 'PBKDF2', false, ['deriveBits'])
+      const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(SALT), iterations: ITERATIONS }, base, 512))
+      const key = await crypto.subtle.importKey('raw', bits.slice(0, 32), 'AES-GCM', false, ['encrypt', 'decrypt'])
+      const d = { id, name: hex(bits.slice(32, 48)), key, topic: `aero-${hex(bits.slice(48, 64))}` }
+      if (derived.size >= 12) derived.delete(derived.keys().next().value)
+      derived.set(id, d)
+      return d
+    }
+    // Whether a data file exists for these addresses (the job publishes one per tracked wallet, per
+    // configured set and per combined view asked for).
+    async function exists(list) {
+      const { name } = await derive(list)
+      const r = await fetch(`data/${name}.json`, { method: 'HEAD', cache: 'no-cache' })
+      if (r.status === 404) return false
+      if (r.ok) return true
+      throw new Error(String(r.status))
+    }
+    // Sends a request to the inbox of a tracked wallet `from`: sealed to the job's public key (ECDH with a
+    // key pair made for this request alone, then AES-GCM bound to that inbox), so anyone else who reads
+    // the inbox sees nothing. A plain POST with a text body (no custom headers, so no preflight); nothing
+    // about it is in the URL.
+    const canRequest = () => /^[A-Za-z0-9+/]{80,}={0,2}$/.test(JOB_KEY)
+    async function request(from, payload) {
+      if (!canRequest()) throw new Error('no job key')
+      const { topic } = await derive([from])
+      const P256 = { name: 'ECDH', namedCurve: 'P-256' }
+      const job = await crypto.subtle.importKey('raw', unb64(JOB_KEY), P256, false, [])
+      const eph = await crypto.subtle.generateKey(P256, true, ['deriveBits'])
+      const epk = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey))
+      const shared = await crypto.subtle.deriveBits({ name: 'ECDH', public: job }, eph.privateKey, 256)
+      const hk = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey'])
+      const key = await crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: epk, info: enc.encode(REQUEST_AAD) }, hk, { name: 'AES-GCM', length: 256 }, false, ['encrypt'])
+      const iv = crypto.getRandomValues(new Uint8Array(12))
+      const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(`${REQUEST_AAD}\n${topic}`) }, key, enc.encode(JSON.stringify(payload))))
+      const r = await fetch(`${INBOX}/${topic}?firebase=no`, { method: 'POST', body: JSON.stringify({ v: 2, epk: b64(epk), iv: b64(iv), ct: b64(ct) }), credentials: 'omit', referrerPolicy: 'no-referrer' })
+      if (!r.ok) throw new Error(String(r.status))
     }
     // Resolves to the view's datasets, or null when no data file exists for these addresses.
     async function openView(list) {
@@ -134,6 +199,9 @@
     }
     function show(view, fresh) {
       store = Object.fromEntries(IDS.map((id) => [id, { status: 'ok', data: view[id] ?? [] }]))
+      requests = Array.isArray(view.requests) ? view.requests : []
+      added = Array.isArray(view.added) ? view.added : []
+      gone = false
       const keys = view.summary.map((r) => r.scope)
       // A newly entered set of addresses opens on its combined view; a periodic reload keeps the choice.
       if (fresh || !keys.includes(params.scope)) params.scope = keys.includes('total') ? 'total' : keys[0]
@@ -160,7 +228,9 @@
       try {
         const view = await openView(list)
         if (my !== seq || list !== current) return true // the addresses changed meanwhile
-        if (!view) return false
+        // The job did not publish this view this hour (an address of it not caught up, or no longer
+        // tracked): what is on screen stays, and the page says so.
+        if (!view) { if (!gone) { gone = true; fire() } return false }
         show(view, false)
         return true
       } catch { return false }
@@ -177,10 +247,17 @@
       setParams(p) { params = { ...params, ...p }; fire() },
       resetParams() { fire() },
       scopes: () => (store.summary.status === 'ok' ? store.summary.data.map((r) => ({ key: r.scope, label: r.scope_label })) : []),
-      colors: ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'],
+      colors: ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)', 'var(--series-6)'],
       refresh: reload,
-      stop() { seq++; current = null },
+      stop() { seq++; current = null; requests = []; added = []; gone = false },
       setLink() {},
+      exists,
+      request,
+      canRequest,
+      current: () => current,
+      requests: () => requests,
+      added: () => added,
+      gone: () => gone,
     }
   })()
 </script>
@@ -194,44 +271,408 @@
     <textarea id="gate-input" rows="3" placeholder="0x…" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
     <button type="submit" id="gate-go">查看</button>
     <p id="gate-msg" class="gate-msg" role="status" aria-live="polite"></p>
+    <button type="button" id="gate-track" class="gate-track" hidden>追踪新地址，合起来看</button>
   </form>
-  <p class="gate-fine">这个网站只追踪少数几个钱包。输入的地址只保存在你自己的设备上。</p>
+  <p class="gate-fine">看过的地址只保存在你自己的设备上。要追踪新地址：先打开一个已经在看板上的地址，再点“加地址”。</p>
 </main>
 <div id="dash-root" hidden>
-  <div class="site-bar"><span id="site-addrs"></span><button type="button" id="site-switch">换地址</button></div>
+  <div class="site-bar"><span id="site-addrs"></span><button type="button" id="site-add-open" aria-expanded="false" aria-controls="site-add">加地址</button><button type="button" id="site-switch">换地址</button></div>
+  <form id="site-add" class="site-add" hidden novalidate>
+    <label for="site-add-addr">新地址（以太坊或 Base 上的钱包）</label>
+    <input id="site-add-addr" placeholder="0x…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <label for="site-add-name">名字（可选）</label>
+    <input id="site-add-name" class="site-add-name" maxlength="16" autocomplete="off">
+    <div class="site-add-row"><button type="submit" class="primary" id="site-add-go">开始追踪</button><button type="button" id="site-add-cancel">取消</button></div>
+    <p id="site-add-msg" class="site-add-msg" role="status" aria-live="polite"></p>
+    <p class="site-add-note">加上后和现在看的地址合在一起看，也按它的仓位发手机提醒。地址加密后交给每小时运行一次的更新程序，它把这个地址从看板开始记录那天起的交易补齐后才显示，通常要 1 到几个小时。</p>
+    <div id="site-add-list" class="site-add-list" hidden></div>
+  </form>
+  <p id="site-req" class="site-req" role="status" aria-live="polite" hidden></p>
 <!-- DASHBOARD -->
 </div>
 <p class="site-foot">数据全部来自 Base 和以太坊链上，每小时自动更新一次。</p>
 <script>
   (() => {
-    const gate = document.getElementById('gate'), root = document.getElementById('dash-root')
-    const form = document.getElementById('gate-form'), input = document.getElementById('gate-input')
-    const msg = document.getElementById('gate-msg'), go = document.getElementById('gate-go')
-    const KEY = 'aero-addresses'
-    const save = (list) => { try { localStorage.setItem(KEY, JSON.stringify(list)) } catch {} }
-    const saved = () => { try { return JSON.parse(localStorage.getItem(KEY) ?? 'null') } catch { return null } }
+    const $ = (id) => document.getElementById(id)
+    const gate = $('gate'), root = $('dash-root')
+    const form = $('gate-form'), input = $('gate-input'), msg = $('gate-msg'), go = $('gate-go'), track = $('gate-track')
+    const KEY = 'aero-addresses', PENDING = 'aero-pending', KNOWN = 'aero-known', NOTED = 'aero-noted', DROPS = 'aero-drops'
+    const read = (k) => { try { return JSON.parse(localStorage.getItem(k) ?? 'null') } catch { return null } }
+    const write = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)) } catch {} }
     const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`
-    const showGate = (text = '') => { root.hidden = true; gate.hidden = false; msg.textContent = text; go.disabled = false }
-    const showDash = (list) => { gate.hidden = true; root.hidden = false; document.getElementById('site-addrs').textContent = list.map(short).join(' + '); dispatchEvent(new Event('resize')) }
+    const tail = (a) => a.slice(-4)
+    const norm = (list) => [...new Set(list)].sort().join(',')
+    // A wallet address on its own: a transaction hash pasted by mistake is not read as one.
+    const addressesIn = (text) => [...new Set((text.match(/0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g) ?? []).map((a) => a.toLowerCase()))]
+    const MAX = 6, ADDS = 3 // addresses in one combined view, new ones in one request (lib/requests.mjs LIMITS)
+    // Tracked addresses this device has opened: a new address typed alone can be asked for through one.
+    // Forgotten on 换地址, with everything else this device kept.
+    const known = () => (Array.isArray(read(KNOWN)) ? read(KNOWN) : [])
+    const save = (list) => { write(KEY, list); write(KNOWN, [...new Set([...list, ...known()])].slice(0, 12)) }
+    // Addresses this device asked the job to stop tracking in the last two hours: the views published
+    // before the job read that still hold them, so they count as not tracked here until then.
+    const recentDrops = () => (Array.isArray(read(DROPS)) ? read(DROPS) : []).filter((x) => x && Date.now() - x.ts < 2 * 3600_000)
+    const dropped = (a) => recentDrops().some((x) => x.address === a)
+    const markDrops = (as) => write(DROPS, [...recentDrops().filter((x) => !as.includes(x.address)), ...as.map((address) => ({ address, ts: Date.now() }))].slice(-20))
+    // Each 换地址 starts a new generation: anything still under way from before it does nothing.
+    let gen = 0
+    const showGate = (text = '') => { root.hidden = true; gate.hidden = false; msg.textContent = text; go.disabled = false; track.hidden = true }
+    const showDash = (list) => { gate.hidden = true; root.hidden = false; $('site-addrs').textContent = list.map(short).join(' + '); $('site-add-open').hidden = !dash.canRequest(); dispatchEvent(new Event('resize')) }
+    async function openList(list, my = gen) { if (await dash.load(list) && my === gen) { save(list); showDash(list); return true } return false }
+
+    // ---- a request on its way to the hourly job (lib/requests.mjs) ----
+    // { want: the addresses to open together once published, from: the tracked wallet whose inbox carries
+    //   it, group: what to show together if not `want` (it must hold `from`), add: [{ address, name }],
+    //   drop: [address], reqs: [every time it was sent], sent, tries }.
+    // One at a time, kept on this device.
+    let pending = read(PENDING)
+    if (pending && !(Array.isArray(pending.reqs) && Array.isArray(pending.want) && Array.isArray(pending.add))) pending = null
+    const req = $('site-req')
+    const REASONS = { busy: '这个地址交易太多（像交易所），追踪不了', contract: '这是合约地址，追踪不了', 'too many': '已经到上限了', 'not tracked': '要合在一起的地址里有还没追踪的', stale: '请求过期了', 'with a refused one': '一起加的另一个地址追踪不了', failed: '这个地址的历史记录多次读取都没成功', broke: '加上它以后每小时的更新一直出错', 'too busy': '它的交易越来越多，再追踪会拖慢每小时的更新', dropped: '在别的看板里被移除了', stopped: '它在自己的看板里停止了追踪' }
+    const why = (e) => REASONS[e?.reason] ?? '请求有误'
+    let noteTimer = null, notice = false
+    function setStatus(text, { bad = false, actions = [] } = {}) {
+      clearTimeout(noteTimer)
+      notice = false
+      const buttons = actions.map(([label, fn]) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.addEventListener('click', fn); return b })
+      req.replaceChildren(document.createTextNode(text), ...buttons)
+      req.classList.toggle('bad', bad)
+      req.hidden = !text
+    }
+    // A passing note; a request still on its way is shown again after it.
+    const note = (text) => { setStatus(text); noteTimer = setTimeout(() => { if (pending) renderStatus(); else setStatus('') }, 30_000) }
+    const say = (xs) => xs.map((x) => short(x.address ?? x)).join('、')
+    function setPending(p) { pending = p; write(PENDING, p); if (p) renderStatus(); else setStatus('') }
+    // What the job made of a pending request so far, from the log published with the view: each address by
+    // its newest entry, the newest request as a whole.
+    function outcome(p) {
+      const mine = dash.requests().filter((x) => p.reqs.includes(x.req))
+      const last = mine.filter((x) => x.req === p.reqs.at(-1))
+      const entriesOf = (x) => mine.filter((e) => e.op === 'add' && e.tail === tail(x.address))
+      const stateOf = (x) => entriesOf(x).at(-1)
+      const whole = last.find((e) => e.state === 'rejected' && (e.op === 'request' || e.op === 'group'))
+      // Refused for itself; one refused only for another's sake (or for a member not tracked) is asked for again.
+      const bad = p.add.filter((x) => { const e = stateOf(x); return e?.state === 'rejected' && e.reason !== 'with a refused one' && e.reason !== 'not tracked' })
+      const got = p.add.filter((x) => ['accepted', 'exists'].includes(stateOf(x)?.state))
+      // Members the job did not take, as it named them (by their last four characters).
+      const missing = (p.group ?? p.want).filter((a) => last.some((e) => e.op === 'group' && e.state === 'rejected' && e.tail === tail(a)))
+      return { heard: last.length > 0, entriesOf, stateOf, whole, bad, got, missing, wait: p.add.filter((x) => !got.includes(x)) }
+    }
+    // A pending request without the given addresses: what is left is asked for again, or let go.
+    const without = (p, gone) => ({ ...p, want: p.want.filter((a) => !gone.has(a)), group: p.group?.filter((a) => !gone.has(a)), add: p.add.filter((x) => !gone.has(x.address)), tries: 0 })
+    function renderStatus() {
+      if (root.hidden) return
+      if (!pending) return renderNotices()
+      const p = pending, o = outcome(p)
+      // What was refused is named and let go; the rest is asked for again without it (an address an earlier
+      // request already got tracked included), or let go too when nothing is left to wait for.
+      const goOn = (gone, told = []) => {
+        const next = without(p, new Set(gone)), target = next.group ?? next.want
+        const ok = () => {
+          // Seen here: an address let go later (its history unreadable) is not told again below.
+          markNoted(told)
+          if (next.add.length || (target.length > 1 && norm(target) !== norm(dash.current() ?? []))) send(next).catch(() => setStatus('没能发出去，请稍后再试。', { bad: true, actions: [['再试一次', ok]] }))
+          else setPending(null)
+        }
+        return ok
+      }
+      // Members the job no longer tracks (another request dropped them meanwhile): the rest goes on without them.
+      if (o.whole && o.missing.length) {
+        // What told why each was let go, if published, is not told again below.
+        const why = dash.requests().filter((e) => e.op === 'add' && e.state === 'rejected' && o.missing.some((a) => tail(a) === e.tail))
+        return setStatus(`${say(o.missing)} 已经不再追踪，不能合在一起看。`, { bad: true, actions: [['知道了', goOn(o.missing, why)]] })
+      }
+      // The newest request refused as a whole (out of date, malformed): what it alone was to add is let go.
+      if (o.whole) {
+        const lost = p.add.filter((x) => !o.got.includes(x))
+        return setStatus(`${lost.length ? `没加上 ${say(lost)}` : '合在一起的看板没建成'}：${why(o.whole)}。`, { bad: true, actions: [['知道了', o.got.length ? goOn(lost.map((x) => x.address)) : () => setPending(null)]] })
+      }
+      if (o.bad.length) return setStatus(`没加上 ${say(o.bad)}：${why(o.stateOf(o.bad[0]))}。`, { bad: true, actions: [['知道了', goOn(o.bad.map((x) => x.address), o.bad.map(o.stateOf))]] })
+      const quit = ['取消', cancel]
+      if (o.got.length) {
+        return setStatus(o.wait.length ? `更新程序已收到 ${say(o.got)}，正在补交易；${say(o.wait)} 等下一次整点更新读到。` : `更新程序已收到 ${say(o.got)}，正在补它从看板开始记录那天起的交易，补完自动打开。`, { actions: [quit] })
+      }
+      const what = p.add.length ? say(p.add) : '合在一起的看板'
+      if (!p.add.length && o.heard) return setStatus('正在准备合在一起的看板，下一次整点更新后自动打开。', { actions: [quit] })
+      if ((p.tries ?? 1) >= 4 && Date.now() - p.sent > 3 * 3600_000) return setStatus(`已提交${what}，但更新程序一直没读到。`, { bad: true, actions: [['重新发送', () => send({ ...pending, tries: 0 }).catch(() => {})], quit] })
+      const late = Date.now() - p.sent > 75 * 60_000
+      setStatus(late ? `已提交${what}，每小时一次的更新还没读到，过一会儿会自动再发一次。` : p.add.length ? `已提交 ${what}，下一次整点更新时开始追踪，补完历史后自动打开${p.want.length > 1 ? '合在一起的看板' : '它的看板'}。` : '已提交，下一次整点更新后自动打开合在一起的看板。', { actions: [quit] })
+    }
+    // Entries about addresses let go that this device has already told, by request and address.
+    const noted = () => (Array.isArray(read(NOTED)) ? read(NOTED) : [])
+    const markNoted = (es) => write(NOTED, [...noted(), ...es.filter(Boolean).map((e) => `${e.req}:${e.tail}`)].slice(-40))
+    // With no request on its way: the open view not published this hour, or addresses this view's wallets
+    // added that the job has since let go (their history could not be read, the update kept failing, or they
+    // brought in too many transactions).
+    function renderNotices() {
+      const told = noted()
+      const lately = dash.requests().filter((e) => e.op === 'add' && e.state === 'rejected' && ['failed', 'broke', 'too busy', 'dropped', 'stopped'].includes(e.reason) && !told.includes(`${e.req}:${e.tail}`))
+      // One this device stopped itself is no news to it.
+      const own = lately.filter((e) => ['dropped', 'stopped'].includes(e.reason) && recentDrops().some((x) => tail(x.address) === e.tail))
+      if (own.length) markNoted(own)
+      const dropped = lately.filter((e) => !own.includes(e))
+      if (dash.gone()) setStatus('这个看板这次更新没有生成（里面新加的地址还没补完，或者已经不再追踪），下一次整点更新后再看。', { bad: true })
+      else if (dropped.length) setStatus(`已停止追踪 ${dropped.map((e) => `…${e.tail}`).join('、')}：${why(dropped[0])}。`, { bad: true, actions: [['知道了', () => { markNoted(dropped); setStatus('') }]] })
+      else { if (notice) setStatus(''); return }
+      notice = true
+    }
+    // The pending request is set before it goes out (a cancel meanwhile then also covers it), and put back
+    // as it was if it could not be sent. Nothing is sent for a generation 换地址 has ended.
+    async function send(p, my = gen) {
+      if (my !== gen) return
+      const ts = Date.now(), before = pending
+      const next = { ...p, reqs: [...(p.reqs ?? []), ts].slice(-6), sent: ts, tries: (p.tries ?? 0) + 1 }
+      setPending(next)
+      try {
+        await dash.request(p.from, { type: 'aero-request', v: 1, ts, group: p.group ?? p.want, add: p.add, drop: p.drop ?? [] })
+      } catch (e) {
+        if (pending === next) setPending(before)
+        throw e
+      }
+    }
+    // A tracked wallet (one with a data file of its own) to carry a drop: the job takes one through any inbox.
+    async function carrier(p, drop) {
+      const not = (a) => !drop.includes(a) && !p.add.some((x) => x.address === a)
+      return (not(p.from) && (await dash.exists([p.from]))) ? p.from : sender([...(p.group ?? p.want), ...(dash.current() ?? []), ...known()].filter(not))
+    }
+    // Stops tracking what this request added (the job may already have started): the drop goes out first,
+    // and only then is the request forgotten here. The job takes an inbox's requests in the order the page
+    // made them, so the drop comes after the add. An address the job already tracked for someone else
+    // (answered 'exists') is left alone.
+    async function cancel() {
+      const p = pending
+      if (!p) return
+      try {
+        const o = outcome(p)
+        const drop = p.add.filter((x) => { const es = o.entriesOf(x); return !es.length || es.some((e) => e.state === 'accepted') }).map((x) => x.address)
+        if (drop.length) {
+          const via = await carrier(p, drop)
+          if (!via) throw new Error('no inbox')
+          await dash.request(via, { type: 'aero-request', v: 1, ts: Date.now(), group: [via], add: [], drop })
+          markDrops(drop)
+        }
+        if (pending === p) setPending(null)
+        note('已取消。')
+      } catch { setStatus('取消没能发出去，请稍后再试。', { bad: true, actions: [['再试一次', cancel]] }) }
+    }
+    let checking = false
+    async function checkPending() {
+      if (!pending || checking || root.hidden || document.hidden) return
+      checking = true
+      const my = gen
+      try {
+        // Read what the job last published first: on waking, the view on screen may be hours old.
+        await dash.refresh()
+        const p = pending
+        if (!p || my !== gen) return
+        if (await dash.exists(p.want)) {
+          if (my !== gen || pending !== p) return
+          if (await openList(p.want, my)) {
+            setPending(null)
+            note(p.add.length ? `已加上 ${say(p.add)}，现在看的是合在一起的看板。` : '已经合在一起看了。')
+          }
+          return
+        }
+        if (my !== gen || pending !== p) return
+        // Remembered once the job has read the newest request: its answer is published only for a few days.
+        const o = outcome(p)
+        if (o.heard && p.heard !== p.reqs.at(-1)) setPending({ ...p, heard: p.reqs.at(-1) })
+        else renderStatus()
+        const q = pending, read = q.heard === q.reqs.at(-1)
+        if ((q.tries ?? 0) >= 4 || Date.now() - q.sent < (read ? 75 * 60_000 : 3 * 3600_000) || o.bad.length || o.whole) return
+        // Read, but what it waits for is not published: an address it added that has no data file of its own
+        // while its answer is gone was let go since (and is not asked for again); with every member published
+        // on its own, the combined view gave way to newer ones and is asked for again.
+        if (read) {
+          const members = q.group ?? q.want, alone = []
+          for (const a of members) if (await dash.exists([a])) alone.push(a)
+          if (my !== gen || pending !== q) return
+          const lost = q.add.filter((x) => !alone.includes(x.address))
+          if (lost.length && !o.heard) { setPending(null); setStatus(`${say(lost)} 已经不再追踪。`, { bad: true, actions: [['知道了', () => setStatus('')]] }); return }
+          if (alone.length < members.length) return // still catching up
+        }
+        // Not read within three hours (the inbox keeps messages 12 hours; the job may have been down, or its
+        // cache lost and with it what was asked): ask again, a few times.
+        await send(q, my)
+      } catch {} finally { checking = false }
+    }
+    setInterval(checkPending, 3 * 60 * 1000)
+    document.addEventListener('visibilitychange', checkPending)
+    dash.onData(renderStatus)
+
+    // ---- 加地址 ----
+    const panel = $('site-add'), addOpen = $('site-add-open'), addAddr = $('site-add-addr'), addName = $('site-add-name'), addGo = $('site-add-go'), addMsg = $('site-add-msg'), addList = $('site-add-list')
+    function openPanel(on) {
+      panel.hidden = !on
+      addOpen.setAttribute('aria-expanded', String(on))
+      if (on) { addMsg.textContent = ''; renderList(); addAddr.focus() }
+    }
+    addOpen.addEventListener('click', () => openPanel(panel.hidden))
+    $('site-add-cancel').addEventListener('click', () => openPanel(false))
+    // A wallet of these whose own data file exists: its inbox carries the request.
+    async function sender(list) { for (const a of list) if (await dash.exists([a])) return a; return null }
+    panel.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const my = gen
+      const cur = dash.current() ?? []
+      // A request still on its way about the addresses on screen is kept and grows: the new address joins
+      // what it waits for (for one asked for alone, next to the wallet that carries it). Addresses it had
+      // refused are left out.
+      const pbase = pending ? (pending.group ?? pending.want) : null
+      const p0 = pending && pbase.some((a) => cur.includes(a)) ? pending : null
+      const p = p0 && without(p0, new Set(outcome(p0).bad.map((x) => x.address)))
+      const base = p ? (p.group ?? p.want) : cur
+      const [a] = addressesIn(addAddr.value)
+      if (!a) { addMsg.textContent = '请输入以 0x 开头的 42 位钱包地址。'; return }
+      if (base.includes(a)) { addMsg.textContent = '这个地址已经在里面了。'; return }
+      if (base.length >= MAX) { addMsg.textContent = `最多合在一起看 ${MAX} 个地址。`; return }
+      if ((p?.add.length ?? 0) >= ADDS) { addMsg.textContent = `一次最多加 ${ADDS} 个，等这几个加好再加。`; return }
+      addGo.disabled = true
+      addMsg.textContent = '正在提交…'
+      try {
+        const want = [...base, a]
+        const stale = want.some(dropped)
+        if (!stale && (await dash.exists(want))) { if (await openList(want, my)) { if (p0 && pending === p0) setPending(null); openPanel(false) } return }
+        const from = p?.from ?? (await sender(cur.filter((x) => !dropped(x))))
+        if (my !== gen) return
+        if (!from) { addMsg.textContent = '现在看的地址还没有数据，加不了新地址。'; return }
+        const tracked = !dropped(a) && (await dash.exists([a]))
+        if (my !== gen) return
+        const add = [...(p?.add ?? []), ...(tracked ? [] : [{ address: a, name: addName.value.trim().slice(0, 16) }])]
+        await send({ ...(p ?? {}), want, group: undefined, from, add, drop: [], tries: 0 }, my)
+        addAddr.value = ''; addName.value = ''
+        openPanel(false)
+      } catch { addMsg.textContent = '提交失败，请稍后再试。' } finally { addGo.disabled = false }
+    })
+    // Asked twice: the first press only explains.
+    function twice(b, label, text, run) {
+      b.type = 'button'; b.textContent = label
+      b.addEventListener('click', async () => {
+        if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = `确认${label}`; addMsg.textContent = text; return }
+        b.disabled = true
+        try { await run() } catch { addMsg.textContent = '没能发出去，请稍后再试。'; b.disabled = false }
+      })
+    }
+    // The addresses on screen, each with 移除: one added on the page is then no longer tracked. An address
+    // shown alone that was added on the page can stop being tracked here (through its own inbox).
+    function renderList() {
+      const cur = dash.current() ?? []
+      addList.replaceChildren()
+      const lone = cur.length === 1 && dash.added().length === 1
+      addList.hidden = cur.length < 2 && !lone
+      if (lone) {
+        const [a] = cur, row = document.createElement('div'), b = document.createElement('button')
+        twice(b, '停止追踪', '停止后更新程序不再追踪这个地址，它的看板也不再更新。', async () => {
+          const my = gen
+          // A request on its way that waits on this address, or goes through its inbox, ends with it: what it
+          // added (and no one else had) is no longer asked for either, in the same request.
+          const p = pending, related = p && (p.from === a || (p.group ?? p.want).includes(a))
+          const o = related && outcome(p)
+          const also = related ? p.add.filter((x) => { const es = o.entriesOf(x); return !es.length || es.some((e) => e.state === 'accepted') }).map((x) => x.address) : []
+          await dash.request(a, { type: 'aero-request', v: 1, ts: Date.now(), group: [a], add: [], drop: [a, ...also] })
+          markDrops([a, ...also])
+          if (my !== gen) return
+          if (related && pending === p) setPending(null)
+          openPanel(false)
+          addOpen.hidden = true // nothing more is asked through it
+          note('已请求停止追踪，下一次整点更新后生效。')
+        })
+        row.append(document.createTextNode(short(a)), b)
+        addList.append(row)
+        return
+      }
+      for (const a of cur) {
+        const row = document.createElement('div'), b = document.createElement('button')
+        twice(b, '移除', '移除后合在一起的看板不再包含它；它是从网页加进来的话，也不再追踪。', async () => {
+          const my = gen
+          const want = cur.filter((x) => x !== a && !dropped(x))
+          // A request on its way that holds this address goes on without it: what else it adds is still
+          // asked for, and the rest waited for together. With nothing left to wait for, it is over.
+          const p = pending, related = p && [...(p.group ?? p.want), ...p.add.map((x) => x.address)].includes(a)
+          const next = related ? without(p, new Set([a])) : null, goal = next && (next.group ?? next.want)
+          const adding = new Set((next?.add ?? []).map((x) => x.address))
+          const keep = next && (next.add.length > 0 || goal.length > 1) ? await sender(goal.filter((x) => !adding.has(x) && !dropped(x))) : null
+          const from = keep ?? (await sender(want))
+          if (!from) throw new Error('no sender')
+          const needView = want.length > 1 && !(await dash.exists(want))
+          if (my !== gen) return
+          if (keep) {
+            // The drop alone first (the job takes an inbox's requests in the page's order), then the rest.
+            await dash.request(keep, { type: 'aero-request', v: 1, ts: Date.now(), group: [keep], add: [], drop: [a] })
+            markDrops([a])
+            await send({ ...next, from: keep, drop: [] }, my)
+          } else if (needView && (!p || related)) {
+            // The drop asks for the rest together too; waited for (and opened once made) unless another
+            // request is already waited for.
+            await send({ want, from, add: [], drop: [a], tries: 0 }, my)
+            markDrops([a])
+          } else {
+            await dash.request(from, { type: 'aero-request', v: 1, ts: Date.now(), group: want, add: [], drop: [a] })
+            markDrops([a])
+            if (related && pending === p) setPending(null)
+          }
+          if (my !== gen) return
+          await openList(needView ? [from] : want, my)
+          openPanel(false)
+          if (!needView && !keep && my === gen) note(`已移除 ${short(a)}。`)
+        })
+        row.append(document.createTextNode(short(a)), b)
+        addList.append(row)
+      }
+    }
+
+    // ---- the gate ----
+    input.addEventListener('input', () => { track.hidden = true })
     async function open(list, fromSaved) {
+      const my = gen
       go.disabled = true
+      track.hidden = true
       msg.textContent = '正在查找…'
       try {
-        if (await dash.load(list)) { save(list); showDash(list); return }
-        showGate(list.length > 1 ? '这几个地址合在一起没有数据，试试分别输入。' : '没有找到这个地址的数据。')
+        if (await openList(list, my)) { renderStatus(); checkPending(); return }
+        if (my !== gen) return
+        // No data for them together: which are tracked on their own?
+        const tracked = []
+        for (const a of list) if (await dash.exists([a])) tracked.push(a)
+        const fresh = list.filter((a) => !tracked.includes(a))
+        // An address typed alone that this device has seen next to a tracked one can be asked for through it.
+        const via = !tracked.length && list.length === 1 ? await sender(known().filter((k) => k !== list[0])) : null
+        if (my !== gen) return
+        if (!tracked.length && !via) showGate(`${list.length > 1 ? '这几个地址' : '这个地址'}还没有数据。要追踪新地址：先打开一个已经在看板上的地址，再点“加地址”；或者把一个已经在看板上的地址和新地址一起输入。`)
+        else if (list.length > MAX) showGate(`最多合在一起看 ${MAX} 个地址。`)
+        else if (fresh.length > ADDS) showGate(`一次最多追踪 ${ADDS} 个新地址。`)
+        else if (!dash.canRequest()) showGate(fresh.length ? `${fresh.map(short).join('、')} 还没有被追踪；现在暂时不能追踪新地址。` : '这几个地址单独都有数据，合在一起的还没有；现在暂时不能合起来。')
+        else {
+          showGate(fresh.length ? `${fresh.map(short).join('、')} 还没有被追踪。` : '这几个地址单独都有数据，合在一起的还没有。')
+          track.textContent = via ? '追踪这个地址' : fresh.length ? '追踪新地址，合起来看' : '合起来看'
+          track.hidden = false
+          track.onclick = async () => {
+            track.disabled = true
+            msg.textContent = '正在提交…'
+            try {
+              const from = via ?? tracked[0]
+              // Typed alone: it is asked for next to the device's tracked wallet (the inbox's own has to be in
+              // the group), and opened alone once ready.
+              await send({ want: list, from, add: fresh.map((address) => ({ address, name: '' })), drop: [], tries: 0, ...(via ? { group: [from, ...list] } : {}) }, my)
+              // Meanwhile the tracked ones, together if they have a view, else the first.
+              const first = via ? [via] : tracked.length > 1 && (await dash.exists(tracked)) ? tracked : [tracked[0]]
+              if (await openList(first, my)) renderStatus()
+            } catch { msg.textContent = '提交失败，请稍后再试。' } finally { track.disabled = false }
+          }
+        }
       } catch {
-        showGate('数据加载失败，请稍后再试。')
+        if (my === gen) showGate('数据加载失败，请稍后再试。')
       }
-      if (fromSaved) input.value = list.join('\n')
+      if (fromSaved && my === gen) input.value = list.join('\n')
     }
     form.addEventListener('submit', (e) => {
       e.preventDefault()
-      const list = [...new Set((input.value.match(/0x[0-9a-fA-F]{40}/g) ?? []).map((a) => a.toLowerCase()))]
+      const list = addressesIn(input.value)
       if (!list.length) { msg.textContent = '请输入以 0x 开头的 42 位钱包地址。'; return }
       open(list, false)
     })
-    document.getElementById('site-switch').addEventListener('click', () => { try { localStorage.removeItem(KEY) } catch {}; dash.stop(); input.value = ''; showGate() })
-    const list = saved()
+    $('site-switch').addEventListener('click', () => { gen++; for (const k of [KEY, KNOWN, NOTED, DROPS]) write(k, null); setPending(null); openPanel(false); dash.stop(); input.value = ''; showGate() })
+    const list = read(KEY)
     if (Array.isArray(list) && list.length) open(list, true)
     else showGate()
   })()
