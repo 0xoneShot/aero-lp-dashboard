@@ -7,6 +7,7 @@
 // Only counts are printed: the hourly job's logs are public, and the alerts name the wallets.
 import fs from 'node:fs'
 import { evaluate, withLivePrices } from '../lib/alerts.mjs'
+import { BASE_WALLETS, EXTRA_WALLETS, PAUSED_WALLETS } from '../lib/config.mjs'
 
 const topic = process.env.NTFY_TOPIC?.trim()
 const STATE = 'data/cache/alerts.json', LAST = 'data/cache/last-summary.json', SITE = 'https://0xoneshot.github.io/aero-lp-dashboard/'
@@ -88,7 +89,10 @@ if (updated) {
 // An unreadable state starts over (records only), rather than stopping the alerts for good.
 let prev = null
 try { if (fs.existsSync(STATE)) prev = JSON.parse(fs.readFileSync(STATE, 'utf8')) } catch { console.log('alerts: state unreadable, starting over') }
-const { messages, state } = evaluate(summary, prev, { lastGood: !updated, noPrices: !live })
+// Every wallet tracked now, configured or added on the page (paused in this hour's update or not): one
+// missing from this summary keeps its state (lib/alerts.mjs keepAbsent).
+const tracked = new Set([...BASE_WALLETS, ...EXTRA_WALLETS, ...PAUSED_WALLETS].map((w) => w.key))
+const { messages, state } = evaluate(summary, prev, { lastGood: !updated, noPrices: !live, tracked })
 let sent = 0
 if (topic) {
   for (const m of messages) {

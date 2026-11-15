@@ -324,3 +324,22 @@ test('an address added on the page is named as such: its name cannot pass for a 
   const { messages } = evaluate([row(1990), { ...row(1990), scope: 'x1', scope_label: 'A', added: true }, total], prev)
   assert.deepEqual(messages.map((m) => m.title), ['A 跌出区间', '网页加的·A 跌出区间'])
 })
+
+test('an added wallet missing for an hour (its update ran without it) keeps its state: back, a change meanwhile is told', () => {
+  const added = (p) => ({ ...row(p), scope: 'x1', scope_label: '新', added: true })
+  const tracked = new Set(['a', 'x1'])
+  // Both seen before, both in range.
+  let { state } = evaluate([row(2200), added(2200), total], { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:2000-2500': 'in', 'x1:cost': 'na', update: 'ok' }, { tracked })
+  // An hour without it: its state stays, the configured wallet's goes on as ever.
+  const gap = evaluate([row(1990), total], state, { tracked })
+  assert.deepEqual(gap.messages.map((m) => [m.key, m.kind]), [['a:2000-2500', 'below']])
+  assert.equal(gap.state['x1:2000-2500'], 'in')
+  assert.equal(gap.state['x1:cost'], 'na')
+  // Back, and out of range meanwhile: told now, as it would have been.
+  const back = evaluate([row(1990), added(1990), total], gap.state, { tracked })
+  assert.deepEqual(back.messages.map((m) => [m.key, m.kind]), [['x1:2000-2500', 'below']])
+  assert.equal(back.messages[0].title, '网页加的·新 跌出区间')
+  // One no longer tracked is forgotten; and without the list of tracked wallets nothing is kept, as before.
+  assert.ok(!Object.keys(evaluate([row(1990), total], state, { tracked: new Set(['a']) }).state).some((k) => k.startsWith('x1:')))
+  assert.ok(!Object.keys(evaluate([row(1990), total], state).state).some((k) => k.startsWith('x1:')))
+})
