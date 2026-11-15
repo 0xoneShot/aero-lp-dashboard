@@ -805,10 +805,17 @@ for (const t of unpricedOf(WALLETS.map((w) => w.key))) {
 
 // The pools compared for some wallets: what a position as wide as theirs, holding all their money,
 // earned in each, staked or not (lib/pools.mjs). Their width is that of their largest live position
-// (a range ±5% wide when they have none); what of their money is already in a pool is not added to it
+// (Aero's ±3.5% when they have none); what of their money is already in a pool is not added to it
 // again, and the pool is marked, staked if any of it is staked there. A pool read more than a day ago
 // is not picked as the best, nor staking in one whose gauge has paid nothing for 3 hours (stopped).
-const DEFAULT_RATIO = (1.05 / 0.95)
+// The table also reads every pool at one fixed width, Aero's ±3.5% preset (`fixed`), so its numbers
+// compare across days, pools and positions whatever is held (the width used to follow the largest live
+// position, so the table's rates jumped whenever a position's width changed). The pick, the extra a
+// day, the payback and the alert stay at the positions' own width, where the money really is.
+const COMPARE_RATIO = 1.035 / 0.965, COMPARE_LABEL = '±3.5%'
+// Dollars per unit of liquidity of a centred range scale with 1 - ratio^(-1/4) (lib/pools.mjs dollarsPerL).
+const perLScale = (ratio) => 1 - ratio ** -0.25
+const DEFAULT_RATIO = COMPARE_RATIO
 function poolCompare(keys, myUsd) {
   if (!poolCache) return null
   // Only WETH/USDC pools are compared: money in a WETH/cbBTC position counts like money outside any pool.
@@ -824,46 +831,56 @@ function poolCompare(keys, myUsd) {
   const rate = (x) => (x == null || !Number.isFinite(x) ? null : r6(x))
   const pools = Object.entries(poolCache.pools).map(([k, e]) => {
     const mine = inPool.get(k)
-    const st = poolStats(e, { ratio, myUsd: Math.max(0, myUsd), inStakedUsd: mine?.staked ?? 0, inPoolUsd: mine?.all ?? 0, nowTs })
+    const opts = { myUsd: Math.max(0, myUsd), inStakedUsd: mine?.staked ?? 0, inPoolUsd: mine?.all ?? 0, nowTs }
+    const st = poolStats(e, { ratio, ...opts })
+    // At the fixed width the money already in the pool is liquidity at its own width: in dollars of a
+    // ±3.5% range it is worth less (a wide position holds less liquidity per dollar), so less of it is netted off.
+    const f = perLScale(COMPARE_RATIO) / perLScale(ratio)
+    const fx = Math.abs(ratio - COMPARE_RATIO) < 1e-9 ? st : poolStats(e, { ratio: COMPARE_RATIO, ...opts, inStakedUsd: opts.inStakedUsd * f, inPoolUsd: opts.inPoolUsd * f })
     const ch = CHAINS[e.chain] ?? COMPARE_CHAINS[e.chain]
     const stopped = st.quietHours >= 3
     const ageH = st.last ? Math.max(0, Math.floor((nowTs - st.last.ts) / 3600)) : null
+    const staked = (x) => ({ ...Object.fromEntries(Object.entries(x.staked).map(([f, v]) => [f, stopped ? null : rate(v)])), recent: stopped ? null : rate(x.recent.staked) })
+    const fee = (x) => ({ ...Object.fromEntries(Object.entries(x.fee).map(([f, v]) => [f, rate(v)])), recent: rate(x.recent.fee) })
     return {
       chain: e.chain, chain_label: ch?.label ?? e.chain, label: `CL${e.tickSpacing}`, pool_address: e.address, here: mine ? (mine.staked > 0 ? 'staked' : 'unstaked') : null,
       tvl_usd: r2(units(e.tvl.weth, 18) * pNow.eth + units(e.tvl.usdc, 6)), staked_share: rate(st.last?.stakedShare), missing_hours: e.missing ?? null,
       days: st.days, last_sample: st.last ? cstTime(st.last.ts) : null, age_h: ageH, stale: ageH == null || ageH > 3, stopped, in_range_72h: rate(stayShare(e, ratio, { nowTs })),
-      staked: { ...Object.fromEntries(Object.entries(st.staked).map(([f, v]) => [f, stopped ? null : rate(v)])), recent: stopped ? null : rate(st.recent.staked) },
-      fee: { ...Object.fromEntries(Object.entries(st.fee).map(([f, v]) => [f, rate(v)])), recent: rate(st.recent.fee) },
+      staked: staked(st), fee: fee(st),
+      fixed: { staked: staked(fx), fee: fee(fx), in_range_72h: rate(stayShare(e, COMPARE_RATIO, { nowTs })) },
       daily: st.daily.map((d) => ({ day: d.day, staked: rate(d.staked), fee: rate(d.fee) })),
       // A week with under a day of data (the week under way at its start, or before a pool's gauge paid) says nothing yet.
       weeks: st.weeks.filter((w) => w.hours >= 24).map((w) => ({ start: w.start, hours: w.hours, staked: rate(w.staked), fee: rate(w.fee), emitted_day: Math.round(w.emitted_day) })),
     }
   }).sort((a, b) => {
-    // In the order the options are judged in: the lower of the usual and the last 24 hours (lib/switch.mjs).
-    const best = (p) => Math.max(...[p.staked, p.fee].map((x) => (x.median == null ? -1 : Math.min(x.median, x.recent ?? x.median))))
+    // By the table's fixed-width numbers, judged as options are: the lower of the usual and the last 24 hours (lib/switch.mjs).
+    const best = (p) => Math.max(...[p.fixed.staked, p.fixed.fee].map((x) => (x.median == null ? -1 : Math.min(x.median, x.recent ?? x.median))))
     return best(b) - best(a)
   })
   // Every pool read over the whole window and this run (the first runs fill it over a few hours, and a
   // chain can fail for a while): until then the best option may be one whose rivals are not read, and
   // the switch alert waits.
   const complete = pools.every((p) => p.missing_hours === 0 && !p.stale)
-  return { ratio: r6(ratio), width_pct: r6(Math.sqrt(ratio) - 1), default_width: !live.length, my_usd: r2(myUsd), complete, pools, switch: switchTo({
-    pools, myUsd, gas: poolCache.gas ?? {}, ethUsd: pNow.eth, tracked: (c) => c in CHAINS, chainLabel: (c) => chainOf(c)?.label ?? c,
+  // The pick sees the pools in the order it always did (by its own width's numbers), so ties fall as before.
+  const judged = (x) => (x.median == null ? -1 : Math.min(x.median, x.recent ?? x.median))
+  const byOwn = [...pools].sort((a, b) => Math.max(judged(b.staked), judged(b.fee)) - Math.max(judged(a.staked), judged(a.fee)))
+  return { ratio: r6(ratio), width_pct: r6(Math.sqrt(ratio) - 1), default_width: !live.length, fixed_ratio: r6(COMPARE_RATIO), fixed_label: COMPARE_LABEL, my_usd: r2(myUsd), complete, pools, switch: switchTo({
+    pools: byOwn, myUsd, gas: poolCache.gas ?? {}, ethUsd: pNow.eth, tracked: (c) => c in CHAINS, chainLabel: (c) => chainOf(c)?.label ?? c,
     positions: live.map(({ x, usd }) => ({ chain: x.chain ?? 'base', pool: lc(x.pool), staked: x.staked, usd })),
   }) }
 }
 
-// The stock pools to list for some wallets (lib/stocks.mjs), at the same width and money as their pools
-// above, with the top of those to read them against.
+// The stock pools to list for some wallets (lib/stocks.mjs), at the table's fixed width (Aero's ±3.5%)
+// and the same money as their pools above, with the top of those to read them against.
 function stockList(pc, myUsd) {
   if (!stockCache) return null
-  const ratio = pc?.ratio ?? DEFAULT_RATIO, rows = stockRows(stockCache, { ratio, myUsd, nowTs: tsOfBlock(head) })
+  const ratio = COMPARE_RATIO, rows = stockRows(stockCache, { ratio, myUsd, nowTs: tsOfBlock(head) })
   if (!rows.length) return null
   const lower = (x) => (x?.median == null ? null : Math.min(x.median, x.recent ?? x.median))
-  const top = pc?.pools.find((p) => !p.stale && (lower(p.staked) != null || lower(p.fee) != null))
-  const mode = top && ((lower(top.fee) ?? -1) > (lower(top.staked) ?? -1) ? 'fee' : 'staked')
-  return { width_pct: r6(Math.sqrt(ratio) - 1), my_usd: r2(Math.max(0, myUsd)), rows,
-    ref: top ? { chain_label: top.chain_label, label: top.label, tvl_usd: top.tvl_usd, days: top.days, mode, rate: lower(top[mode]), median: top[mode].median, recent: top[mode].recent, in_range_72h: top.in_range_72h } : null }
+  const top = pc?.pools.find((p) => !p.stale && (lower(p.fixed.staked) != null || lower(p.fixed.fee) != null))
+  const fx = top?.fixed, mode = top && ((lower(fx.fee) ?? -1) > (lower(fx.staked) ?? -1) ? 'fee' : 'staked')
+  return { width_pct: r6(Math.sqrt(ratio) - 1), width_label: COMPARE_LABEL, my_usd: r2(Math.max(0, myUsd)), rows,
+    ref: top ? { chain_label: top.chain_label, label: top.label, tvl_usd: top.tvl_usd, days: top.days, mode, rate: lower(fx[mode]), median: fx[mode].median, recent: fx[mode].recent, in_range_72h: fx.in_range_72h } : null }
 }
 
 // Summary and attribution. Money figures come from the rounded daily rows, so the cards, the

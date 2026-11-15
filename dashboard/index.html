@@ -143,7 +143,7 @@
     <p class="lp-move" id="pools-move" hidden></p>
     <p class="lp-note" id="pools-note"></p>
     <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>质押<br>拿 AERO</th><th>不质押<br>拿手续费</th></tr></thead><tbody id="pools-body"></tbody></table></div>
-    <p class="lp-note">质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。大字是用来比较的数：“平常”（近 7 天每天年化的中位数）和“最近 24 小时”里较低的那个。资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。“换过去”的成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）；本来就要重新开仓的话，多出来的只有跨链。差 30 个百分点以内算差不多：同一个币对的池子之间，最近谁领先并不会持续（资金跟着奖励走，把收益拉平；10-22 以来的数据和 Base 上一代池子半年的数据都是这样），你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉换过去的成本后一周多挣多少。值得换的是明显而持久的差别，比如质押和不质押。某个钱包的去处数据满 7 天、平常和最近 24 小时都比现在的仓位高 30 个百分点以上、稳定领先（近 7 天里较差的日子也比现在高、最近两个 Aero 周都领先）、3 天内回本时，手机提醒一次（看“合计”时不提醒，按各个钱包提醒）。</p>
+    <p class="lp-note">质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。表格固定按 Aero 的 ±3.5% 宽度算，换了仓位或隔几天再看，数字都能直接比；同一个池子，区间越窄年化越高：宽度减半，年化大约翻倍（±3.5% 约是 ±7% 的 2 倍、±10% 的 2.8 倍，池子小、钱多时少一些），你实际的年化还要看你自己仓位的宽度。大字是用来比较的数：“平常”（近 7 天每天年化的中位数）和“最近 24 小时”里较低的那个。资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。“换过去”的成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）；本来就要重新开仓的话，多出来的只有跨链。按你仓位的宽度算，差 30 个百分点以内算差不多：同一个币对的池子之间，最近谁领先并不会持续（资金跟着奖励走，把收益拉平；10-22 以来的数据和 Base 上一代池子半年的数据都是这样），你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉换过去的成本后一周多挣多少。值得换的是明显而持久的差别，比如质押和不质押。某个钱包的去处数据满 7 天、平常和最近 24 小时都比现在的仓位高 30 个百分点以上（按你仓位的宽度算）、稳定领先（近 7 天里较差的日子也比现在高、最近两个 Aero 周都领先）、3 天内回本时，手机提醒一次（看“合计”时不提醒，按各个钱包提醒）。</p>
   </section>
 
   <section class="lp-card" id="stocks" hidden>
@@ -634,8 +634,15 @@
     if (card.hidden) return;
     const days = Math.max(...pc.pools.map((p) => p.days));
     $('pools-title').textContent = `哪个池子利息高（近 ${days} 天）`;
-    const width = `±${(pc.width_pct * 100).toFixed(1)}%`;
-    $('pools-note').textContent = `${pc.default_width ? `${s.curve?.positions?.length ? '现在的仓位不在这些池子里' : '现在没有仓位'}，按 ${width} 的区间` : `按${s.scope === 'total' ? '最大那个' : '你的'}仓位的区间宽度（${width}）`}、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。`;
+    // Widths in Aero's convention, (high - low) / (high + low): an Aero ±10% range reads ±10.0%, like the ±3.5% label.
+    const width = `±${(((pc.ratio - 1) / (pc.ratio + 1)) * 100).toFixed(1)}%`, fixedLabel = pc.fixed_label ?? null;
+    // The table reads every pool at one fixed width (src/run.mjs: Aero's ±3.5%); the line above it, the
+    // extra a day and the alert at the positions' own width. Older data has no fixed width: then both are the position's.
+    const own = pc.default_width ? `${s.curve?.positions?.length ? '现在的仓位不在这些池子里' : '现在没有仓位'}，按 ${fixedLabel ?? width} 的区间` : `按${s.scope === 'total' ? '最大那个' : '你的'}仓位的区间宽度（${width}）`;
+    const mine = s.apr_7d != null ? `你${s.apr_days && s.apr_days < 7 ? `近 ${s.apr_days} 天` : '近 7 天'}实际拿到的年化 ${(s.apr_7d * 100).toFixed(1)}%（按池子里的钱算，就是页面顶部的那个数）。` : '';
+    $('pools-note').textContent = fixedLabel
+      ? `表格里每个池子都按 ${fixedLabel} 的区间（和 Aero 页面上选 ${fixedLabel} 一样宽）、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。${mine}${pc.default_width ? '' : `上面那段话里的年化、每天多挣多少和手机提醒都${own}算，${pc.ratio > pc.fixed_ratio ? '所以比表格里同一个池子的数低' : '所以和表格里的数不一样'}。`}`
+      : `${own}、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。`;
     // Where the money earns most, against where it is now (src/run.mjs switchTo).
     const sw = pc.switch, move = $('pools-move'), modeName = (m) => (m === 'staked' ? '质押' : '不质押');
     move.hidden = !sw;
@@ -694,7 +701,8 @@
         td.append(fmtRate(x.median == null ? null : Math.min(x.median, x.recent ?? x.median)), el('span', 'lp-cell-sub', `平常 ${fmtRate(x.median)}`), el('span', 'lp-cell-sub', `最近 24 小时 ${fmtRate(x.recent)}`));
         return td;
       };
-      tr.append(name, cell(p.staked, 'staked'), cell(p.fee, 'fee'));
+      const fx = p.fixed ?? p;
+      tr.append(name, cell(fx.staked, 'staked'), cell(fx.fee, 'fee'));
       return tr;
     }));
   }
@@ -706,7 +714,7 @@
     const card = $('stocks'), st = s?.stock_pools;
     card.hidden = !st?.rows.length;
     if (card.hidden) return;
-    $('stocks-note').textContent = `和上面一样的算法：按 ±${(st.width_pct * 100).toFixed(1)}% 的区间、把 ${fmtUsd(st.my_usd)} 全部放进去算，已算上这笔钱带来的摊薄。只列 Aero 上资金超过 $10 万的股票/USDC 池，现在都在 Base 上。`;
+    $('stocks-note').textContent = `和上面表格一样的算法：按 ${st.width_label ?? `±${(st.width_pct * 100).toFixed(1)}%`} 的区间、把 ${fmtUsd(st.my_usd)} 全部放进去算，已算上这笔钱带来的摊薄。只列 Aero 上资金超过 $10 万的股票/USDC 池，现在都在 Base 上。`;
     const row = (name, sub, r, chip) => {
       const tr = document.createElement('tr'), td = el('td');
       td.append(name);
