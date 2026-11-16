@@ -17,6 +17,7 @@ import { samplePools, blockFinder, poolStats, stayShare, ethVol, rangeLoss } fro
 import { sampleStockPools, stockRows } from '../lib/stocks.mjs'
 import { switchTo } from '../lib/switch.mjs'
 import { overrideLookup, unmatchedOverrides } from '../lib/overrides.mjs'
+import { costSourcesFor } from '../lib/alerts.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, gaugeAbi, TOPIC } from '../lib/abi.mjs'
 import { tryRead } from '../lib/errors.mjs'
 import { WALLETS, BASE_WALLETS, GROUPS, SCAN_FROM_BLOCK, START_DAY, TOKENS, ALL_TOKENS, CHAINS, COMPARE_CHAINS, WETH, ZERO, LABELS, GAUGE_IMPLS, OVERRIDES_FILE, PRICE, EXTRA_WALLETS, PAUSED_WALLETS } from '../lib/config.mjs'
@@ -31,6 +32,7 @@ const ADDED_ANY = EXTRA_WALLETS.length > 0 || PAUSED_WALLETS.length > 0
 const tally = (n) => (ADDED_ANY ? '…' : n)
 const SNAP_CACHE = path.resolve('data/cache/snapshots.json')
 const CODE_CACHE = path.resolve('data/cache/code.json')
+const LINKS_CACHE = path.resolve('data/cache/cost-links.json')
 const POOLS_FILE = path.resolve('data/cache/pools.json')
 const STOCKS_FILE = path.resolve('data/cache/stocks.json')
 const SNAP_VERSION = 'snap-v2' // bump whenever lib/snapshot.mjs changes what it reads
@@ -1017,6 +1019,20 @@ function stockList(pc, myUsd) {
     ref: top ? { chain_label: top.chain_label, label: top.label, tvl_usd: top.tvl_usd, days: top.days, mode, rate: lower(fx[mode]), median: fx[mode].median, recent: fx[mode].recent, in_range_72h: fx.in_range_72h } : null }
 }
 
+// An address added on the page that moved money to or from other tracked wallets: where its cost alerts
+// take their cost price from (lib/alerts.mjs costSources), a combined view asked for on the page that holds
+// it and all of them. Chosen among every view asked for and against every tracked wallet, also those left
+// out of this update (WALLETS is trimmed above; BASE_WALLETS and EXTRA_WALLETS are not), so in an hour in
+// which another address of that view is not caught up the view is still the one named, and the alert waits
+// for it. The links found are kept in the encrypted cache: they stand in for a wallet left out of a later
+// update, which the others' books then do not know as one of ours. For the alerts only: it names the other
+// wallets, so scripts/build-site.mjs publishes none of it.
+const { sources: COST_FROM, links: costLinksFound } = costSourcesFor({
+  base: BASE_WALLETS, extra: EXTRA_WALLETS, present: new Set(WALLETS.map((w) => w.key)), groups: GROUPS,
+  flowsOf: (k) => walletData[k].flows, seen: readJson(LINKS_CACHE, {}),
+})
+writeJson(LINKS_CACHE, costLinksFound)
+
 // Summary and attribution. Money figures come from the rounded daily rows, so the cards, the
 // charts, the tables and the breakdown all show the same numbers.
 const pNow = prices[head]
@@ -1036,8 +1052,9 @@ for (const sc of SCOPES) {
   // then) against what it was worth when earned.
   const aeroNow = (n.aeroHeld + n.pendingAero - units(n.c.aeroInUnits, 18)) * (pNow.aero ?? 0) + n.c.aeroOutUsd
   const pools = poolCompare(sc.wallets, value)
+  const costFrom = sc.added ? COST_FROM[sc.key] ?? null : null
   summary.push({
-    scope: sc.key, scope_label: sc.label, ...(sc.group ? { group: true } : {}), ...(sc.added ? { added: true } : {}),
+    scope: sc.key, scope_label: sc.label, ...(sc.group ? { group: true } : {}), ...(sc.added ? { added: true } : {}), ...(costFrom ? { cost_from: costFrom } : {}),
     as_of: new Date(tsOfBlock(head) * 1000).toISOString(), as_of_cst: cstTime(tsOfBlock(head)), as_of_block: head,
     start_day: rows[0]?.day ?? null,
     invested_usd: invested, value_usd: value, pnl_usd: pnl, pnl_pct: invested ? r6(pnl / invested) : null,

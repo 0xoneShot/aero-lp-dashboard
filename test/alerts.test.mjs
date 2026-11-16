@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evaluate, withLivePrices, STALE_MS, OUT_MS } from '../lib/alerts.mjs'
+import { evaluate, withLivePrices, costLinks, costSource, costSources, costSourcesFor, STALE_MS, OUT_MS } from '../lib/alerts.mjs'
 
 // One wallet with two positions of the same range, as the summary publishes them.
 const row = (pool, extra = {}) => {
@@ -354,4 +354,416 @@ test('a wallet let go since the last good data is not alerted for: the alerts fr
   // Still tracked: alerted as before.
   const kept = evaluate([row(1990), added(1990), total], prev, { lastGood: true, tracked: new Set(['a', 'x1']) })
   assert.deepEqual(kept.messages.map((m) => [m.key, m.kind]).sort(), [['a:2000-2500', 'below'], ['x1:2000-2500', 'below']])
+})
+
+// ETH moved from wallet A to an address added on the page (x1) that holds it idle; A and x1 together are a
+// combined view asked for on the page (g1). x1's own cost price counts what it got at its price on arrival,
+// while the gain or loss A made on it before stays in A's books; the view's counts the money as A put it in.
+// Made-up figures.
+const idle = (p, extra = {}) => ({ scope: 'x1', scope_label: '新', added: true, eth_usd: p, range_state: 'none', now_cost_eth_price: 1700,
+  eth_units_now: 10, curve: { eth: 10, usd: 0, positions: [] }, cost_from: { scope: 'g1', with: ['a'] }, ...extra })
+const both = (p, extra = {}) => ({ ...row(p), scope: 'g1', scope_label: '合计', group: true, now_cost_eth_price: 2400, ...extra })
+// A second added address (x2), named in x1's alerts as one added on the page.
+const second = () => ({ ...row(2100), scope: 'x2', scope_label: '二', added: true })
+
+test('an added wallet that moved money with another takes its cost price from the combined view holding both', () => {
+  // Recorded under its own cost price before (as 1.18.0 judged it): above it.
+  let prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'above', update: 'ok' }
+  const step = (p) => { const r = evaluate([row(p), idle(p), both(p), total], prev); prev = r.state; return r.messages }
+  // Above its own 1700 but below the view's 2400: nothing is said, and it counts as below the view's price.
+  assert.deepEqual(step(2100), [])
+  assert.equal(prev['x1:cost'], 'below@g1')
+  assert.deepEqual(step(2200), [])
+  const up = step(2410)
+  assert.deepEqual(up.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.equal(up[0].title, '网页加的·新 ETH 涨到成本价以上')
+  assert.equal(up[0].message, 'ETH $2,410.00，不低于和 A 合在一起算的成本价 $2,400.00。现在一起撤出、把 ETH 全卖掉，本金不亏、利息全拿。')
+  // The configured wallet's own state is as it would be without it.
+  assert.equal(prev['a:cost'], 'na')
+  // Re-armed below the view's price (2% under 2400 is 2352), not its own.
+  assert.deepEqual([step(2360), prev['x1:cost']], [[], 'above@g1'])
+  assert.deepEqual([step(2340), prev['x1:cost']], [[], 'below@g1'])
+})
+
+test('the 跌出 message of an added wallet counted with another quotes the combined view\'s cost price, for withdrawing both', () => {
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:2000-2500': 'in', 'x1:cost': 'na', update: 'ok' }
+  const lp = (p, from = { scope: 'g1', with: ['a'] }) => ({ ...row(p), scope: 'x1', scope_label: '新', added: true, now_cost_eth_price: 1700, eth_units_now: 10, cost_from: from })
+  const { messages } = evaluate([row(1990), lp(1990), both(1990), total], prev)
+  assert.deepEqual(messages.map((m) => [m.key, m.kind]), [['a:2000-2500', 'below'], ['x1:2000-2500', 'below']])
+  // The configured wallet's message is its own, as before.
+  assert.equal(messages[0].message, 'ETH $1,990.00，低于下沿 $2,000.00，这个仓位全部变成了 ETH，现在不赚利息。现在撤出的话 ETH 成本价 $2,300.00：涨到这个价以上再卖，本金不亏、利息全拿。')
+  assert.equal(messages[1].message, 'ETH $1,990.00，低于下沿 $2,000.00，这个仓位全部变成了 ETH，现在不赚利息。和 A 合在一起算，现在一起撤出的话 ETH 成本价 $2,400.00：涨到这个价以上把 ETH 全卖掉，本金不亏、利息全拿。')
+  // ETH already above the view's price.
+  const over = evaluate([row(1990), lp(1990), both(1990, { now_cost_eth_price: 1900 }), total], prev).messages[1]
+  assert.ok(over.message.endsWith('和 A 合在一起算，现在一起撤出的话 ETH 成本价 $1,900.00，ETH $1,990.00 已经高于它：这个价以上把 ETH 全卖掉，本金不亏、利息全拿。'), over.message)
+  // With no such view, its own price, said to count it alone, with no advice on it and where to add it.
+  const alone = evaluate([row(1990), lp(1990, { scope: null, with: ['a'] }), total], prev).messages[1]
+  assert.ok(alone.message.endsWith('现在撤出的话，只按它自己的账算 ETH 成本价 $1,700.00：它和 A 之间转过钱，转账的币按当时的价算，那边之前的盈亏不在里面。在 A 的看板上点「加地址」加它，就按合在一起的成本价算。'), alone.message)
+  assert.ok(!alone.message.includes('本金不亏'), alone.message)
+  // Its view missing from this update: no cost price, and no advice.
+  const gap = evaluate([row(1990), lp(1990), total], prev).messages[1]
+  assert.ok(gap.message.endsWith('和它合在一起算成本价的地址这一小时有没读完的，成本价先不算。'), gap.message)
+  assert.ok(!gap.message.includes('本金不亏') && !gap.message.includes('$1,700') && !gap.message.includes('$2,400'), gap.message)
+})
+
+test('an added wallet counted with another added address names it as one added on the page', () => {
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'below@g1', 'x2:2000-2500': 'in', 'x2:cost': 'na', update: 'ok' }
+  const via = evaluate([row(2410), idle(2410, { cost_from: { scope: 'g1', with: ['a', 'x2'] } }), second(), both(2410), total], prev).messages
+  assert.deepEqual(via.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.ok(via[0].message.includes('不低于和 A、网页加的·二 合在一起算的成本价 $2,400.00'), via[0].message)
+  // Counted alone: where to add it names every wallet it has to be viewed with.
+  const own = evaluate([row(1710), idle(1710, { cost_from: { scope: null, with: ['a', 'x2'] } }), second(), total], { ...prev, 'a:2000-2500': 'below', 'a:cost': 'below', 'x1:cost': 'below@own' }).messages
+  assert.deepEqual(own.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.equal(own[0].message, 'ETH $1,710.00，不低于它自己的成本价 $1,700.00。但这只按它自己的账算：它和 A、网页加的·二 之间转过钱，转账的币按当时的价算，那边之前的盈亏不在里面。在同时含有 A、网页加的·二 的看板上点「加地址」加它，就按合在一起的成本价提醒。')
+})
+
+test('while its combined view is missing from an update, an added wallet\'s cost state waits rather than count it alone', () => {
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'below@g1', update: 'ok' }
+  // Above its own cost price and the view's, but the view is not in this summary (another address of it left out).
+  const gap = evaluate([row(2450), idle(2450), total], prev)
+  assert.deepEqual(gap.messages, [])
+  assert.equal(gap.state['x1:cost'], 'below@g1')
+  const back = evaluate([row(2450), idle(2450), both(2450), total], gap.state)
+  assert.deepEqual(back.messages.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  // Never seen before and its view missing: nothing is said, and it starts with no cost state.
+  const fresh = evaluate([row(2450), idle(2450), total], { 'a:2000-2500': 'in', 'a:cost': 'na', update: 'ok' })
+  assert.deepEqual([fresh.messages, fresh.state['x1:cost']], [[], 'na'])
+})
+
+test('a change of the price an added wallet\'s cost state is judged against starts afresh, and tells it when ETH is already above the new price', () => {
+  // Said above its own price (no view held it and A), then the view is asked for: below the view's, quietly,
+  // and the view's own crossing is told.
+  let prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'above@own', update: 'ok' }
+  const A = row(2100) // in its range throughout
+  const step = (rows) => { const r = evaluate(rows, prev); prev = r.state; return r.messages }
+  assert.deepEqual(step([A, idle(2380), both(2380), total]), [])
+  assert.equal(prev['x1:cost'], 'below@g1')
+  assert.deepEqual(step([A, idle(2410), both(2410), total]).map((m) => m.kind), ['cost'])
+  // The view gone (no longer asked for): its own price, above it already, so told at once, said to count it alone.
+  const gone = step([A, idle(2300, { cost_from: { scope: null, with: ['a'] } }), total])
+  assert.deepEqual(gone.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.ok(gone[0].message.startsWith('ETH $2,300.00，不低于它自己的成本价 $1,700.00。但这只按它自己的账算'), gone[0].message)
+  assert.equal(prev['x1:cost'], 'above@own')
+  // No longer tied to another wallet: its own price as ever, plain.
+  assert.deepEqual(step([A, idle(1650, { cost_from: undefined }), total]), [])
+  assert.equal(prev['x1:cost'], 'below')
+  const plain = step([A, idle(1720, { cost_from: undefined }), total])
+  assert.deepEqual(plain.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.equal(plain[0].message, 'ETH $1,720.00，不低于成本价 $1,700.00。现在卖掉 ETH，本金不亏、利息全拿。')
+})
+
+test('with no combined view holding it and the wallet it moved money with, an added wallet keeps its own cost price, said to count it alone', () => {
+  const alone = (p) => idle(p, { cost_from: { scope: null, with: ['a'] } })
+  // A out of its range and below its own cost price: quiet.
+  const prev = { 'a:2000-2500': 'below', 'a:cost': 'below', 'x1:cost': 'below@own', update: 'ok' }
+  const { messages } = evaluate([row(1710), alone(1710), total], prev)
+  assert.deepEqual(messages.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.equal(messages[0].message, 'ETH $1,710.00，不低于它自己的成本价 $1,700.00。但这只按它自己的账算：它和 A 之间转过钱，转账的币按当时的价算，那边之前的盈亏不在里面。在 A 的看板上点「加地址」加它，就按合在一起的成本价提醒。')
+})
+
+test('a configured wallet\'s cost price is always its own', () => {
+  const prev = { 'a:2000-2500': 'below', 'a:cost': 'below', update: 'ok' }
+  const odd = { ...row(1950, { now_cost_eth_price: 1900 }), cost_from: { scope: 'g1', with: ['x1'] } }
+  const { messages, state } = evaluate([odd, both(1950), total], prev)
+  assert.deepEqual(messages.map((m) => [m.key, m.kind]), [['a:cost', 'cost']])
+  assert.equal(messages[0].message, 'ETH $1,950.00，不低于成本价 $1,900.00。现在卖掉 ETH，本金不亏、利息全拿。')
+  assert.equal(state['a:cost'], 'above')
+})
+
+test('from the last good data, an added wallet\'s cost state waits when its combined view had a range without a live quote', () => {
+  const heldPos = (p) => ({ low: 2000, high: 2500, pool: p, in_range: true, held: true, pool_address: '0xabc' })
+  const a = { ...row(2450), curve: { positions: [heldPos(2450)] } }
+  const g = { ...both(2450), curve: { positions: [heldPos(2450)] } }
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'below@g1', update: 'ok' }
+  const r = evaluate([a, idle(2450), g, total], prev, { lastGood: true })
+  assert.deepEqual([r.messages, r.state['x1:cost']], [[], 'below@g1'])
+  // Its view read live: it goes out.
+  const live = evaluate([row(2450), idle(2450), both(2450), total], prev, { lastGood: true })
+  assert.deepEqual(live.messages.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+})
+
+test('the view an added wallet takes its cost price from holds it and every wallet its money moved through: the smallest, then the first asked for', () => {
+  assert.equal(costSource('x', [], [{ key: 'g1', wallets: ['a', 'x'] }]), null)
+  assert.deepEqual(costSource('x', ['a'], []), { scope: null, with: ['a'] })
+  // Views without it, or without one of the wallets it moved money with, do not count.
+  assert.deepEqual(costSource('x', ['a'], [{ key: 'g1', wallets: ['a', 'b'] }, { key: 'g2', wallets: ['b', 'x'] }]), { scope: null, with: ['a'] })
+  assert.deepEqual(costSource('x', ['a', 'y'], [{ key: 'g1', wallets: ['a', 'x'] }, { key: 'g2', wallets: ['x', 'y'] }]), { scope: null, with: ['a', 'y'] })
+  assert.deepEqual(costSource('x', ['a', 'y'], [{ key: 'g1', wallets: ['a', 'x'] }, { key: 'g2', wallets: ['a', 'b', 'x', 'y'] }]), { scope: 'g2', with: ['a', 'b', 'y'] })
+  assert.deepEqual(costSource('x', ['a'], [{ key: 'g1', wallets: ['a', 'b', 'x'] }, { key: 'g2', wallets: ['a', 'x'] }]), { scope: 'g2', with: ['a'] })
+  assert.deepEqual(costSource('x', ['a'], [{ key: 'g1', wallets: ['a', 'x'] }, { key: 'g2', wallets: ['x', 'a'] }]), { scope: 'g1', with: ['a'] })
+})
+
+test('the wallets an address moved money with: flows booked between tracked wallets, and transfers with one left out of this update, in the wallets\' order', () => {
+  const keyAt = { '0xa': 'a', '0xb': 'b', '0xd': 'd', '0xx': 'x' }
+  const flows = [{ kind: 'between', cp: '0xb' }, { kind: 'transfer', cp: '0xa' }, { kind: 'between', cp: '0xc' }, { kind: 'between', cp: '0xx' },
+    { kind: 'opening', cp: null }, { kind: 'between', cp: '0xa' }, { kind: 'between', cp: '0xb' }, { kind: 'between', cp: 'constructor' }, { kind: 'transfer', cp: '0xd' }]
+  assert.deepEqual(costLinks(flows, keyAt, 'x', ['a', 'b', 'd', 'x']), ['a', 'b'])
+  assert.deepEqual(costLinks([], keyAt, 'x', ['a', 'b', 'd', 'x']), [])
+  // A transfer with a tracked wallet counts when that wallet is left out of this update (its books then book
+  // it so); one corrected to 'transfer' by hand does not.
+  assert.deepEqual(costLinks(flows, keyAt, 'x', ['a', 'b', 'd', 'x'], { present: new Set(['a', 'b', 'd', 'x']) }), ['a', 'b'])
+  assert.deepEqual(costLinks(flows, keyAt, 'x', ['a', 'b', 'd', 'x'], { present: new Set(['a', 'b', 'x']) }), ['a', 'b', 'd'])
+  assert.deepEqual(costLinks([{ kind: 'transfer', cp: '0xd', forced: true }], keyAt, 'x', ['d', 'x'], { present: new Set(['x']) }), [])
+  // With no single move up to the floor a wallet is not tied in: gas top-ups, however many, or a test sent
+  // and sent back. One move of capital is.
+  const usd = [{ kind: 'between', cp: '0xa', usd: 60 }, { kind: 'between', cp: '0xa', usd: -60 }, { kind: 'between', cp: '0xa', usd: 45 },
+    { kind: 'between', cp: '0xb', usd: 3.5 }, { kind: 'between', cp: '0xb', usd: -106 }, { kind: 'between', cp: '0xd', usd: null }, { kind: 'between', cp: '0xd', usd: NaN }]
+  assert.deepEqual(costLinks(usd, keyAt, 'x', ['a', 'b', 'd', 'x'], { floor: 100 }), ['b'])
+  assert.deepEqual(costLinks(usd, keyAt, 'x', ['a', 'b', 'd', 'x'], { floor: 106 }), ['b'])
+  assert.deepEqual(costLinks(usd, keyAt, 'x', ['a', 'b', 'd', 'x'], { floor: 107 }), [])
+  assert.deepEqual(costLinks(usd, keyAt, 'x', ['a', 'b', 'd', 'x']), ['a', 'b', 'd'])
+  // One move of capital ties them, whatever smaller moves came after it.
+  assert.deepEqual(costLinks([{ kind: 'between', cp: '0xa', usd: 5000 }, { kind: 'between', cp: '0xa', usd: 20 }], keyAt, 'x', ['a', 'x'], { floor: 100 }), ['a'])
+})
+
+test('cost sources follow the money on through other added addresses, chosen among every view asked for', () => {
+  const W = [{ key: 'a', address: '0xa' }, { key: 'b', address: '0xb' }, { key: 'x1', address: '0x1', extra: true }, { key: 'x2', address: '0x2', extra: true }, { key: 'x3', address: '0x3', extra: true }]
+  const all = new Set(W.map((w) => w.key))
+  // A sent ETH to x1, x1 sent part of it on to x2; B sent x2 only gas; x3 moved nothing with anyone tracked.
+  const books = {
+    x1: [{ kind: 'between', cp: '0xa', usd: 20000 }, { kind: 'between', cp: '0x2', usd: -9000 }],
+    x2: [{ kind: 'between', cp: '0x1', usd: 9000 }, { kind: 'between', cp: '0xb', usd: 4 }],
+    x3: [{ kind: 'transfer', cp: '0xe', usd: 5000 }],
+  }
+  // A configured wallet's books are never asked for: the trail ends there.
+  const flowsOf = (k) => { if (!(k in books)) throw new Error(`asked for ${k}`); return books[k] }
+  const views = [{ key: 'g1', wallets: ['a', 'x1'] }, { key: 'g2', wallets: ['x1', 'x2'] }, { key: 'g3', wallets: ['a', 'x1', 'x2'] }, { key: 'g4', wallets: ['a', 'b', 'x1', 'x2'] }]
+  const full = costSources({ wallets: W, present: all, flowsOf, groups: views })
+  assert.deepEqual(full.sources, { x1: { scope: 'g3', with: ['a', 'x2'] }, x2: { scope: 'g3', with: ['a', 'x1'] }, x3: null })
+  // The links found are kept, by address, for an update that leaves one of them out.
+  assert.deepEqual(full.links, { '0x1': ['0xa', '0x2'], '0x2': ['0x1'], '0x3': [] })
+  // With only the two-address view, x2 is counted alone: that view leaves out what A lost on the coins.
+  assert.deepEqual(costSources({ wallets: W, present: all, flowsOf, groups: views.slice(0, 2) }).sources.x2, { scope: null, with: ['a', 'x1'] })
+  // x1 left out of this update: x2's books book its coins from x1 as a transfer, and x1's books are not
+  // built. The links kept from before follow the trail on through x1 to A, so the view named is the one of
+  // every update, holding x1 and missing from this one too: the alert waits.
+  const behind = { ...books, x2: [{ kind: 'transfer', cp: '0x1', usd: 9000 }, { kind: 'between', cp: '0xb', usd: 4 }] }
+  const flowsBehind = (k) => { if (k === 'x1' || !(k in behind)) throw new Error(`asked for ${k}`); return behind[k] }
+  const out = costSources({ wallets: W, present: new Set(['a', 'b', 'x2', 'x3']), flowsOf: flowsBehind, groups: views, seen: full.links })
+  assert.deepEqual(out.sources, { x2: { scope: 'g3', with: ['a', 'x1'] }, x3: null })
+  // What x1 is linked to is kept as it was; x2's links found now (x1 still among them) replace its own.
+  assert.deepEqual(out.links, full.links)
+  // With nothing kept (a first update, or the cache started over), the trail ends at x1.
+  assert.deepEqual(costSources({ wallets: W, present: new Set(['a', 'b', 'x2', 'x3']), flowsOf: flowsBehind, groups: views }).sources.x2, { scope: 'g2', with: ['x1'] })
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x2:cost': 'below@g3', update: 'ok' }
+  const x2 = { ...idle(2450), scope: 'x2', scope_label: '二', cost_from: out.sources.x2 }
+  const held = evaluate([row(2450), x2, total], prev)
+  assert.deepEqual([held.messages, held.state['x2:cost']], [[], 'below@g3'])
+})
+
+test('the links kept from before stand in for a wallet left out of an update, whose reward claim or order the others\' books cannot name', () => {
+  const W = [{ key: 'a', address: '0xa' }, { key: 'x0', address: '0x0a', extra: true }, { key: 'x1', address: '0x1a', extra: true }]
+  const views = [{ key: 'g1', wallets: ['x0', 'x1'] }, { key: 'g2', wallets: ['a', 'x1'] }]
+  // x0's order paid x1: booked between them while both are read; with x0 left out, x1's books book the fill
+  // from the settlement contract (internal, not a flow at all), and a reward x0 claimed to x1 from the reward
+  // contract. Either way x1's flows no longer name x0. x1 also got coins straight from A.
+  const inStep = { x0: [{ kind: 'between', cp: '0x1a', usd: -5000 }], x1: [{ kind: 'between', cp: '0x0a', usd: 5000 }, { kind: 'between', cp: '0xa', usd: 3000 }] }
+  const first = costSources({ wallets: W, present: new Set(['a', 'x0', 'x1']), flowsOf: (k) => inStep[k], groups: views })
+  assert.deepEqual(first.sources.x1, { scope: null, with: ['a', 'x0'] })
+  const alone = { x1: [{ kind: 'transfer', cp: '0x0000000000000000000000000000000000000000', usd: 500 }, { kind: 'between', cp: '0xa', usd: 3000 }] }
+  // Hour after hour while x0 stays left out: each update keeps the link for the next.
+  let seen = first.links
+  for (let hour = 1; hour <= 3; hour++) {
+    const later = costSources({ wallets: W, present: new Set(['a', 'x1']), flowsOf: (k) => alone[k], groups: views, seen })
+    assert.deepEqual(later.sources.x1, { scope: null, with: ['a', 'x0'] }, `hour ${hour}`)
+    assert.deepEqual(later.links, { '0x0a': ['0x1a'], '0x1a': ['0xa', '0x0a'] }, `hour ${hour}`)
+    seen = later.links
+  }
+  // Without them, x1 would take the view with A alone, which leaves out x0's money.
+  assert.deepEqual(costSources({ wallets: W, present: new Set(['a', 'x1']), flowsOf: (k) => alone[k], groups: views }).sources.x1, { scope: 'g2', with: ['a'] })
+  // A link is read both ways: x0 read alone after its order (x1 left out, so x0's books book the payment as a
+  // transfer to it), then x1 read alone: x1 still waits for x0, though it was never kept from x1's side.
+  const payer = costSources({ wallets: W, present: new Set(['a', 'x0']), flowsOf: (k) => ({ x0: [{ kind: 'transfer', cp: '0x1a', usd: -5000 }] })[k], groups: views })
+  assert.deepEqual(payer.links, { '0x0a': ['0x1a'] })
+  assert.deepEqual(costSources({ wallets: W, present: new Set(['a', 'x1']), flowsOf: (k) => alone[k], groups: views, seen: payer.links }).sources.x1, { scope: null, with: ['a', 'x0'] })
+  // Kept links count only for a wallet left out: between two wallets read now, the links are found afresh,
+  // and an address no longer tracked (or anything else in the file) is passed over.
+  const stale = { '0x1a': ['0x0a', '0xa', '0xdead', { toString: 1 }, ['0x0a'], 7, null], '0x0a': 'junk', __proto__: null }
+  const now = costSources({ wallets: W, present: new Set(['a', 'x0', 'x1']), flowsOf: (k) => ({ x0: [], x1: [] })[k], groups: views, seen: stale })
+  assert.deepEqual(now.sources, { x0: null, x1: null })
+  assert.deepEqual(now.links, { '0x1a': [], '0x0a': [] })
+  assert.deepEqual(costSources({ wallets: W, present: new Set(['a', 'x1']), flowsOf: (k) => alone[k], groups: views, seen: { '0x1a': [{ toString: 1 }, ['0x0a']] } }).sources.x1, { scope: 'g2', with: ['a'] })
+  assert.deepEqual(costSources({ wallets: W, present: new Set(['a', 'x0', 'x1']), flowsOf: (k) => inStep[k], groups: views, seen: ['junk'] }).sources, first.sources)
+  // An update run without the added addresses keeps what is kept for them.
+  assert.deepEqual(costSources({ wallets: W.slice(0, 1), present: new Set(['a']), flowsOf: () => [], groups: [], seen: first.links }), { sources: {}, links: first.links })
+})
+
+test('the trail is followed to its end, however long, and along every branch', () => {
+  const W = ['c', 'c1', 'c2'].map((k) => ({ key: k, address: `0x${k}` })).concat(['x1', 'x2', 'x3', 'y1', 'y2', 'x'].map((k) => ({ key: k, address: `0x${k}`, extra: true })))
+  const all = new Set(W.map((w) => w.key))
+  const between = (...cps) => cps.map((cp) => ({ kind: 'between', cp: `0x${cp}`, usd: 5000 }))
+  // C to x1 to x2 to x3, each passing most of its ETH on; and a fork, C1 to y1 to x and C2 to y2 to x.
+  const books = { x1: between('c', 'x2'), x2: between('x1', 'x3'), x3: between('x2'), y1: between('c1', 'x'), y2: between('c2', 'x'), x: between('y1', 'y2') }
+  const views = [{ key: 'g1', wallets: ['c', 'x1', 'x2', 'x3'] }, { key: 'g2', wallets: ['x1', 'x2', 'x3'] }, { key: 'g3', wallets: ['c1', 'c2', 'y1', 'y2', 'x'] }, { key: 'g4', wallets: ['c2', 'y1', 'y2', 'x'] }]
+  const { sources } = costSources({ wallets: W, present: all, flowsOf: (k) => books[k], groups: views })
+  assert.deepEqual(sources.x3, { scope: 'g1', with: ['c', 'x1', 'x2'] })
+  assert.deepEqual(sources.x, { scope: 'g3', with: ['c1', 'c2', 'y1', 'y2'] })
+})
+
+test('run.mjs\'s inputs: every tracked wallet and every view asked for, also those left out of this update', () => {
+  const base = [{ key: 'a', address: '0xa' }], extra = [{ key: 'x0', address: '0x0a', extra: true }, { key: 'x1', address: '0x1a', extra: true }]
+  // Members in any order, as the store keeps them; x0 left out of this update.
+  const groups = [{ key: 'g1', members: ['x1', 'a', 'x0'] }, { key: 'g2', members: ['x1', 'a'] }]
+  const flows = { x1: [{ kind: 'between', cp: '0xa', usd: 3000 }, { kind: 'transfer', cp: '0x0a', usd: 2000 }] }
+  const out = costSourcesFor({ base, extra, present: new Set(['a', 'x1']), groups, flowsOf: (k) => flows[k] })
+  assert.deepEqual(out.sources, { x1: { scope: 'g1', with: ['a', 'x0'] } })
+  assert.deepEqual(out.links, { '0x1a': ['0xa', '0x0a'] })
+  // The kept links reach costSources: with x1's flows no longer naming x0 (its reward claim, or order), x1
+  // still waits for the view holding x0.
+  const later = { x1: [{ kind: 'between', cp: '0xa', usd: 3000 }] }
+  const kept = costSourcesFor({ base, extra, present: new Set(['a', 'x1']), groups, flowsOf: (k) => later[k], seen: { '0x1a': ['0xa', '0x0a'], '0x0a': ['0x1a'] } })
+  assert.deepEqual(kept.sources, { x1: { scope: 'g1', with: ['a', 'x0'] } })
+  assert.deepEqual(kept.links, { '0x1a': ['0xa', '0x0a'], '0x0a': ['0x1a'] })
+})
+
+// x1 with a range of its own (2000-2500), as row() publishes one.
+const lpx = (p, extra = {}) => ({ ...row(p), scope: 'x1', scope_label: '新', added: true, now_cost_eth_price: 1700, eth_units_now: 10, cost_from: { scope: 'g1', with: ['a'] }, ...extra })
+
+test('an added wallet with no ETH of its own is not told to sell on a combined view\'s price', () => {
+  // x1 sent its ETH back to A, or sold it for USDC: no positions, and too little ETH for a price of its own.
+  let prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'na', update: 'ok' }
+  const step = (rows) => { const r = evaluate(rows, prev); prev = r.state; return r.messages }
+  const empty = (p, extra = {}) => idle(p, { eth_units_now: 0.01, now_cost_eth_price: null, curve: { eth: 0.01, usd: 3000, positions: [] }, ...extra })
+  for (const p of [2300, 2390, 2410, 2300, 2450]) assert.deepEqual(step([row(2100), empty(p), both(p), total]), [])
+  assert.equal(prev['x1:cost'], 'na')
+  // 0.05 ETH of its own is enough, less is not.
+  for (const eth of [0.05, 1, 4]) {
+    const r = evaluate([row(2100), idle(2410, { eth_units_now: eth }), both(2410), total], { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'below@g1', update: 'ok' })
+    assert.deepEqual(r.messages.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']], String(eth))
+  }
+  const dust = evaluate([row(2100), idle(2410, { eth_units_now: 0.049 }), both(2410), total], { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'below@g1', update: 'ok' })
+  assert.deepEqual([dust.messages, dust.state['x1:cost']], [[], 'na'])
+  // A range of dust falling out quotes no price it will never be told on.
+  const fell = evaluate([row(2100), lpx(1990, { eth_units_now: 0.01 }), both(1990), total], { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:2000-2500': 'in', 'x1:cost': 'na', update: 'ok' })
+  assert.equal(fell.messages.find((m) => m.key === 'x1:2000-2500').message, 'ETH $1,990.00，低于下沿 $2,000.00，这个仓位全部变成了 ETH，现在不赚利息。')
+  assert.deepEqual(step([row(2100), empty(2450, { now_cost_eth_price: 0 }), both(2450), total]), [])
+  assert.equal(prev['x1:cost'], 'na')
+  // ETH back in it: judged on the view's price, from where ETH is.
+  assert.deepEqual(step([row(2100), idle(2380), both(2380), total]), [])
+  assert.equal(prev['x1:cost'], 'below@g1')
+  assert.deepEqual(step([row(2100), idle(2410), both(2410), total]).map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+})
+
+test('an added wallet whose combined view is asked for while ETH is above the view\'s price already is told at once; a new view\'s price starts without the old band', () => {
+  // Out of range and counted alone (its own price 2400, above ETH), the hint followed: the view asked for
+  // counts the coins as A bought them (1700), and ETH is above that already.
+  let prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'below@own', update: 'ok' }
+  const step = (rows) => { const r = evaluate(rows, prev); prev = r.state; return r.messages }
+  assert.deepEqual(step([row(2050), idle(2050, { now_cost_eth_price: 2400, cost_from: { scope: null, with: ['a'] } }), total]), [])
+  const told = step([row(2050), idle(2050, { now_cost_eth_price: 2400 }), both(2050, { now_cost_eth_price: 1700 }), total])
+  assert.deepEqual(told.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.equal(told[0].message, 'ETH $2,050.00，不低于和 A 合在一起算的成本价 $1,700.00。现在一起撤出、把 ETH 全卖掉，本金不亏、利息全拿。')
+  assert.deepEqual([step([row(2080), idle(2080, { now_cost_eth_price: 2400 }), both(2080, { now_cost_eth_price: 1700 }), total]), prev['x1:cost']], [[], 'above@g1'])
+  // A smaller view asked for later (g2 at 2140): ETH 2100 is within 2% under it, but the new price starts
+  // without g1's band: below it, quietly, and told when ETH passes it.
+  const g2 = (p) => ({ ...both(p), scope: 'g2', now_cost_eth_price: 2140 })
+  const on2 = (p) => idle(p, { cost_from: { scope: 'g2', with: ['a'] } })
+  assert.deepEqual(step([row(2100), on2(2100), both(2100, { now_cost_eth_price: 1700 }), g2(2100), total]), [])
+  assert.equal(prev['x1:cost'], 'below@g2')
+  assert.deepEqual(step([row(2200), on2(2200), both(2200, { now_cost_eth_price: 1700 }), g2(2200), total]).map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+})
+
+test('an added wallet whose combined view is gone while ETH is between its own price and the view\'s is told on its own price, said to count it alone', () => {
+  // Waiting for the view's 2400 at 2300; the view is no longer asked for (dropped for the newer ones).
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'below@g1', update: 'ok' }
+  const { messages, state } = evaluate([row(2300), idle(2300, { cost_from: { scope: null, with: ['a'] } }), total], prev)
+  assert.deepEqual(messages.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.equal(messages[0].message, 'ETH $2,300.00，不低于它自己的成本价 $1,700.00。但这只按它自己的账算：它和 A 之间转过钱，转账的币按当时的价算，那边之前的盈亏不在里面。在 A 的看板上点「加地址」加它，就按合在一起的成本价提醒。')
+  assert.equal(state['x1:cost'], 'above@own')
+})
+
+test('an added wallet out of range in an hour its combined view is missing is told on the view\'s price once the view is back', () => {
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:2000-2500': 'in', 'x1:cost': 'na', update: 'ok' }
+  const fall = evaluate([row(1990), lpx(1990), total], prev)
+  const x1 = fall.messages.find((m) => m.key === 'x1:2000-2500')
+  assert.ok(x1.message.endsWith('和它合在一起算成本价的地址这一小时有没读完的，成本价先不算。'), x1.message)
+  assert.equal(fall.state['x1:cost'], 'below@g1')
+  const back = evaluate([row(1990), lpx(1990), both(1990, { now_cost_eth_price: 1900 }), total], fall.state)
+  assert.deepEqual(back.messages.filter((m) => m.key.startsWith('x1')).map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.equal(back.messages.find((m) => m.key === 'x1:cost').message, 'ETH $1,990.00，不低于和 A 合在一起算的成本价 $1,900.00。现在一起撤出、把 ETH 全卖掉，本金不亏、利息全拿。')
+  // In range when the view went missing, it stays unjudged.
+  assert.equal(evaluate([row(2100), lpx(2100), total], prev).state['x1:cost'], 'na')
+})
+
+test('from the last good data, an added wallet\'s cost state judged on a view keeps it when its old range looks back in range', () => {
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:2000-2500': 'below', 'x1:cost': 'below@g1', update: 'ok' }
+  const r = evaluate([row(2100), lpx(2100), both(2100), total], prev, { lastGood: true })
+  assert.equal(r.state['x1:cost'], 'below@g1')
+  // Fresh data: it had been withdrawn, and ETH is above the view's price.
+  const fresh = evaluate([row(2450), idle(2450), both(2450), total], r.state)
+  assert.deepEqual(fresh.messages.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+})
+
+test('an added wallet counted alone names a wallet left out of this update, and points to no view that would leave it out', () => {
+  const prev = { 'a:2000-2500': 'below', 'a:cost': 'below', 'x1:cost': 'below@own', 'x1:2000-2500': 'in', update: 'ok' }
+  const alone = { scope: null, with: ['a', 'x0'] }
+  const { messages } = evaluate([row(1710), idle(1710, { cost_from: alone }), total], prev)
+  assert.deepEqual(messages.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  assert.equal(messages[0].message, 'ETH $1,710.00，不低于它自己的成本价 $1,700.00。但这只按它自己的账算：它和 A、1 个这一小时没读完的地址 之间转过钱，转账的币按当时的价算，那边之前的盈亏不在里面。')
+  const fell = evaluate([row(1990), lpx(1990, { cost_from: alone }), total], { ...prev, 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'na' }).messages.find((m) => m.key === 'x1:2000-2500')
+  assert.ok(fell.message.endsWith('现在撤出的话，只按它自己的账算 ETH 成本价 $1,700.00：它和 A、1 个这一小时没读完的地址 之间转过钱，转账的币按当时的价算，那边之前的盈亏不在里面。'), fell.message)
+  // Every one of them is counted.
+  const two = evaluate([row(1710), idle(1710, { cost_from: { scope: null, with: ['a', 'x0', 'x2'] } }), total], prev).messages
+  assert.ok(two[0].message.includes('它和 A、2 个这一小时没读完的地址 之间转过钱'), two[0].message)
+})
+
+test('a change between two views, from a 1.18.0 state, or into the plain basis is told at once when ETH is already above the new price; a state never judged starts quiet', () => {
+  const A = row(2100)
+  const was = (state) => ({ 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': state, update: 'ok' })
+  const kinds = (r) => r.messages.map((m) => [m.key, m.kind])
+  // Waiting for g1's 2400 at 2300, a smaller view (g2 at 2200) is asked for.
+  const g2 = (p) => ({ ...both(p), scope: 'g2', now_cost_eth_price: 2200 })
+  const views = evaluate([A, idle(2300, { cost_from: { scope: 'g2', with: ['a'] } }), both(2300), g2(2300), total], was('below@g1'))
+  assert.deepEqual(kinds(views), [['x1:cost', 'cost']])
+  assert.equal(views.messages[0].message, 'ETH $2,300.00，不低于和 A 合在一起算的成本价 $2,200.00。现在一起撤出、把 ETH 全卖掉，本金不亏、利息全拿。')
+  assert.equal(views.state['x1:cost'], 'above@g2')
+  // A state 1.18.0 wrote (its own price as ever), on the first update with a view: below it or above it.
+  for (const [state, own] of [['below', 2500], ['above', 1700]]) {
+    const r = evaluate([A, idle(2300, { now_cost_eth_price: own }), both(2300, { now_cost_eth_price: 2200 }), total], was(state))
+    assert.deepEqual([kinds(r), r.state['x1:cost']], [[['x1:cost', 'cost']], 'above@g1'], state)
+  }
+  // No links left (the wallet it moved money with let go): its own price as ever, on the plain text.
+  const plain = evaluate([A, idle(2300, { cost_from: null }), total], was('below@g1'))
+  assert.deepEqual(kinds(plain), [['x1:cost', 'cost']])
+  assert.equal(plain.messages[0].message, 'ETH $2,300.00，不低于成本价 $1,700.00。现在卖掉 ETH，本金不亏、利息全拿。')
+  assert.equal(plain.state['x1:cost'], 'above')
+  // Never judged: an address just caught up, or one in range last hour and withdrawn now. Quiet, as a
+  // configured wallet is.
+  const fresh = evaluate([A, idle(2450), both(2450), total], { 'a:2000-2500': 'in', 'a:cost': 'na', update: 'ok' })
+  assert.deepEqual([kinds(fresh), fresh.state['x1:cost']], [[], 'above@g1'])
+  const out = evaluate([A, idle(2450), both(2450), total], was('na'))
+  assert.deepEqual([kinds(out), out.state['x1:cost']], [[], 'above@g1'])
+})
+
+test('in an hour its combined view is missing, an added wallet in range needs no price: out of range again, it is told on the view\'s price', () => {
+  // Told on g1 already ('above@g1'); its ETH goes into a new 2000-2500 range while another address of g1 is behind.
+  let prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:cost': 'above@g1', update: 'ok' }
+  const step = (rows) => { const r = evaluate(rows, prev); prev = r.state; return r.messages.filter((m) => m.key.startsWith('x1')) }
+  step([row(2100), lpx(2100), total])
+  assert.equal(prev['x1:cost'], 'na')
+  const fell = step([row(1990), lpx(1990), total])
+  assert.ok(fell[0].message.endsWith('成本价先不算。'), fell[0].message)
+  assert.equal(prev['x1:cost'], 'below@g1')
+  assert.deepEqual(step([row(1990), lpx(1990), both(1990, { now_cost_eth_price: 1900 }), total]).map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+  // One unjudged hour in range, then read out of it just under the view's price (within its 2% band):
+  // below it, and told when ETH passes it.
+  prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:2000-2500': 'in', 'x1:cost': 'above@g1', update: 'ok' }
+  step([row(2100), lpx(2100), total])
+  assert.equal(prev['x1:cost'], 'na')
+  step([row(1940), lpx(1940), both(1940, { now_cost_eth_price: 1950 }), total])
+  assert.equal(prev['x1:cost'], 'below@g1')
+  assert.deepEqual(step([row(1960), lpx(1960), both(1960, { now_cost_eth_price: 1950 }), total]).map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
+})
+
+test('from the last good data, an added wallet\'s ETH follows the live pools: a range it fell through is judged on its view\'s price', () => {
+  // x1's last good row: ETH 2600, above its 2000-2500 range, so all USDC and no ETH; counted with A in g1, at 1950.
+  const x1 = { ...outage, scope: 'x1', scope_label: '新', added: true, eth_usd: 2600, range_state: 'above', eth_units_now: 0, cost_from: { scope: 'g1', with: ['a'] },
+    curve: { ...outage.curve, positions: [{ ...outage.curve.positions[0], pool: 2600, in_range: false }] } }
+  const live = (price, tick) => withLivePrices([row(2100), x1, both(2100, { now_cost_eth_price: 1950 }), total], { [`base:${pool}`]: { tick, price } }, price)
+  const prev = { 'a:2000-2500': 'in', 'a:cost': 'na', 'x1:2000-2500': 'above', 'x1:cost': 'na', update: 'ok' }
+  const fell = evaluate(live(1900, -201000), prev, { lastGood: true })
+  assert.ok(fell.messages.find((m) => m.key === 'x1:2000-2500').message.endsWith('和 A 合在一起算，现在一起撤出的话 ETH 成本价 $1,950.00：涨到这个价以上把 ETH 全卖掉，本金不亏、利息全拿。'))
+  assert.equal(fell.state['x1:cost'], 'below@g1')
+  const up = evaluate(live(1960, -200600), fell.state, { lastGood: true })
+  assert.deepEqual(up.messages.map((m) => [m.key, m.kind]), [['x1:cost', 'cost']])
 })

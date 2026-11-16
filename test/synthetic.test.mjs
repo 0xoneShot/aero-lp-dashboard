@@ -1,7 +1,8 @@
 // Hand-made transactions for situations the real history has not hit yet.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLedger, owedPrincipal, positionsAt, gaugesAt } from '../lib/ledger.mjs'
+import { buildLedger, owedPrincipal, positionsAt, gaugesAt, isExternal } from '../lib/ledger.mjs'
+import { costLinks } from '../lib/alerts.mjs'
 import { escrowAt, cowOrder } from '../lib/orders.mjs'
 import { TOPIC } from '../lib/abi.mjs'
 import { USDC, WETH, AERO, ZERO } from '../lib/config.mjs'
@@ -28,13 +29,13 @@ const claim = (gauge, account, id, recipient, amt) => ({ address: gauge, topics:
 const deferredClaim = (account, recipient, amt) => ({ address: GAUGE, topics: [TOPIC.DeferredEmissionsClaimed, pad(account), pad(recipient)], data: num(amt) })
 const deposit = (gauge, user, id) => ({ address: gauge, topics: [TOPIC.GaugeDeposit, pad(EOA), pad(user), num(id)], data: num(1) })
 
-function ledgerOf(txs, { eoas = [], overrides = {} } = {}) {
+function ledgerOf(txs, { eoas = [], overrides = {}, wallets = WALLETS } = {}) {
   const state = {
     wallets: { a: { openingBlock: 0, openingEth: '0' }, b: { openingBlock: 0, openingEth: '0' } },
     txs: Object.fromEntries(txs.map((t, i) => [t.hash, { block: t.block ?? 100 + i, index: 0, ts: 0, from: t.from ?? EOA, to: t.to ?? EOA, selector: '0x12345678', value: '0', status: 'success', gasCost: '0', eth: {}, ...t, logs: t.logs.map((l, j) => ({ ...l, logIndex: j })) }])),
   }
   const eoa = new Set(eoas)
-  return buildLedger(state, (a) => (eoa.has(a) ? 'eoa' : 'contract'), { gaugeOk: (a) => a === GAUGE, overrides, wallets: WALLETS })
+  return buildLedger(state, (a) => (eoa.has(a) ? 'eoa' : 'contract'), { gaugeOk: (a) => a === GAUGE, overrides, wallets })
 }
 const legsOf = (L, k, hash) => L[k].events.find((e) => e.hash === hash)?.legs.map((g) => `${g.asset === 'ETH' ? 'ETH' : g.asset.slice(0, 6)}:${g.amount}:${g.cls}${g.review ? ':review' : ''}`) ?? []
 
@@ -489,4 +490,21 @@ test('a staked position first seen when a router unstakes it for the wallet was 
   const unstake = { address: GAUGE, topics: [TOPIC.GaugeWithdraw, pad(ROUTER), pad(WA), num(41)], data: num(1) }
   const L = ledgerOf([{ hash: '0x2a', from: WA, logs: [nft(GAUGE, ROUTER, 41), unstake, nft(ROUTER, WA, 41)] }])
   assert.deepEqual(L.a.events.find((e) => e.hash === '0x2a')?.nftMoves ?? [], [])
+})
+
+test('money from another tracked wallet links the two for the cost alerts; money from anyone else links nothing', () => {
+  // As src/run.mjs books the flows: every leg counted as money in or out, by its class.
+  const flowsOf = (L, k) => L[k].events.flatMap((e) => e.legs.filter((g) => isExternal(g.cls)).map((g) => ({ kind: g.cls, cp: g.cp })))
+  const keyAt = { [WA]: 'a', [WB]: 'b' }
+  const L = ledgerOf([{ hash: '0xd1', from: WA, logs: [transfer(WETH, WA, WB, 10n ** 18n)] }], { eoas: [WA, WB] })
+  assert.deepEqual(costLinks(flowsOf(L, 'b'), keyAt, 'b', ['a', 'b']), ['a'])
+  assert.deepEqual(costLinks(flowsOf(L, 'a'), keyAt, 'a', ['a', 'b']), ['b'])
+  const M = ledgerOf([{ hash: '0xd2', from: EOA, logs: [transfer(WETH, EOA, WB, 10n ** 18n)] }], { eoas: [EOA] })
+  assert.deepEqual(flowsOf(M, 'b').map((f) => f.kind), ['transfer'])
+  assert.deepEqual(costLinks(flowsOf(M, 'b'), keyAt, 'b', ['a', 'b']), [])
+  // A left out of this update: b's books, built without it, book the move as a transfer; still a link then.
+  const N = ledgerOf([{ hash: '0xd1', from: WA, logs: [transfer(WETH, WA, WB, 10n ** 18n)] }], { eoas: [WA, WB], wallets: [WALLETS[1]] })
+  assert.deepEqual(flowsOf(N, 'b').map((f) => [f.kind, f.cp]), [['transfer', WA]])
+  assert.deepEqual(costLinks(flowsOf(N, 'b'), keyAt, 'b', ['a', 'b'], { present: new Set(['b']) }), ['a'])
+  assert.deepEqual(costLinks(flowsOf(N, 'b'), keyAt, 'b', ['a', 'b'], { present: new Set(['a', 'b']) }), [])
 })
