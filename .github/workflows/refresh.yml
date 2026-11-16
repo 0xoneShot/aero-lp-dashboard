@@ -81,7 +81,7 @@ jobs:
       # and, if that fails or runs out of time, at once without them, its pool samples stopping by minute
       # 29: the configured wallets are updated whatever an added address does. The limit here is for a hang,
       # well above what the configured wallets alone have needed; what was read so far is still sealed into
-      # the cache below. Setup, requests (5), update (40), checks, alerts (3) and the seal fit the job's 55.
+      # the cache below. Setup, requests (5), update (40), checks, alerts (3 + 1) and the seal fit the job's 55.
       - id: update
         timeout-minutes: 40
         run: npm run update
@@ -97,6 +97,15 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           UPDATE_OK: ${{ steps.update.outcome == 'success' && steps.test.outcome == 'success' }}
         run: node scripts/alerts.mjs
+      # BTC and ETH against their realized price (lib/realized.mjs): public market data only, nothing of the
+      # wallets, so it runs whether or not the update went through.
+      - name: Send realized-price alerts
+        if: ${{ !cancelled() && steps.open.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: node scripts/realized-alerts.mjs
       # Saved even after a failed update, so what it read (snapshots, scan progress, alert state)
       # carries over to the next run; nothing is published then. Not after a cancelled run, which may
       # have stopped in the middle of writing.
