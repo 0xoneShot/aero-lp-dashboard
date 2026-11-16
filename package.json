@@ -1,6 +1,6 @@
 {
   "name": "aero-lp-dashboard",
-  "version": "1.18.0",
+  "version": "1.18.1",
   "description": "Daily Aero LP earnings and overall P&L for tracked wallets on Base and Ethereum",
   "scripts": {
     "update": "node src/update.mjs",
