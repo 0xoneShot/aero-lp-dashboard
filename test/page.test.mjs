@@ -172,7 +172,8 @@ test('the 每日年化 axis reaches every steady day however high, and leaves ou
   assert.equal(aprTop([...steadyRows, aprRow(6, 9, { partial: true, span_days: 0.01 })]), 1.6)
   assert.equal(aprTop([...steadyRows, aprRow(6, 2.5, { partial: true, span_days: 0.01 })]), 2.5)
   assert.equal(aprTop([...steadyRows, aprRow(6, 9, { partial: true, span_days: 0.4 })]), 9)
-  // A week or month row carries days, not span_days.
+  // A row with days in place of span_days and no steady_apr is judged by its days (a guard: byPeriod writes
+  // steady_apr on every week and month, and the page judges those by it).
   assert.equal(aprTop([...steadyRows, { day: '2026-03-02', apr_day: 9, pool_share: 1, partial: true, days: 0.1 }]), 1.6)
   assert.equal(aprTop([...steadyRows, { day: '2026-03-02', apr_day: 9, pool_share: 1, partial: true, days: 3 }]), 9)
   // No steady day above 0%: every day counts. Nothing above 0%: 100%.
@@ -190,7 +191,7 @@ function dayRow(day, apr, extra = {}) {
 }
 const dayRows = (from, n, apr, extra) => Array.from({ length: n }, (_, i) => dayRow(addDay(from, i), apr, extra))
 
-test('a week or month made of days the money went in and came out within is short on the 每日年化 axis', () => {
+test('on the 每日年化 axis a week or month vouches only for the rate of its steady days, as its days do', () => {
   const byPeriod = pageFn(['parseday', 'periodof', 'aprtop', 'byperiod'], 'byPeriod')
   const aprTop = pageFn('aprtop', 'aprTop'), aprShort = pageFn('aprtop', 'aprShort'), aprWeight = pageFn('aprtop', 'aprWeight')
   assert.equal(aprWeight({ pool_share: null }), 0)
@@ -224,84 +225,167 @@ test('a week or month made of days the money went in and came out within is shor
   assert.ok(Math.abs(noon.pool_share - 0.3) < 1e-12, `${noon.pool_share}`)
   assert.ok(Math.abs(noon.apr_day - 6) < 1e-9, `${noon.apr_day}`)
   assert.equal(aprShort(noon), true)
-  // At 03:00 the new week is today's first hours: partial, three hours of days, so far above the steady weeks it is left out.
+  // A week of steady days vouches for its own rate on the axis, so it is always reached; a week of only a
+  // short day (as at noon above) vouches for none.
+  assert.deepEqual(byPeriod(past, 'week').map((w) => w.steady_apr === w.apr_day), [true, true])
+  assert.equal(noon.steady_apr, null)
+  // At 03:00 the new week is today's first hours: partial, three hours of days, vouching for nothing, so far
+  // above the steady weeks it is left out.
   const early = byPeriod([...past, dayRow('2026-03-16', 11.68, { partial: true, span_days: 0.125 })], 'week')
   assert.equal(early[2].partial, true)
   assert.ok(Math.abs(early[2].days - 0.125) < 1e-12, `${early[2].days}`)
+  assert.equal(early[2].steady_apr, null)
   assert.equal(aprTop(early), early[0].apr_day)
   // Money put in at 01:00 after two days with none in the pool (rows the job still writes: no money, no rate):
   // the week rests on today's first hour as today's row does, though its days count past two, so it is left
-  // out the same way. With money in on those days the week stays steady.
+  // out the same way. With money in on those days the week vouches for their rate and is reached.
   const empty = (day) => ({ ...dayRow(day, 0, { lp_tw_usd: 0, pool_share: null }), apr_day: null })
   const firstHour = dayRow('2026-03-18', 24, { partial: true, span_days: 1 / 24, pool_share: 0.9 })
   const back = byPeriod([...past, empty('2026-03-16'), empty('2026-03-17'), firstHour], 'week')
   assert.ok(back[2].days > 2, `${back[2].days}`)
   assert.ok(Math.abs(back[2].apr_day - 24) < 1e-9, `${back[2].apr_day}`)
   assert.equal(aprShort(back[2]), false)
-  assert.equal(back[2].early, true)
+  assert.equal(back[2].steady_apr, null)
   assert.equal(aprTop(back), back[0].apr_day)
   const along = byPeriod([...past, ...dayRows('2026-03-16', 2, 1.6), firstHour], 'week')
-  assert.equal(along[2].early, false)
+  assert.ok(Math.abs(along[2].steady_apr - 1.6) < 1e-9, `${along[2].steady_apr}`)
   assert.equal(aprTop(along), along[2].apr_day)
-  assert.deepEqual(byPeriod(past, 'week').map((w) => w.early), [false, false])
-  // More than half of the week's money-time: exactly half is not.
-  const earlyOf = (lp) => byPeriod([...past, dayRow('2026-03-16', 1.6, { lp_tw_usd: lp }), dayRow('2026-03-17', 24, { partial: true, span_days: 0.125 })], 'week')[2].early
-  assert.equal(earlyOf(1250), false)
-  assert.equal(earlyOf(1249), true)
-  // As on a day row, only today's first six hours: by 08:00 the week counts, and a past day that was short
-  // because the wallet was first seen late that day is no first hours either.
-  const at8 = byPeriod([...past, empty('2026-03-16'), empty('2026-03-17'), dayRow('2026-03-18', 24, { partial: true, span_days: 1 / 3, pool_share: 0.9 })], 'week')
-  assert.equal(at8[2].early, false)
-  assert.equal(aprTop(at8), at8[2].apr_day)
-  assert.equal(byPeriod([dayRow('2026-03-19', 3, { span_days: 0.17 })], 'week')[0].early, false)
+  // Left out only when far above, as such a day is: at 2.5, within twice the steady weeks, the axis reaches it.
+  const low = byPeriod([...past, empty('2026-03-16'), empty('2026-03-17'), dayRow('2026-03-18', 2.5, { partial: true, span_days: 0.125, pool_share: 0.9 })], 'week')
+  assert.equal(low[2].steady_apr, null)
+  assert.ok(Math.abs(low[2].apr_day - 2.5) < 1e-9, `${low[2].apr_day}`)
+  assert.equal(aprTop(low), low[2].apr_day)
+  // A steady day at 1.6 and today's first three hours: the week vouches for the day's 1.6 only, so its own
+  // rate counts up to twice the highest rate vouched for (3.2), however the money-time splits between them.
+  const hours = (apr, lp) => byPeriod([...past, dayRow('2026-03-16', 1.6, { lp_tw_usd: lp }), dayRow('2026-03-17', apr, { partial: true, span_days: 0.125 })], 'week')
+  assert.ok(Math.abs(hours(4.7, 1250)[2].steady_apr - 1.6) < 1e-9, `${hours(4.7, 1250)[2].steady_apr}`)
+  assert.ok(Math.abs(hours(4.7, 1250)[2].apr_day - 3.15) < 1e-9, `${hours(4.7, 1250)[2].apr_day}`)
+  assert.equal(aprTop(hours(4.7, 1250)), hours(4.7, 1250)[2].apr_day)
+  assert.ok(Math.abs(hours(4.9, 1250)[2].apr_day - 3.25) < 1e-9, `${hours(4.9, 1250)[2].apr_day}`)
+  assert.equal(aprTop(hours(4.9, 1250)), hours(4.9, 1250)[0].apr_day)
+  assert.equal(aprTop(hours(24, 1250)), hours(24, 1250)[0].apr_day)
+  assert.equal(aprTop(hours(24, 100000)), hours(24, 100000)[2].apr_day)
+  // Steady days too small for a rate (under 50 dollar-days, as the week's own rate and, per day, the job's)
+  // vouch for none: a day of dust beside today's first hours leaves the week vouching for nothing.
+  const small = (lp) => byPeriod([...past, dayRow('2026-03-16', 3, { lp_tw_usd: lp }), dayRow('2026-03-17', 24, { partial: true, span_days: 0.125 })], 'week')[2].steady_apr
+  assert.ok(Math.abs(small(50) - 3) < 1e-9, `${small(50)}`)
+  assert.equal(small(49.99), null)
+  const dust = byPeriod([...past, { ...dayRow('2026-03-16', 30, { lp_tw_usd: 40 }), apr_day: null }, dayRow('2026-03-17', 24, { partial: true, span_days: 0.125 })], 'week')
+  assert.equal(dust[2].steady_apr, null)
+  assert.equal(aprTop(dust), dust[0].apr_day)
+  // A week alone, far above its own steady days and nothing else drawn above 0%: the axis goes up to the rate
+  // its steady days vouch for, and the week sits on the top edge.
+  const alone = byPeriod([dayRow('2026-03-16', 0.4), dayRow('2026-03-17', 30, { lp_tw_usd: 2000, pool_share: 0.2 })], 'week')
+  assert.ok(alone[0].apr_day > 2 * alone[0].steady_apr, `${alone[0].apr_day}`)
+  assert.equal(aprTop(alone), alone[0].steady_apr)
+  // As on a day row, only today's first six hours: from 06:00 the week vouches for today's rate, not a little
+  // before, and a past day that was short because the wallet was first seen late that day vouches for its own.
+  const at = (span) => byPeriod([...past, empty('2026-03-16'), empty('2026-03-17'), dayRow('2026-03-18', 24, { partial: true, span_days: span, pool_share: 0.9 })], 'week')
+  assert.equal(at(0.25)[2].steady_apr, at(0.25)[2].apr_day)
+  assert.equal(aprTop(at(0.25)), at(0.25)[2].apr_day)
+  assert.equal(at(0.249)[2].steady_apr, null)
+  assert.equal(aprTop(at(0.249)), at(0.249)[0].apr_day)
+  const [late] = byPeriod([dayRow('2026-03-19', 3, { span_days: 0.17 })], 'week')
+  assert.equal(late.steady_apr, late.apr_day)
+  // A week's steady days weigh by money-time, as its own rate does, not day by day: two whole days at 40%
+  // and today's first nine hours at 150%.
+  const nine = byPeriod([...past, ...dayRows('2026-03-16', 2, 0.4), dayRow('2026-03-18', 1.5, { partial: true, span_days: 0.375 })], 'week')[2]
+  assert.ok(Math.abs(nine.apr_day - (0.4 * 2 + 1.5 * 0.375) / 2.375) < 1e-9, `${nine.apr_day}`)
+  assert.equal(nine.steady_apr, nine.apr_day)
+  // Money put in at 21:00 yesterday after a day with none (a short day: in for an eighth of it), then today's
+  // first three hours, half of the week's money-time each, the week's own pool_share over one half: no day of
+  // it vouches for a rate, so the week counts as they do and is left out.
+  const evening = byPeriod([...past, empty('2026-03-16'), dayRow('2026-03-17', 6, { lp_tw_usd: 1250, pool_share: 0.125 }), dayRow('2026-03-18', 6, { partial: true, span_days: 0.125 })], 'week')
+  assert.ok(Math.abs(evening[2].pool_share - 0.5625) < 1e-12, `${evening[2].pool_share}`)
+  assert.equal(aprShort(evening[2]), false)
+  assert.equal(evening[2].steady_apr, null)
+  assert.equal(aprTop(evening), evening[0].apr_day)
+  // A past week whose short day earned far more than its other days: it vouches for those days' 1.2 only and
+  // is left out. With the money in for half of that day every day is steady and the week vouches for its own.
+  const thin = (share) => byPeriod([...past, ...dayRows('2026-03-16', 2, 1.2, { lp_tw_usd: 1000 }), dayRow('2026-03-18', 9, { pool_share: share })], 'week')
+  assert.ok(Math.abs(thin(0.45)[2].steady_apr - 1.2) < 1e-9, `${thin(0.45)[2].steady_apr}`)
+  assert.equal(aprTop(thin(0.45)), thin(0.45)[0].apr_day)
+  assert.equal(thin(0.5)[2].steady_apr, thin(0.5)[2].apr_day)
+  assert.equal(aprTop(thin(0.5)), thin(0.5)[2].apr_day)
+  // Short days that earned what the other days did leave the period at its height, as they are on the day
+  // view. A month whose money-time is mostly two such days (much more money in overnight) vouches for its
+  // steady days' 40% and is drawn above months at 15%; a week whose wide position was out from 10:00 Monday
+  // (Monday short at an ordinary 38%, the other days the narrow one's 150%) is drawn among weeks at 25%.
+  const overnight = byPeriod([...dayRows('2026-03-01', 9, 0.4, { lp_tw_usd: 1000 }), dayRow('2026-03-10', 0.4, { lp_tw_usd: 19750, pool_share: 0.387 }), dayRow('2026-03-11', 0.4, { lp_tw_usd: 21833, pool_share: 0.428 }), ...dayRows('2026-03-12', 20, 0.4, { lp_tw_usd: 1000 }), ...dayRows('2026-04-01', 30, 0.15)], 'month')
+  assert.ok(Math.abs(overnight[0].steady_apr - 0.4) < 1e-9, `${overnight[0].steady_apr}`)
+  assert.equal(aprTop(overnight), overnight[0].apr_day)
+  const wideOut = byPeriod([...dayRows('2026-03-02', 14, 0.25, { lp_tw_usd: 105000 }), dayRow('2026-03-16', 0.384, { lp_tw_usd: 46667, pool_share: 0.444 }), ...dayRows('2026-03-17', 6, 1.5, { lp_tw_usd: 5000 })], 'week')
+  assert.ok(Math.abs(wideOut[2].steady_apr - 1.5) < 1e-9, `${wideOut[2].steady_apr}`)
+  assert.equal(aprTop(wideOut), wideOut[2].apr_day)
+  // This week, money put back in at 13:00 on Wednesday after days with none, at three times the earlier
+  // weeks: from 06:00 on Thursday today's row vouches for its rate, as on the day view, and the week is drawn;
+  // at 03:00 no day of it vouches for one yet and it is left out.
+  const steadyPast = [...dayRows('2026-03-02', 7, 0.4), ...dayRows('2026-03-09', 7, 0.4)]
+  const wed = (span) => byPeriod([...steadyPast, empty('2026-03-16'), empty('2026-03-17'), dayRow('2026-03-18', 1.2, { lp_tw_usd: 10000 * 11 / 24, pool_share: 11 / 24 }), dayRow('2026-03-19', 1.2, { partial: true, span_days: span })], 'week')
+  assert.equal(aprTop(wed(0.25)), wed(0.25)[2].apr_day)
+  assert.equal(aprTop(wed(0.125)), wed(0.125)[0].apr_day)
   // The same by month: the 4th, after three days with none.
   const months4th = byPeriod([...dayRows('2026-01-05', 20, 1.5), ...dayRows('2026-02-02', 20, 1.4), empty('2026-03-01'), empty('2026-03-02'), empty('2026-03-03'), dayRow('2026-03-04', 24, { partial: true, span_days: 0.125, pool_share: 0.9 })], 'month')
-  assert.deepEqual(months4th.map((m) => m.early), [false, false, true])
+  assert.deepEqual(months4th.map((m) => m.steady_apr === m.apr_day), [true, true, false])
+  assert.equal(months4th[2].steady_apr, null)
   assert.equal(aprTop(months4th), months4th[0].apr_day)
 })
 
-test('on random rows, the 每日年化 axis never leaves out a steady row, and leaves out a short one exactly when it is more than twice them', () => {
+test('on random rows, the 每日年化 axis never leaves out a steady row, and leaves out any other exactly when it is more than twice every rate the rows vouch for', () => {
   const aprTop = pageFn('aprtop', 'aprTop'), rand = rng(20261119)
   const pick = (xs) => xs[Math.floor(rand() * xs.length)]
-  // Each row is made as a kind, so the test does not lean on the page's own rule to tell them apart.
+  // Each row is made as a kind, so the test does not lean on the page's own rule to tell them apart: a steady
+  // row vouches for its own rate, a short one for none, a partly steady week or month for the rate of its
+  // steady days, whatever its own.
+  const OWN = Symbol('own')
   const steady = () => pick([
     { pool_share: 1 }, { pool_share: 0.5 }, { pool_share: 0.5 + rand() * 0.5 },
     { pool_share: undefined }, // no pool_share (a guard)
     { partial: true, span_days: pick([0.25, 0.26, 0.25 + rand() * 0.75]) }, // today, past its first six hours
-    { partial: true, span_days: undefined, days: pick([0.25, 0.25 + rand() * 6]) }, // this week or month, the same
-    { span_days: undefined, days: 1 + rand() * 6 }, // a past week or month
+    { partial: true, span_days: undefined, days: pick([0.25, 0.25 + rand() * 6]) }, // a period row without steady_apr (a guard), the same
+    { span_days: undefined, days: 1 + rand() * 6 }, // the same, a past week or month
+    { span_days: undefined, days: 1 + rand() * 6, partial: pick([true, false]), steady_apr: OWN }, // a week or month of steady days
   ])
   const short = () => pick([
     { pool_share: rand() * 0.5 }, { pool_share: 0.49 }, { pool_share: 0 }, { pool_share: null },
     { partial: true, span_days: pick([0.01, 0.24, 0.249, rand() * 0.25]) },
     { partial: true, span_days: undefined, days: rand() * 0.25 },
+    // A week or month none of whose days vouch for a rate, however its other fields read.
+    { span_days: undefined, days: pick([0.1, 1 + rand() * 6]), partial: pick([true, false]), pool_share: pick([1, 0.3, null]), steady_apr: null },
   ])
-  const seen = { leftOut: 0, shortIn: 0, steadyFar: 0 }
+  const partly = (level) => ({ span_days: undefined, days: pick([0.1, 1 + rand() * 6]), partial: pick([true, false]), pool_share: pick([1, 0.6, 0.3, null]), steady_apr: pick([0, rand() * level, rand() * level * 3]) })
+  const seen = { leftOut: 0, shortIn: 0, vouchedIn: 0, steadyFar: 0 }
   for (let k = 0; k < 20000; k++) {
-    // Steady rates around a level; short ones up to six times it, so they fall either side of twice.
+    // Steady rates around a level; the others up to six times it, so they fall either side of twice.
     const level = pick([0.3, 1, 3, 10])
     const rows = Array.from({ length: 1 + Math.floor(rand() * 30) }, (_, i) => {
-      const kind = rand() < 0.65 ? 'steady' : 'short', u = rand()
+      const v = rand(), kind = v < 0.55 ? 'steady' : v < 0.85 ? 'short' : 'partly', u = rand()
       const apr = u < 0.08 ? pick([null, undefined, Number.NaN]) : u < 0.16 ? 0 : rand() * level * (kind === 'steady' ? 1 : 6)
-      return { ...aprRow(i, apr, kind === 'steady' ? steady() : short()), kind }
+      const r = { ...aprRow(i, apr, kind === 'steady' ? steady() : kind === 'short' ? short() : partly(level)), kind }
+      if (r.steady_apr === OWN) r.steady_apr = apr
+      return r
     })
     const top = aprTop(rows), rated = rows.filter((r) => Number.isFinite(r.apr_day))
-    const most = Math.max(0, ...rated.filter((r) => r.kind === 'steady').map((r) => r.apr_day))
+    const vouched = (r) => (r.kind === 'steady' ? r.apr_day : r.kind === 'partly' ? r.steady_apr : null)
+    const most = Math.max(0, ...rows.map(vouched).filter(Number.isFinite))
+    const mostSteady = Math.max(0, ...rated.filter((r) => r.kind === 'steady').map((r) => r.apr_day))
     const far = (r) => most > 0 && r.apr_day > 2 * most
-    const want = Math.max(0, ...rated.filter((r) => r.kind === 'steady' || !far(r)).map((r) => r.apr_day)) || 1
+    const want = Math.max(0, ...rated.filter((r) => !far(r)).map((r) => r.apr_day)) || most || 1
     if (top !== want) assert.fail(JSON.stringify({ top, want, most, rows }))
     for (const r of rated) {
       if (r.kind === 'steady') {
         if (r.apr_day > top) assert.fail(JSON.stringify({ r, top, most }))
-        if (r.apr_day === most && rated.some((q) => q.kind === 'steady' && q.apr_day > 0 && r.apr_day > 2 * q.apr_day)) seen.steadyFar++
+        if (r.apr_day === mostSteady && rated.some((q) => q.kind === 'steady' && q.apr_day > 0 && r.apr_day > 2 * q.apr_day)) seen.steadyFar++
       } else {
         if ((r.apr_day > top) !== far(r)) assert.fail(JSON.stringify({ r, top, most }))
         if (r.apr_day > top) seen.leftOut++
+        else if (mostSteady > 0 && r.apr_day > 2 * mostSteady) seen.vouchedIn++
         else if (r.apr_day > most) seen.shortIn++
       }
     }
   }
-  // Each outcome came up often: a short row left out, one above the steady rows yet reached, and a
-  // steady row more than twice another steady one, reached.
-  assert.ok(seen.leftOut > 1000 && seen.shortIn > 1000 && seen.steadyFar > 1000, JSON.stringify(seen))
+  // Each outcome came up often: a row left out; one above every rate vouched for, yet reached; one reached
+  // only because a partly steady week or month vouched for more than the steady rows; and a steady row more
+  // than twice another steady one, reached.
+  assert.ok(seen.leftOut > 1000 && seen.shortIn > 1000 && seen.vouchedIn > 300 && seen.steadyFar > 1000, JSON.stringify(seen))
 })
