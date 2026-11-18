@@ -333,7 +333,9 @@
   const ratePair = (a, b) => { let d = 0; while (d < 2 && rateText(a, d) === rateText(b, d)) d++; return [rateText(a, d), rateText(b, d)]; };
   const fmtTick = (v) => (Number.isInteger(v) ? usd0.format(v) : fmtUsd(v));
   const tone = (el, v) => { el.classList.toggle('lp-pos', v > 0); el.classList.toggle('lp-neg', v < 0); };
+  /* parseday:start */
   const parseDay = (d) => new Date(d + 'T00:00:00Z');
+  /* parseday:end */
   const dayLabel = d3.utcFormat('%-m/%-d');
   // Dates as M/D; a Beijing time 'YYYY-MM-DD HH:MM' as M/D HH:MM; a moment (ms) the same way.
   const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
@@ -733,6 +735,33 @@
   }
 
   // ---------- yearly rate of the interest: its own axis; one line, or each wallet and the total ----------
+  // A day (or week, month) whose rate rests on part of it: money went in or came out (pool_share under one
+  // half), or went in and came out within the day (no money at either end, so pool_share is null, yet there
+  // is a rate). Drawn hollow, with a note in the tooltip. A week or month weighs its days by aprWeight, so
+  // one made of such days is short too.
+  // The highest rate the axis must show: every row counts, however high, so a lasting change of level (a
+  // narrower range) or one odd day is drawn at its real height. The exceptions are a short row and today's
+  // first six hours (a cent of interest can read as hundreds of percent): they count only up to twice the
+  // highest of the other rows. Above that the axis need not reach them, and one above the top sits on the
+  // top edge as a triangle, its real rate in the tooltip. With no other row above 0%, every row counts.
+  // test/ checks the rule.
+  /* aprtop:start */
+  function aprShort(r) {
+    return r.pool_share === null ? Number.isFinite(r.apr_day) : r.pool_share < 0.5;
+  }
+  // How much of a day's money-time counts as money in the pool, for its week or month: a day of money
+  // that went in and came out within it (null) counts as none of it; a row without pool_share as all.
+  function aprWeight(r) {
+    return r.pool_share === null ? 0 : r.pool_share ?? 1;
+  }
+  function aprTop(rows) {
+    const shaky = (r) => aprShort(r) || (r.partial === true && (r.span_days ?? r.days) < 0.25);
+    let most = 0, top = 0;
+    for (const r of rows) if (Number.isFinite(r.apr_day) && !shaky(r)) most = Math.max(most, r.apr_day);
+    for (const r of rows) if (Number.isFinite(r.apr_day) && !(most > 0 && r.apr_day > most * 2)) top = Math.max(top, r.apr_day);
+    return top || 1;
+  }
+  /* aprtop:end */
   function drawApr(rowsAll, sc, period) {
     const box = $('apr-chart');
     box.replaceChildren();
@@ -748,14 +777,7 @@
     if (!all.length) { box.textContent = '还没有能算年化的日子。'; return; }
     const W = box.clientWidth || 600, H = 170, m = { t: 10, b: 24 };
     const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
-    // The axis follows the usual days; a day far above them (typically money that went in late that
-    // day, its rate resting on a few hours) sits on the top edge as a triangle, its real rate in the tooltip.
-    // Usual = the median of the days that earned; out-of-range days at 0% must not pull the axis down.
-    const short = (r) => r.pool_share != null && r.pool_share < 0.5;
-    const usual = all.filter((r) => r.apr_day > 0 && !short(r)), base = usual.length ? usual : all.filter((r) => r.apr_day > 0);
-    const med = d3.median(base, (r) => r.apr_day) || 0, max = d3.max(all, (r) => r.apr_day) || 1;
-    const cap = max > med * 2.5 && med > 0 ? med * 2.5 : max;
-    const y = d3.scaleLinear([0, cap * 1.1], [H - m.b, m.t]).nice();
+    const y = d3.scaleLinear([0, aprTop(all) * 1.1], [H - m.b, m.t]).nice();
     const top = y.domain()[1], yv = (v) => y(Math.min(v, top));
     const ticks = y.ticks(3), pctTick = (v) => `${Math.round(v * 100)}%`;
     m.l = Math.ceil(measure(svg, ticks.map(pctTick))) + 8;
@@ -782,7 +804,7 @@
         .attr('fill', 'none').attr('stroke', sr.color).attr('stroke-width', 2).attr('stroke-dasharray', dashOf(sr, multi)).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
       // One series: every day marked (hollow = under way, or money moved in or out). Several: only the
       // ends and the clipped days, so the lines stay readable.
-      for (const r of sr.rows.filter((q) => Number.isFinite(q.apr_day))) if (!multi || r === lastOf(sr) || r.apr_day > top) mark(r, sr.color, r.partial || short(r));
+      for (const r of sr.rows.filter((q) => Number.isFinite(q.apr_day))) if (!multi || r === lastOf(sr) || r.apr_day > top) mark(r, sr.color, r.partial || aprShort(r));
     }
     endLabels(svg, series.filter(lastOf).map((sr) => ({ x: cx(lastOf(sr)) + 8, y: yv(lastOf(sr).apr_day), text: endText(sr) })), m.t, H - m.b);
     const tip = tipFor(box);
@@ -798,7 +820,7 @@
         if (r.aero_per_1k != null) lines.push(['每 $1,000 每天分到', `${fmtNum(r.aero_per_1k, 2)} AERO`]);
         if (r.earn_fee_usd) lines.push(['其中手续费', `${fmtUsd(r.earn_fee_usd)}（${Math.round((r.earn_fee_usd / r.earn_usd) * 100)}%）`]);
         if (period === 'day' && r.aero_usd != null) lines.push(['AERO 价格', `$${Number(r.aero_usd).toFixed(3)}`]);
-        if (series.some((sr) => { const q = sr.rows.find((z) => z.day === day); return q && short(q); })) lines.push(['', `${period === 'day' ? '当天' : '这段时间'}中途加了或撤了钱，`], ['', '按平均资金折算，波动可能大']);
+        if (series.some((sr) => { const q = sr.rows.find((z) => z.day === day); return q && aprShort(q); })) lines.push(['', `${period === 'day' ? '当天' : '这段时间'}中途加了或撤了钱，`], ['', '按平均资金折算，波动可能大']);
         const yAt = Number.isFinite(r.apr_day) ? yv(r.apr_day) : H / 2;
         tip.show(toBox(box, W, cx({ day })), yAt, periodTitle(r, period), lines);
       })
@@ -1197,8 +1219,10 @@
     try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {}
     draw();
   });
+  /* periodof:start */
   const addDays = (d, n) => new Date(parseDay(d).getTime() + n * 864e5).toISOString().slice(0, 10);
   const periodOf = (d, period) => (period === 'month' ? d.slice(0, 7) : period === 'week' ? addDays(d, -((parseDay(d).getUTCDay() + 6) % 7)) : d);
+  /* periodof:end */
   // A week as its days (10/19–25, 9/28–10/4); a month cut short at its start says from when.
   const weekLabel = (r) => (r.first === r.last ? md(r.first) : r.first.slice(5, 7) === r.last.slice(5, 7) ? `${md(r.first)}–${Number(r.last.slice(8, 10))}` : `${md(r.first)}–${md(r.last)}`);
   const monthLabel = (r) => `${Number(r.day.slice(5, 7))}月${r.first.endsWith('-01') ? '' : `（${md(r.first)} 起）`}`;
@@ -1215,7 +1239,9 @@
     return rows.filter((r) => r.day >= from);
   }
   // Rows grouped by week (Monday to Sunday) or month, per scope: interest and the period's P&L add
-  // up; the cumulative P&L and the ETH price are those of the period's last day.
+  // up; the cumulative P&L and the ETH price are those of the period's last day. test/ checks the fields
+  // the yearly-rate axis reads (apr_day, pool_share, partial, days).
+  /* byperiod:start */
   function byPeriod(rows, period) {
     if (period === 'day') return rows;
     const out = [], at = new Map();
@@ -1225,7 +1251,7 @@
       if (!g) { g = { scope: r.scope, scope_label: r.scope_label, day: key, first: r.day, earn_usd: null, earn_aero: null, earn_fee_usd: null, pnl_day_usd: 0, out_days: 0, none_days: 0, n: 0, lp_days: 0, days: 0 }; at.set(id, g); out.push(g); }
       if (r.earn_usd != null && r.lp_tw_usd != null && r.span_days) {
         g.lp_days += r.lp_tw_usd * r.span_days; g.days += r.span_days;
-        g.share_days = (g.share_days ?? 0) + (r.pool_share ?? 1) * r.lp_tw_usd * r.span_days;
+        g.share_days = (g.share_days ?? 0) + aprWeight(r) * r.lp_tw_usd * r.span_days;
       }
       // A day whose interest is not worked out yet (just after midnight) adds nothing; a period with only such days has none.
       if (r.earn_usd != null) { g.earn_usd = (g.earn_usd ?? 0) + r.earn_usd; g.earn_aero = (g.earn_aero ?? 0) + (r.earn_aero ?? 0); g.earn_fee_usd = (g.earn_fee_usd ?? 0) + (r.earn_fee_usd ?? 0); }
@@ -1240,11 +1266,13 @@
       g.aero_per_1k = ok ? (g.earn_aero / g.lp_days) * 1000 : null;
       g.lp_tw_usd = g.days ? g.lp_days / g.days : null;
       // How much of the period's money-time came from days the money was only partly in: a period
-      // made of such days is as unsteady as they are; money simply growing over a month is not.
+      // made of such days is as unsteady as they are; money simply growing over a month is not. A day
+      // the money went in and came out within counts as money not in (aprWeight).
       g.pool_share = g.lp_days > 0 ? g.share_days / g.lp_days : null;
     }
     return out;
   }
+  /* byperiod:end */
   function drawViewbar(n, range) {
     $('viewbar').querySelectorAll('button[data-period]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.period === view.period)));
     $('range-switch').hidden = n <= 30;
