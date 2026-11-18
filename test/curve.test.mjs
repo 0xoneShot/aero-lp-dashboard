@@ -5,6 +5,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { BASE_WALLETS } from '../lib/config.mjs'
+import { recentre, splitShare, usdCurve, amountsAtUsd } from '../lib/curve.mjs'
 
 // Same maths as dashboard/index.html.
 const amountsAt = (p, P) => {
@@ -51,5 +52,72 @@ test('the published ETH curve gives the same value and cost prices', { skip: !fs
     if (s.range_state === 'in') assert.equal(inside, c.positions.length, `${s.scope}: in`)
     if (s.range_state === 'part') assert.ok(inside > 0 && inside < c.positions.length, `${s.scope}: part`)
     if (['below', 'above', 'gap'].includes(s.range_state)) assert.equal(inside, 0, `${s.scope}: ${s.range_state}`)
+  }
+})
+
+// A range put back around the price, as wide as it was (the day-out alert, lib/alerts.mjs). Invented ranges:
+// 400 ticks on a spacing of 100 with WETH first (Base's order), and 300 on 50 with USDC first (inverted).
+const wethFirst = { tick_lower: -199200, tick_upper: -198800 }, usdcFirst = { tick_lower: 198550, tick_upper: 198850, invert: true }
+const rawTick = (P, invert) => Math.log(invert ? 1e12 / P : P / 1e12) / Math.log(1.0001)
+const near = (a, b, rel = 1e-9) => Math.abs(a - b) <= rel * Math.abs(b)
+
+test('a range put back keeps its width exactly, on the pool\'s grid, centred within half a spacing of the price', () => {
+  // usdCurve reads the new ticks back into dollars, in the pool's own token order.
+  const T = { weth: '0xe0', usdc: '0xu0' }, kind = { eth: (a) => a === T.weth, usd: (a) => a === T.usdc }
+  for (const [pos, spacing] of [[wethFirst, 100], [usdcFirst, 50]]) {
+    const W = pos.tick_upper - pos.tick_lower
+    for (const P of [1750, 2128.4, 2447, 2640.9, 3333.3, 4200]) {
+      const r = recentre(pos, P, spacing), what = `${pos.invert ? 'USDC first' : 'WETH first'} at ${P}`
+      assert.equal(r.tick_upper - r.tick_lower, W, what)
+      assert.ok(r.tick_lower % spacing === 0 && r.tick_upper % spacing === 0, what)
+      assert.ok(Math.abs((r.tick_lower + r.tick_upper) / 2 - rawTick(P, pos.invert)) <= spacing / 2 + 1e-6, what)
+      assert.ok(r.low < P && P < r.high, what)
+      assert.ok(near(r.high / r.low, 1.0001 ** W), what)
+      assert.ok(Math.abs(Math.log(Math.sqrt(r.low * r.high) / P)) <= (spacing / 2) * Math.log(1.0001) + 1e-9, what)
+      const raw = pos.invert ? 1e12 / P : P / 1e12
+      const x = { token0: pos.invert ? T.usdc : T.weth, token1: pos.invert ? T.weth : T.usdc, tickLower: r.tick_lower, tickUpper: r.tick_upper,
+        liquidity: 1n, sqrtP: BigInt(Math.round(Math.sqrt(raw) * 2 ** 96)), fees0: 0n, fees1: 0n }
+      const c = usdCurve(x, kind)
+      assert.equal(c.invert, Boolean(pos.invert), what)
+      assert.ok(near(c.low, r.low) && near(c.high, r.high) && near(c.pool, P, 1e-6), `${what}: ${c.low}-${c.high} vs ${r.low}-${r.high}`)
+    }
+  }
+})
+
+test('a range put back at its own centre comes back as it was', () => {
+  for (const [pos, spacing] of [[wethFirst, 100], [usdcFirst, 50]]) {
+    const at = (t) => (pos.invert ? 1e12 / 1.0001 ** t : 1e12 * 1.0001 ** t)
+    const centre = Math.sqrt(at(pos.tick_lower) * at(pos.tick_upper))
+    const r = recentre(pos, centre, spacing)
+    assert.deepEqual([r.tick_lower, r.tick_upper], [pos.tick_lower, pos.tick_upper])
+    assert.ok(near(Math.min(r.low, r.high), Math.min(at(pos.tick_lower), at(pos.tick_upper))) && near(Math.max(r.low, r.high), Math.max(at(pos.tick_lower), at(pos.tick_upper))))
+  }
+})
+
+test('without the pool\'s spacing a range is put back at its own width around the price, off the grid', () => {
+  const r = recentre(wethFirst, 2460)
+  assert.deepEqual([r.tick_lower, r.tick_upper], [null, null])
+  assert.ok(near(r.high / r.low, 1.0001 ** 400) && near(Math.sqrt(r.low * r.high), 2460))
+  // Without ticks either: its dollar bounds give the width.
+  const d = recentre({ low: 2000, high: 2200 }, 2100, 100)
+  assert.deepEqual([d.tick_lower, d.tick_upper], [null, null])
+  assert.ok(near(d.high / d.low, 1.1) && near(Math.sqrt(d.low * d.high), 2100))
+})
+
+test('the ETH share of a range is a half at its centre, all of it below the range and none above', () => {
+  const low = 2235.04, high = 2326.26
+  assert.ok(Math.abs(splitShare(low, high, Math.sqrt(low * high)) - 0.5) < 1e-12)
+  assert.deepEqual([splitShare(low, high, low * 0.9), splitShare(low, high, low), splitShare(low, high, high), splitShare(low, high, high * 1.1)], [1, 1, 0, 0])
+  let last = 1
+  for (let i = 0; i <= 200; i++) {
+    const P = low * 0.98 + ((high * 1.02 - low * 0.98) * i) / 200, s = splitShare(low, high, P)
+    assert.ok(s >= 0 && s <= 1 && s <= last + 1e-12, `${P}: ${s}`)
+    last = s
+  }
+  // What a position of any liquidity holds there (amountsAtUsd), in value.
+  const c = { L: 3.7e15, sa: Math.sqrt(low * 1e-12), sb: Math.sqrt(high * 1e-12) }
+  for (const P of [low * 1.001, 2280, high * 0.999]) {
+    const [e, u] = amountsAtUsd(c, P)
+    assert.ok(Math.abs(splitShare(low, high, P) - (e * P) / (e * P + u)) < 1e-9, `${P}`)
   }
 })

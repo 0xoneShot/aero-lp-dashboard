@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evaluate, withLivePrices, costLinks, costSource, costSources, costSourcesFor, STALE_MS, OUT_MS } from '../lib/alerts.mjs'
+import { evaluate, withLivePrices, costLinks, costSource, costSources, costSourcesFor, putBackRates, STALE_MS, OUT_MS } from '../lib/alerts.mjs'
+import { recentre, splitShare } from '../lib/curve.mjs'
 
 // One wallet with two positions of the same range, as the summary publishes them.
 const row = (pool, extra = {}) => {
@@ -241,15 +242,15 @@ test('a range out for a day is said once, then again only after it has been back
   assert.ok(!/0x[0-9a-f]{6}/i.test(m.title + m.message), 'no address in the message')
 })
 
-test('a day above a range says all USDC, and names the fixed-width rate of its pool when the table has it', () => {
-  const pc = { fixed_label: '±3.5%', pools: [{ chain: 'base', pool_address: '0xabc', fixed: { staked: { median: 4.05 } } }] }
+test('a day above a range says all USDC, and sets its pool\'s 平常 against the loss line when the table has both', () => {
+  const pc = { fixed_label: '±3.5%', cost_line: { days: 7, vol: 0.55, rate: 2.15 }, pools: [{ chain: 'base', pool_address: '0xabc', fixed: { staked: { median: 4.05 } } }] }
   const withPool = (pool) => { const x = row(pool, { pool_compare: pc }); x.curve.positions = x.curve.positions.map((p) => ({ ...p, pool_address: '0xABC' })); return x }
   let prev = null
   const kinds = []
   let last
   for (const [pool, h] of [[2200, 0], [2600, 1], [2600, 25]]) { const e = evaluate([withPool(pool), total], prev, { now: h * 3600e3 }); prev = e.state; kinds.push(e.messages.map((m) => m.kind)); last = e.messages }
   assert.deepEqual(kinds, [[], ['above'], ['out24']])
-  assert.ok(last[0].message.includes('全是 USDC') && last[0].message.includes('±3.5% 区间质押的“平常”年化是 405%'), last[0].message)
+  assert.ok(last[0].message.includes('全是 USDC') && last[0].message.includes('看板表格里你那一行：平常 405%，高过损耗线 215%。'), last[0].message)
 })
 
 test('a range already out on the first run starts its day from then, and sends nothing on that run', () => {
@@ -281,7 +282,157 @@ test('the day-out message quotes the loss line next to the rate when the table h
   let prev = null, last
   for (const [pool, h] of [[2200, 0], [1900, 1], [1900, 25]]) { const e = evaluate([withPool(pool), total], prev, { now: h * 3600e3 }); prev = e.state; last = e.messages }
   assert.equal(last[0].kind, 'out24')
-  assert.ok(last[0].message.includes('年化是 404%') && last[0].message.includes('少赚约 215%'), last[0].message)
+  assert.ok(last[0].message.includes('看板表格里你那一行：平常 404%，高过损耗线 215%。'), last[0].message)
+})
+
+// A day out of a WETH/USDC range published from its ticks (src/run.mjs): where a range as wide lies around the
+// price now, and what to swap. Invented ranges: 400 ticks on a spacing of 100 (Base, WETH first) and 300 on
+// 50 (Ethereum, USDC first); the range holds `eth` ETH below it, split over `positions` positions.
+const tickUsd = (t, invert) => (invert ? 1e12 / 1.0001 ** t : 1e12 * 1.0001 ** t)
+const cents = (v) => Math.round(v * 100) / 100
+const ticked = ({ lower = -199200, upper = -198800, invert = false, chain = 'base', address = '0x00000000000000000000000000000000000000b1', label = 'CL100',
+  table = address, eth = 2.5, positions = 1, usual = 1.8, fee = 0.3, line = 1.1, here, stopped, pos = {} } = {}) => (P) => {
+  const low = tickUsd(invert ? upper : lower, invert), high = tickUsd(invert ? lower : upper, invert)
+  const sa = Math.sqrt(low * 1e-12), sb = Math.sqrt(high * 1e-12), L = (eth * 1e18) / (1 / sa - 1 / sb) / positions
+  const in_range = P >= low && P < high
+  const p = { wallet: 'A', low: cents(low), high: cents(high), pool: P, in_range, pool_address: address, tick_lower: lower, tick_upper: upper, L, sa, sb, chain, invert, ...pos }
+  return { scope: 'a', scope_label: 'A', eth_usd: P, range_state: in_range ? 'in' : P < low ? 'below' : 'above', now_cost_eth_price: null,
+    curve: { eth: 0, usd: 0, positions: Array.from({ length: positions }, () => ({ ...p })) },
+    pool_compare: { fixed_label: '±3.5%', cost_line: line == null ? null : { days: 7, vol: 0.6, rate: line },
+      pools: [{ chain, pool_address: table, ...(label ? { label } : {}), ...(here ? { here } : {}), ...(stopped != null ? { stopped } : {}),
+        fixed: { staked: { median: usual }, fee: { median: fee } } }] } }
+}
+// The day-out message once the range has been out at P for a day, after being in at `inside`.
+const dayOut = (rowAt, inside, P) => {
+  let prev = null, last = []
+  for (const [x, h] of [[inside, 0], [P, 1], [P, 25]]) { const e = evaluate([rowAt(x), total], prev, { now: h * 3600e3 }); prev = e.state; last = e.messages }
+  const m = last.find((x) => x.kind === 'out24')
+  assert.ok(m, JSON.stringify(last))
+  return m
+}
+const num = (s) => Number(s.replace(/[$,]/g, ''))
+const PUT_UP = /要按现价重挂、宽度不变的话：(\$[\d,.]+) – (\$[\d,.]+)；撤出后约 (\$[\d,.]+) USDC，先把约 (\$[\d,.]+) USDC 换成 ETH。/
+const PUT_DOWN = /要按现价重挂、宽度不变的话：(\$[\d,.]+) – (\$[\d,.]+)；撤出后约 ([\d,.]+) ETH，先把约 ([\d,.]+) ETH 换成 USDC。/
+
+test('a day above a range on its pool\'s grid: the same width around the price, all the USDC out, its ETH share swapped', () => {
+  const rowAt = ticked(), P = 2447.5
+  const m = dayOut(rowAt, 2280, P)
+  assert.ok(m.message.includes('看板表格里你那一行：平常 180%，高过损耗线 110%。'), m.message)
+  const [, a, b, out, swap] = PUT_UP.exec(m.message) ?? assert.fail(m.message)
+  const nb = recentre({ tick_lower: -199200, tick_upper: -198800 }, P, 100)
+  assert.ok(Math.abs(num(a) - nb.low) <= 0.5 && Math.abs(num(b) - nb.high) <= 0.5, m.message)
+  assert.ok(num(a) < P && P < num(b) && Math.abs(num(b) / num(a) - 1.0001 ** 400) < 1e-3, m.message)
+  // Only the liquidity: the range's USDC above it, and the share of it the new range holds in ETH at P (about half).
+  const p = rowAt(P).curve.positions[0], usdc = (p.L * (p.sb - p.sa)) / 1e6, share = splitShare(nb.low, nb.high, P)
+  assert.ok(Math.abs(num(out) - usdc) <= 0.5 && Math.abs(num(swap) - usdc * share) <= 0.5, `${m.message} ${usdc} ${share}`)
+  assert.ok(share > 0.35 && share < 0.65, `${share}`)
+  assert.ok(m.message.indexOf('平常') < m.message.indexOf('重挂'), m.message)
+})
+
+test('a day below a range: all the ETH out, its dollar share swapped into USDC', () => {
+  const rowAt = ticked(), P = 2128.4
+  const m = dayOut(rowAt, 2280, P)
+  assert.ok(m.message.includes('低于下沿') && m.message.includes('全是 ETH'), m.message)
+  const [, a, b, out, swap] = PUT_DOWN.exec(m.message) ?? assert.fail(m.message)
+  const nb = recentre({ tick_lower: -199200, tick_upper: -198800 }, P, 100)
+  assert.ok(Math.abs(num(a) - nb.low) <= 0.5 && Math.abs(num(b) - nb.high) <= 0.5 && num(a) < P && P < num(b), m.message)
+  assert.equal(num(out), 2.5)
+  assert.ok(Math.abs(num(swap) - 2.5 * (1 - splitShare(nb.low, nb.high, P))) <= 0.005, m.message)
+})
+
+test('positions of one range are put back together: their liquidity adds up', () => {
+  const m = dayOut(ticked({ positions: 3 }), 2280, 2128.4)
+  assert.equal(num(PUT_DOWN.exec(m.message)?.[3] ?? 'none'), 2.5, m.message)
+})
+
+test('a day out of an Ethereum range (USDC first): its ticks are read the other way round, the bounds come out the same way', () => {
+  const pos = { tick_lower: 198550, tick_upper: 198850, invert: true }
+  const rowAt = ticked({ lower: pos.tick_lower, upper: pos.tick_upper, invert: true, chain: 'eth', address: '0x00000000000000000000000000000000000000e1', label: 'CL50' })
+  const { low, high } = rowAt(2350).curve.positions[0]
+  assert.ok(low < 2350 && 2350 < high, `${low}-${high}`)
+  for (const [P, re] of [[2462.2, PUT_UP], [2241.7, PUT_DOWN]]) {
+    const m = dayOut(rowAt, 2350, P)
+    assert.match(m.title, /^A（以太坊） 出区间已满 24 小时/)
+    const [, a, b] = re.exec(m.message) ?? assert.fail(m.message)
+    const nb = recentre(pos, P, 50)
+    assert.ok(nb.tick_lower > 0 && Math.abs(num(a) - nb.low) <= 0.5 && Math.abs(num(b) - nb.high) <= 0.5, `${m.message} ${nb.low}-${nb.high}`)
+    assert.ok(num(a) < P && P < num(b) && Math.abs(num(b) / num(a) - 1.0001 ** 300) < 1e-3, m.message)
+  }
+})
+
+test('a pool in the table without its CL{n}: the same width around the price, off the grid', () => {
+  const P = 2447.5, r = 1.0001 ** 400
+  for (const rowAt of [ticked({ label: null }), ticked({ label: 'CLx' })]) {
+    const m = dayOut(rowAt, 2280, P)
+    const [, a, b] = PUT_UP.exec(m.message) ?? assert.fail(m.message)
+    assert.ok(Math.abs(num(a) - P / Math.sqrt(r)) <= 0.5 && Math.abs(num(b) - P * Math.sqrt(r)) <= 0.5, m.message)
+  }
+})
+
+test('a pool not in the table: nothing is known of its rate, so no range is put back', () => {
+  const m = dayOut(ticked({ table: '0x00000000000000000000000000000000000000d1' }), 2280, 2447.5)
+  assert.ok(m.message.endsWith('不赚利息。') && !m.message.includes('重挂') && !m.message.includes('平常'), m.message)
+})
+
+test('a range published without its liquidity still gets the bounds, but no amounts', () => {
+  const m = dayOut(ticked({ pos: { L: undefined, sa: undefined, sb: undefined } }), 2280, 2447.5)
+  assert.match(m.message, /要按现价重挂、宽度不变的话：\$[\d,]+ – \$[\d,]+。$/)
+  assert.ok(!m.message.includes('撤出后'), m.message)
+})
+
+test('平常 below the loss line: said so, and no range to put back', () => {
+  const m = dayOut(ticked({ usual: 0.85, line: 1.2 }), 2280, 2447.5)
+  assert.ok(m.message.endsWith('看板表格里你那一行：平常 85%，已经低于损耗线 120%，放回去不划算。'), m.message)
+  assert.ok(!m.message.includes('重挂'), m.message)
+})
+
+test('平常 and the loss line get a decimal when they would read the same', () => {
+  const said = (usual, line) => dayOut(ticked({ usual, line }), 2280, 2128.4).message
+  assert.ok(said(0.952, 0.948).includes('平常 95.2%，高过损耗线 94.8%。'), said(0.952, 0.948))
+  assert.ok(said(0.948, 0.952).includes('平常 94.8%，已经低于损耗线 95.2%，放回去不划算。'), said(0.948, 0.952))
+  assert.ok(said(1.234, 0.871).includes('平常 123%，高过损耗线 87%。'), said(1.234, 0.871))
+})
+
+test('without 平常 or the loss line no rate is said, and no range is put back', () => {
+  for (const opts of [{ line: null }, { usual: null }, { usual: null, line: null }]) {
+    const m = dayOut(ticked(opts), 2280, 2447.5)
+    assert.ok(m.message.endsWith('不赚利息。') && !m.message.includes('平常') && !m.message.includes('损耗线') && !m.message.includes('重挂'), m.message)
+  }
+})
+
+test('a stopped gauge: said so instead of a rate, and no range is put back', () => {
+  const m = dayOut(ticked({ usual: null, stopped: true }), 2280, 2447.5)
+  assert.ok(m.message.endsWith('不赚利息。看板表格里这个池子的质押奖励已停。'), m.message)
+  // Not staked there: the fee column is its 平常, which a stopped gauge does not touch.
+  const fee = dayOut(ticked({ usual: null, stopped: true, here: 'unstaked', fee: 1.5 }), 2280, 2447.5)
+  assert.ok(fee.message.includes('平常 150%，高过损耗线 110%。') && PUT_UP.test(fee.message), fee.message)
+})
+
+test('平常 is the column the money is held in: the fee column when none of it is staked there', () => {
+  const unstaked = dayOut(ticked({ here: 'unstaked', usual: 1.8, fee: 0.5 }), 2280, 2447.5)
+  assert.ok(unstaked.message.endsWith('看板表格里你那一行：平常 50%，已经低于损耗线 110%，放回去不划算。'), unstaked.message)
+  const staked = dayOut(ticked({ here: 'staked', usual: 1.8, fee: 0.5 }), 2280, 2447.5)
+  assert.ok(staked.message.includes('平常 180%，高过损耗线 110%。') && PUT_UP.test(staked.message), staked.message)
+})
+
+test('putBackRates: staked unless none of the money is, both numbers or nothing, a stopped gauge only when its 平常 is the staked one', () => {
+  const line = { rate: 1.1 }
+  const pool = (o = {}) => ({ fixed: { staked: { median: 1.8 }, fee: { median: 0.5 } }, ...o })
+  assert.deepEqual(putBackRates(pool(), line), { both: true, under: false, usual: 1.8, line: 1.1, stopped: false })
+  assert.deepEqual(putBackRates(pool({ here: 'staked' }), line), { both: true, under: false, usual: 1.8, line: 1.1, stopped: false })
+  assert.deepEqual(putBackRates(pool({ here: 'unstaked' }), line), { both: true, under: true, usual: 0.5, line: 1.1, stopped: false })
+  assert.equal(putBackRates(pool(), { rate: 1.8 }).under, false) // equal is not below
+  assert.equal(putBackRates(null, line).both, false)
+  assert.equal(putBackRates(pool(), null).both, false)
+  assert.equal(putBackRates({ ...pool(), fixed: undefined }, line).both, false)
+  const stopped = { stopped: true, fixed: { staked: { median: null }, fee: { median: 0.5 } } }
+  assert.deepEqual(putBackRates(stopped, line), { both: false, under: false, usual: null, line: 1.1, stopped: true })
+  assert.equal(putBackRates({ ...stopped, here: 'unstaked' }, line).stopped, false)
+})
+
+test('a day out of a WETH/cbBTC range is not put back', () => {
+  const m = dayOut((x) => btcRow(x), 0.0295, 0.032)
+  assert.ok(m.message.includes('全是 cbBTC') && !m.message.includes('重挂'), m.message)
 })
 
 test('from the last good data a day out waits, and without live prices its clock is kept as it was', () => {
@@ -296,6 +447,87 @@ test('from the last good data a day out waits, and without live prices its clock
   const fresh = evaluate([row(1900), total], prev, { now: 30 * 3600e3 })
   assert.deepEqual(fresh.messages.map((m) => m.kind), ['out24'])
   assert.ok(OUT_MS === 24 * 3600e3)
+})
+
+// What scripts/alerts.mjs keeps of a run whose messages of `kinds` failed to send: their previous state.
+const unsent = (e, prev, kinds) => {
+  const state = { ...e.state }
+  for (const m of e.messages) if (kinds.includes(m.kind) && m.key in prev) state[m.key] = prev[m.key]
+  return state
+}
+
+test('a 回到 held for fresh data, or not sent, still ends the clock: out again, the day counts from the new exit', () => {
+  const at = (h) => Date.UTC(2026, 10, 15) + h * 3600e3
+  let said = null
+  for (const [pool, h] of [[2200, 0], [1900, 1], [1900, 25]]) said = evaluate([row(pool), total], said, { now: at(h) }).state
+  assert.match(said['a:2000-2500:out'], /:sent$/)
+  // Back in at hour 30, from the last good data (the 回到 waits) or with a 回到 that failed; out again from 31.
+  const held = evaluate([row(2200), total], said, { now: at(30), lastGood: true })
+  assert.deepEqual(held.messages.map((m) => m.kind), [])
+  const back = evaluate([row(2200), total], said, { now: at(30) })
+  assert.deepEqual(back.messages.map((m) => m.kind), ['back'])
+  for (const start of [held.state, unsent(back, said, ['back'])]) {
+    assert.equal(start['a:2000-2500'], 'below')
+    assert.equal(start['a:2000-2500:out'], 'in')
+    let prev = start
+    const kinds = []
+    for (const h of [31, 54, 55]) { const e = evaluate([row(1900), total], prev, { now: at(h) }); prev = e.state; kinds.push(e.messages.map((m) => m.kind)) }
+    assert.deepEqual(kinds, [[], [], ['out24']])
+    assert.equal(prev['a:2000-2500:out'], `${at(31)}:sent`)
+  }
+})
+
+test('a 跌出 that failed to send is tried again without restarting the clock: the day counts from the first update that found it out', () => {
+  const at = (h) => Date.UTC(2026, 10, 15) + h * 3600e3
+  let prev = evaluate([row(2200), total], null, { now: at(0) }).state
+  const kinds = []
+  for (const [h, fails] of [[1, true], [2, true], [3, true], [4, false], [24.5, false], [25, false]]) {
+    const e = evaluate([row(1900), total], prev, { now: at(h) })
+    kinds.push(e.messages.map((m) => m.kind))
+    prev = fails ? unsent(e, prev, ['below']) : e.state
+  }
+  assert.deepEqual(kinds, [['below'], ['below'], ['below'], ['below'], [], ['out24']])
+  assert.equal(prev['a:2000-2500:out'], `${at(1)}:sent`)
+})
+
+test('the day out never comes ahead of the 跌出 or 涨出 it follows: a run that sends one leaves the day out to the next', () => {
+  const at = (h) => Date.UTC(2026, 10, 15) + h * 3600e3
+  // Every send fails for a day (hours 1 to 24); the 跌出 goes at 25, the day out an hour after it.
+  let prev = evaluate([row(2200), total], null, { now: at(0) }).state
+  const kinds = []
+  for (let h = 1; h <= 26; h++) {
+    const e = evaluate([row(1900), total], prev, { now: at(h) })
+    if (h >= 25) kinds.push(e.messages.map((m) => [m.kind, m.title]))
+    prev = h <= 24 ? unsent(e, prev, ['below', 'out24']) : e.state
+  }
+  assert.deepEqual(kinds, [[['below', 'A 跌出区间']], [['out24', 'A 出区间已满 25 小时']]])
+  assert.equal(prev['a:2000-2500:out'], `${at(1)}:sent`)
+  // One 跌出 that failed, and no run until a day later.
+  prev = evaluate([row(2200), total], null, { now: at(0) }).state
+  let e = evaluate([row(1900), total], prev, { now: at(1) })
+  prev = unsent(e, prev, ['below'])
+  const late = []
+  for (const h of [26, 27]) { e = evaluate([row(1900), total], prev, { now: at(h) }); prev = e.state; late.push(e.messages.map((m) => m.kind)) }
+  assert.deepEqual(late, [['below'], ['out24']])
+  // Out below for a day and then straight above it in one hour: the 涨出 first, the day out (all USDC) next.
+  const jump = timed([[2200, 0], [1900, 1], [1900, 23], [2600, 25], [2600, 26]])
+  assert.deepEqual(jump.map((x) => x.kinds), [[], ['below'], [], ['above'], ['out24']])
+  assert.ok(jump[4].messages[0].message.includes('全是 USDC'), jump[4].messages[0].message)
+})
+
+test('without live prices, or for a range whose pool had no live quote, no clock starts on the old data', () => {
+  const at = (h) => Date.UTC(2026, 10, 15) + h * 3600e3
+  const prev = evaluate([row(2200), total], null, { now: at(0) }).state
+  const blind = evaluate([row(1900), total], prev, { now: at(1), noPrices: true })
+  assert.deepEqual(blind.messages, [])
+  assert.equal(blind.state['a:2000-2500'], 'in')
+  assert.ok(!('a:2000-2500:out' in blind.state), JSON.stringify(blind.state))
+  const unquoted = row(1900)
+  unquoted.curve.positions = unquoted.curve.positions.map((p) => ({ ...p, pool_address: '0xabc', held: true }))
+  const held = evaluate([unquoted, total], prev, { now: at(1), lastGood: true })
+  assert.deepEqual(held.messages, [])
+  assert.equal(held.state['a:2000-2500'], 'in')
+  assert.ok(!('a:2000-2500:out' in held.state), JSON.stringify(held.state))
 })
 
 test('a combined view asked for on the page repeats its wallets\' ranges: it never alerts on its own', () => {

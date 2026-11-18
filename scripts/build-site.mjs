@@ -7,6 +7,7 @@ import path from 'node:path'
 import { WALLETS, BASE_WALLETS, GROUPS } from '../lib/config.mjs'
 import { encryptView, normalizeSet } from '../lib/views.mjs'
 import { readStore, jobKeys } from '../lib/requests.mjs'
+import { attachOutSince } from '../lib/outclock.mjs'
 
 // The page shows only the headline figures and the daily rows; nothing else is published.
 const IDS = ['summary', 'daily']
@@ -33,6 +34,15 @@ fs.writeFileSync('public/robots.txt', 'User-agent: *\nDisallow: /\n')
 const all = Object.fromEntries(IDS.map((id) => [id, JSON.parse(fs.readFileSync(path.join('out', `${id}.json`), 'utf8'))]))
 // Which other wallets an added address moved money with (src/run.mjs cost_from) is for the phone alerts only.
 for (const r of all.summary) delete r.cost_from
+// Since when each range has been out of its bounds (lib/outclock.mjs), from the phone alerts' clock: the
+// alert step runs just before this one. It goes only into the encrypted views below and nothing of it is
+// printed; a missing or unreadable state attaches nothing. A total or a combined view names a position's
+// wallet by its label (src/run.mjs), configured or added on the page alike, or by its key when it has none.
+let clocks = null
+try { clocks = JSON.parse(fs.readFileSync('data/cache/alerts.json', 'utf8')) } catch {}
+const keyByLabel = new Map()
+for (const w of WALLETS) keyByLabel.set(w.label, keyByLabel.has(w.label) ? null : w.key) // a label two wallets share names neither
+attachOutSince(all.summary, clocks, (label) => keyByLabel.get(label) ?? (WALLETS.some((w) => w.key === label) ? label : null))
 // A wallet is published once the update has rows for it: an address added on the page waits until it is
 // caught up (src/run.mjs), so its view never opens half-read.
 const ready = new Set(all.summary.map((r) => r.scope))

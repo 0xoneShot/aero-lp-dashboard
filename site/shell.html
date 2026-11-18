@@ -19,8 +19,11 @@
     --color-border-line: #dfe3e8;
     --color-ok: #17784a;
     --color-bad: #c0362c;
-    --color-warn: #a86a12;
+    --color-warn: #9a610f; /* 4.5:1 or more on the panel and the page background, for the 12-14 px warnings */
     --series-1: #2c63d6;
+    /* The fill of the main buttons under white text: the light blue in both themes (the dark theme's
+       --series-1 is too pale under white). */
+    --accent-fill: #2c63d6;
     --series-2: #d9822b;
     --series-3: #2a9d8f;
     --series-4: #8e5bd0;
@@ -73,6 +76,8 @@
   html { -webkit-text-size-adjust: 100%; }
   [hidden] { display: none !important; }
   #gate:not([hidden]) ~ .site-foot { max-width: 560px; }
+  /* The dashboard says where its data comes from under 数字怎么算; the footer stays on the gate. */
+  #dash-root:not([hidden]) ~ .site-foot { display: none; }
   body {
     margin: 0; background: var(--color-bg); color: var(--color-fg);
     font: 14px/1.5 var(--font-anthropic-sans);
@@ -89,10 +94,12 @@
   .gate-form label { font-size: 12px; color: var(--color-fg-muted); }
   .gate-form textarea { font: 16px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--color-fg); background: var(--color-bg); border: 1px solid var(--color-border-line); border-radius: 8px; padding: 10px; resize: vertical; min-width: 0; }
   .gate-form textarea:focus-visible, .gate-form button:focus-visible, .site-bar button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
-  .gate-form button { align-self: flex-start; font: inherit; font-weight: 600; color: #fff; background: var(--series-1); border: 0; border-radius: 8px; padding: 8px 20px; cursor: pointer; }
+  .gate-form button { align-self: flex-start; font: inherit; font-weight: 600; color: #fff; background: var(--accent-fill); border: 0; border-radius: 8px; padding: 8px 20px; cursor: pointer; }
   .gate-form button:disabled { opacity: .6; cursor: progress; }
   .gate-msg { margin: 0; min-height: 1.5em; font-size: 13px; color: var(--color-fg-muted); }
-  .site-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px 10px; font-size: 12px; color: var(--color-fg-muted); margin-bottom: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  /* One line: the addresses on the left, cut with … when long; the pills on the right. */
+  .site-bar { display: flex; flex-wrap: nowrap; justify-content: space-between; align-items: center; gap: 8px 10px; font-size: 12px; color: var(--color-fg-muted); margin-bottom: 12px; font-family: var(--font-anthropic-sans); }
+  #site-addrs { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .site-bar button { font: 12px var(--font-anthropic-sans); color: var(--color-fg); background: transparent; border: 1px solid var(--color-border-line); border-radius: 999px; padding: 3px 12px; cursor: pointer; white-space: nowrap; }
   .site-add { display: flex; flex-direction: column; gap: 8px; max-width: 560px; margin: 0 0 12px auto; background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: 14px; font-size: 13px; }
   .site-add label { font-size: 12px; color: var(--color-fg-muted); }
@@ -100,7 +107,7 @@
   .site-add input.site-add-name { font-family: var(--font-anthropic-sans); }
   .site-add-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .site-add button { font: inherit; border-radius: 8px; padding: 6px 16px; cursor: pointer; border: 1px solid var(--color-border-line); background: transparent; color: var(--color-fg); }
-  .site-add button.primary { font-weight: 600; color: #fff; background: var(--series-1); border-color: transparent; }
+  .site-add button.primary { font-weight: 600; color: #fff; background: var(--accent-fill); border-color: transparent; }
   .site-add button:disabled { opacity: .6; cursor: progress; }
   .site-add-note, .site-add-msg { margin: 0; color: var(--color-fg-muted); line-height: 1.6; font-size: 12px; }
   .site-add-msg { min-height: 1.4em; font-size: 13px; }
@@ -317,7 +324,7 @@
     // Each 换地址 starts a new generation: anything still under way from before it does nothing.
     let gen = 0
     const showGate = (text = '') => { root.hidden = true; gate.hidden = false; msg.textContent = text; go.disabled = false; track.hidden = true }
-    const showDash = (list) => { gate.hidden = true; root.hidden = false; $('site-addrs').textContent = list.map(short).join(' + '); $('site-add-open').hidden = !dash.canRequest(); dispatchEvent(new Event('resize')) }
+    const showDash = (list) => { gate.hidden = true; root.hidden = false; $('site-addrs').textContent = list.map(short).join(' + '); $('site-addrs').title = list.join('\n'); $('site-add-open').hidden = !dash.canRequest(); dispatchEvent(new Event('resize')) }
     async function openList(list, my = gen) { if (await dash.load(list) && my === gen) { save(list); showDash(list); return true } return false }
 
     // ---- a request on its way to the hourly job (lib/requests.mjs) ----

@@ -1,70 +1,108 @@
 <style>
-  /* Two questions, answered at a glance: how much interest the pool earned each day, and how the money
-     put in compares with just holding USDC. Cards stack on phones; numbers in the serif face. */
-  .lp { font-family: var(--font-anthropic-sans); display: flex; flex-direction: column; gap: 16px; font-variant-numeric: tabular-nums; }
-  .lp h1, .lp h2, .lp p { margin: 0; }
-  .lp-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
-  .lp-title { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: 28px; }
-  .lp-asof { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--color-fg-muted); }
-  .lp-live-on { color: var(--color-ok); }
-  .lp-warn { font-size: 13px; line-height: 1.6; color: var(--color-bad); border: 1px solid currentColor; border-radius: 10px; padding: 10px 12px; }
-  .lp-warn p + p, .lp-warn ul + p { margin-top: 6px; }
-  .lp-warn ul { margin: 2px 0 0; padding-left: 18px; }
-  .lp-warn a { color: inherit; }
-  .lp-refresh { font: inherit; font-size: 12px; border: 1px solid var(--color-border-line); background: transparent; color: var(--color-fg); padding: 2px 10px; border-radius: 8px; cursor: pointer; }
+  /* The first screen says where the positions sit and what they made; everything else is a row of one
+     folded box below, opened in place and remembered per device. Four type sizes (22 figures and title,
+     16 card titles, 14 text, 12 notes), figures in the serif face, three surfaces. */
+  .lp { font-family: var(--font-anthropic-sans); display: flex; flex-direction: column; gap: 16px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+  .lp h1, .lp h2, .lp h3, .lp p { margin: 0; }
+  .lp-head { display: flex; flex-direction: column; gap: 4px; }
+  .lp-titlerow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .lp-title { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: 22px; line-height: 1.2; }
+  .lp-asof { font-size: 12px; color: var(--color-fg-muted); }
+  .lp-live-warn { color: var(--color-warn); }
+  .lp-refresh { font: inherit; font-size: 12px; line-height: 1.5; color: var(--color-fg); background: transparent; border: 1px solid var(--color-border-line); border-radius: 999px; padding: 3px 12px; cursor: pointer; white-space: nowrap; }
   .lp-refresh:disabled { color: var(--color-fg-muted); cursor: default; }
-  .lp-refresh:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
-  .lp-scope, .lp-switch { display: inline-flex; border: 1px solid var(--color-border-line); border-radius: 10px; padding: 2px; gap: 2px; }
-  .lp-scope { flex-wrap: wrap; max-width: 100%; }
-  .lp-scope button, .lp-switch button { font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--color-fg-muted); padding: 4px 14px; border-radius: 8px; cursor: pointer; }
-  .lp-scope button[aria-pressed="true"], .lp-switch button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
-  .lp-scope button:focus-visible, .lp-switch button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
-  .lp-viewbar { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+  .lp-more { align-self: flex-start; }
+  .lp-refresh:focus-visible, .lp-scope button:focus-visible, .lp-switch button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+  .lp-scope, .lp-switch { display: inline-flex; border: 1px solid var(--color-border-line); padding: 2px; gap: 2px; }
+  /* The wallet switch wraps when there are many wallets: a rounded box, not a pill. */
+  .lp-scope { flex-wrap: wrap; max-width: 100%; align-self: flex-start; margin-top: 8px; border-radius: 10px; }
+  .lp-switch { border-radius: 999px; }
+  .lp-scope button, .lp-switch button { font: inherit; border: 0; background: transparent; color: var(--color-fg-muted); border-radius: 999px; cursor: pointer; }
+  .lp-scope button { font-size: 14px; padding: 3px 14px; }
   .lp-switch button { font-size: 12px; padding: 3px 12px; }
+  .lp-scope button[aria-pressed="true"] { background: var(--color-panel); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
+  .lp-switch button[aria-pressed="true"] { background: var(--color-bg); color: var(--color-fg); box-shadow: 0 0 0 1px var(--color-border-line); }
+  .lp-viewbar { display: flex; flex-wrap: wrap; gap: 8px 12px; }
 
   .lp-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   @media (max-width: 860px) { .lp-pair { grid-template-columns: minmax(0, 1fr); } }
-  .lp-state { font-size: 14px; line-height: 1.6; }
-  .lp-state b { font-weight: 600; }
+  .lp-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .lp-card h2 { font-size: 16px; font-weight: 600; }
+  .lp-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .lp-card-eth { font-family: var(--font-anthropic-serif); font-size: 16px; white-space: nowrap; }
 
-  .lp-ranges { display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
-  .lp-range-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+  .lp-decide { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+  .lp-decide b { font-weight: 600; }
+  .lp-state { font-size: 14px; }
+  .lp-ranges { display: flex; flex-direction: column; gap: 12px; }
+  .lp-range-head { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+  .lp-range-none .lp-range-head { color: var(--color-fg-muted); }
   .lp-range-tag { font-size: 12px; white-space: nowrap; }
   .lp-range-tag.in { color: var(--color-ok); }
   .lp-range-tag.out { color: var(--color-warn); }
-  .lp-track { position: relative; height: 8px; margin: 9px 0 7px; border-radius: 4px; background: var(--cds-chart-grid); }
+  .lp-track { position: relative; height: 8px; margin: 8px 0; border-radius: 4px; background: var(--cds-chart-grid); }
   .lp-seg { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
-  .lp-now { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--color-fg); }
-  .lp-range-sub { font-size: 12px; color: var(--color-fg-muted); line-height: 1.5; }
+  .lp-now { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; border-radius: 4px; background: var(--color-fg); }
+  .lp-range-sub { font-size: 12px; color: var(--color-fg-muted); }
+  .lp-act { font-size: 14px; margin-top: 4px; }
+  .lp-act-wait { color: var(--color-fg-muted); }
+  .lp-act-due { color: var(--color-warn); }
 
-  .lp-exits { display: flex; flex-direction: column; }
-  .lp-exit { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-top: 1px solid var(--color-border-line); }
-  .lp-exits > .lp-exit:first-child { border-top: 0; padding-top: 4px; }
-  .lp-exit-head { font-size: 13px; }
-  .lp-exit-head span { color: var(--color-fg-muted); }
-  .lp-exit-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-  .lp-exit-price .lp-kpi-value { font-size: 24px; }
-  .lp-exit-gap { font-size: 12px; color: var(--color-fg-muted); }
-
-  .lp-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  .lp-kpis > .lp-kpi:last-child:nth-child(3n + 1) { grid-column: 1 / -1; }
-  @media (max-width: 760px) { .lp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .lp-kpis > .lp-kpi:last-child:nth-child(3n + 1) { grid-column: auto; } .lp-kpis > .lp-kpi:last-child:nth-child(odd) { grid-column: 1 / -1; } }
-  .lp-kpi { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  /* Two figures a row on phones, down to the narrowest, and on the half-width desktop card; four when the
+     card is full width (721-860 px, where the two cards stack). */
+  .lp-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (min-width: 721px) and (max-width: 860px) { .lp-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .lp-kpi { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .lp-kpi-label { font-size: 12px; color: var(--color-fg-muted); }
-  .lp-kpi-value { font-family: var(--font-anthropic-serif); font-size: 26px; line-height: 1.15; white-space: nowrap; }
-  .lp-kpi-sub { font-size: 12px; color: var(--color-fg-muted); }
+  .lp-kpi-value { font-family: var(--font-anthropic-serif); font-size: 22px; line-height: 1.2; white-space: nowrap; }
+  .lp-kpi-sub, .lp-kpi-foot { font-size: 12px; color: var(--color-fg-muted); }
   .lp-pos { color: var(--color-ok); }
   .lp-neg { color: var(--color-bad); }
+  .lp-muted { color: var(--color-fg-muted); }
+  .lp-warn { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--color-bad); }
+  .lp-warn ul { margin: 0; padding-left: 18px; }
+  .lp-warn a { color: inherit; }
 
-  .lp-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-  .lp-card h2 { font-size: 16px; font-weight: 600; }
-  .lp-note { font-size: 12px; color: var(--color-fg-muted); line-height: 1.6; }
+  .lp-exits { display: flex; flex-direction: column; }
+  .lp-exit { display: flex; flex-direction: column; gap: 4px; }
+  .lp-exit-head { font-size: 14px; }
+  .lp-exit-head span { color: var(--color-fg-muted); }
+  .lp-exit-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+  .lp-exit-gap { font-size: 12px; color: var(--color-fg-muted); }
+
+  /* One box of fold rows. A row is laid out by an inner span (older iOS Safari ignores display: flex on
+     <summary>), the default marker hidden both ways; dividers only between rows that show. */
+  .lp-folds { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: 10px; min-width: 0; }
+  .lp-folds > .lp-fold:not([hidden]) ~ .lp-fold:not([hidden]) { border-top: 1px solid var(--color-border-line); }
+  .lp-fold > summary { display: block; list-style: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .lp-fold > summary::-webkit-details-marker { display: none; }
+  .lp-fold > summary:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; border-radius: 10px; }
+  .lp-sum { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 14px; box-sizing: border-box; font-size: 14px; }
+  .lp-fold-title { flex: none; }
+  /* A long hint (the pick's name and what holds it back) wraps onto a second line rather than being cut. */
+  .lp-fold-hint { flex: 1 1 auto; min-width: 0; text-align: right; font-size: 12px; color: var(--color-fg-muted); overflow-wrap: break-word; }
+  .lp-fold-hint.lp-fig { color: var(--color-fg); }
+  .lp-chev { flex: none; width: 7px; height: 7px; margin: 0 3px 3px auto; border: solid var(--color-fg-muted); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+  .lp-fold[open] > summary .lp-chev { margin-bottom: -3px; transform: rotate(225deg); }
+  .lp-fold-body { display: flex; flex-direction: column; gap: 12px; padding: 0 14px 14px; min-width: 0; }
+  .lp-fold-body > .lp-subhead { margin-top: 8px; }
+  /* The fold inside the 赚了多少 card: a red line, no box. */
+  .lp-fold-in > summary .lp-sum { min-height: 32px; padding: 0; font-size: 12px; }
+  .lp-fold-in .lp-fold-title { flex: 1 1 auto; min-width: 0; }
+  .lp-fold-in .lp-chev { border-color: currentColor; }
+  .lp-fold-in .lp-fold-body { gap: 4px; padding: 0 0 4px; }
+
+  .lp-note { font-size: 12px; color: var(--color-fg-muted); }
+  .lp-note:empty, .lp-legend:empty, .lp-decide:empty, .lp-act:empty, .lp-line:empty { display: none; }
+  .lp-line, .lp-move { font-size: 14px; }
+  .lp-line b, .lp-move b { font-weight: 600; }
+  .lp-aero { display: flex; flex-direction: column; gap: 4px; }
+  .lp-subhead { font-size: 14px; font-weight: 600; }
   .lp-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--color-fg-muted); }
   .lp-legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .lp-sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .lp-sw { width: 10px; height: 10px; border-radius: 4px; display: inline-block; }
   .lp-chart { position: relative; min-height: 220px; }
   .lp-chart.lp-chart-sm { min-height: 170px; }
-  .lp-subhead { font-size: 14px; font-weight: 600; margin: 10px 0 0; }
   .lp-chart svg { display: block; overflow: visible; }
   .lp-tip { position: absolute; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: 10px; box-shadow: var(--cds-shadow-popover); padding: 6px 10px; font-size: 12px; white-space: nowrap; z-index: 2; display: none; }
   .lp-tip .t { color: var(--cds-text-secondary); margin-bottom: 2px; }
@@ -72,24 +110,25 @@
   .lp-tip .r b { font-weight: 600; }
 
   .lp-tablewrap { overflow-x: auto; }
-  .lp table.lp-compare td:first-child { white-space: normal; color: var(--color-fg-muted); }
-  .lp table.lp-compare th:not(:first-child) { color: var(--color-fg); }
-  .lp-sw.lp-sw-total { width: 14px; height: 0; border-radius: 0; background: none; border-top: 2px dashed var(--color-fg); }
-  .lp table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .lp table { border-collapse: collapse; width: 100%; font-size: 14px; }
   .lp th, .lp td { padding: 8px 10px; border-bottom: 1px solid var(--color-border-line); white-space: nowrap; text-align: right; }
   .lp th:first-child, .lp td:first-child { text-align: left; }
   .lp th { color: var(--color-fg-muted); font-weight: 500; font-size: 12px; }
   .lp tr.lp-today td { font-style: italic; }
   .lp tr.lp-today td:not(.lp-pos):not(.lp-neg) { color: var(--color-fg-muted); }
-  .lp td.lp-wrap { white-space: normal; }
+  .lp td.lp-wrap { white-space: normal; word-break: keep-all; }
+  .lp table.lp-compare td:first-child { white-space: normal; color: var(--color-fg-muted); }
+  .lp table.lp-compare th:not(:first-child) { color: var(--color-fg); }
+  .lp-sw.lp-sw-total { width: 14px; height: 0; border-radius: 0; background: none; border-top: 2px dashed var(--color-fg); }
   .lp table.lp-pools td { vertical-align: top; }
   .lp table.lp-pools td:first-child, .lp table.lp-pools td:first-child .lp-cell-sub { white-space: normal; }
-  .lp-cell-sub { display: block; font-size: 11px; color: var(--color-fg-muted); white-space: nowrap; }
-  .lp table.lp-pools td.lp-best { color: var(--color-ok); font-weight: 600; }
+  .lp-cell-sub { display: block; font-size: 12px; color: var(--color-fg-muted); white-space: nowrap; }
+  .lp table.lp-pools td.lp-best { font-weight: 600; }
   .lp table.lp-pools td.lp-best .lp-cell-sub { color: var(--color-fg-muted); font-weight: 400; }
+  /* 平常 below the loss line, in the owner's cell: stronger than both rules above. */
+  .lp table.lp-pools td .lp-cell-sub.lp-neg, .lp table.lp-pools td.lp-best .lp-cell-sub.lp-neg { color: var(--color-bad); }
+  .lp-chip { display: inline-block; white-space: nowrap; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 12px; line-height: 1.5; font-style: normal; color: var(--color-warn); border: 1px solid currentColor; }
   .lp-chip.lp-chip-here { color: var(--color-fg-muted); }
-  .lp-move { font-size: 13px; line-height: 1.6; }
-  .lp-chip { display: inline-block; white-space: nowrap; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-style: normal; color: var(--color-warn); border: 1px solid currentColor; }
   @media (max-width: 560px) {
     .lp .lp-hide-sm { display: none; }
     .lp th, .lp td { padding: 8px 5px; }
@@ -97,107 +136,178 @@
     .lp-chip { margin-left: 4px; padding: 0 5px; }
   }
 
-  .lp-about { font-size: 12px; color: var(--color-fg-muted); line-height: 1.7; }
+  .lp-about { font-size: 12px; color: var(--color-fg-muted); }
+  .lp-about .lp-subhead { color: var(--color-fg); margin-bottom: 4px; }
   .lp-about ul { margin: 0; padding-left: 1.2em; }
+  .lp-about li + li { margin-top: 4px; }
 </style>
 
 <div class="lp">
   <header class="lp-head">
-    <h1 class="lp-title">Aero LP 收益看板</h1>
+    <div class="lp-titlerow">
+      <h1 class="lp-title">Aero LP 收益看板</h1>
+      <button type="button" class="lp-refresh" id="lp-refresh">刷新</button>
+    </div>
+    <p class="lp-asof"><span id="lp-asof">—</span><span id="lp-live"></span></p>
     <div class="lp-scope" role="group" aria-label="查看范围" hidden></div>
-    <p class="lp-asof"><span id="lp-asof">—</span><span id="lp-live"></span><button type="button" class="lp-refresh" id="lp-refresh">刷新</button></p>
   </header>
-
-  <div class="lp-warn" id="lp-warn" role="alert" hidden></div>
-
-  <section class="lp-kpis" aria-label="主要数字">
-    <div class="lp-kpi"><span class="lp-kpi-label">现值</span><span class="lp-kpi-value" id="k-value">—</span><span class="lp-kpi-sub" id="k-invested">—</span></div>
-    <div class="lp-kpi"><span class="lp-kpi-label">对比一直持有 USDC</span><span class="lp-kpi-value" id="k-pnl">—</span><span class="lp-kpi-sub" id="k-pnl-pct">—</span></div>
-    <div class="lp-kpi"><span class="lp-kpi-label">对比拿着原币不动</span><span class="lp-kpi-value" id="k-hodl">—</span><span class="lp-kpi-sub" id="k-hodl-sub">—</span></div>
-    <div class="lp-kpi"><span class="lp-kpi-label">累计利息收益</span><span class="lp-kpi-value" id="k-earn">—</span><span class="lp-kpi-sub" id="k-earn-sub">—</span></div>
-    <div class="lp-kpi"><span class="lp-kpi-label">昨日利息收益</span><span class="lp-kpi-value" id="k-yday">—</span><span class="lp-kpi-sub" id="k-today">—</span></div>
-    <div class="lp-kpi"><span class="lp-kpi-label" id="k-apr-label">近 7 日年化</span><span class="lp-kpi-value" id="k-apr">—</span><span class="lp-kpi-sub" id="k-apr-sub">—</span></div>
-    <div class="lp-kpi"><span class="lp-kpi-label">没卖的 AERO</span><span class="lp-kpi-value" id="k-aero">—</span><span class="lp-kpi-sub" id="k-aero-sub">—</span><span class="lp-kpi-sub" id="k-aero-drift"></span></div>
-  </section>
-
-  <section class="lp-card" id="compare" hidden>
-    <h2 id="compare-title">两个钱包对比</h2>
-    <div class="lp-tablewrap"><table class="lp-compare"><thead id="compare-head"></thead><tbody id="compare-body"></tbody></table></div>
-    <p class="lp-note">现值、盈亏、成本价和区间按实时价格，利息按整点数据。撤出成本价：撤出后拿着自己钱包里所有的 ETH，涨到这个价以上再卖，本金不亏、利息全拿；每个钱包按自己的算。</p>
-  </section>
 
   <div class="lp-pair">
     <section class="lp-card" id="range">
-      <h2>现价在区间的位置</h2>
+      <div class="lp-card-head"><h2>仓位</h2><span class="lp-card-eth" id="range-eth"></span></div>
+      <div class="lp-decide" id="decide"></div>
       <p class="lp-state" id="range-state">—</p>
       <div class="lp-ranges" id="range-rows"></div>
     </section>
 
-    <section class="lp-card" id="exit">
-      <h2>撤出后的 ETH 成本价</h2>
-      <p class="lp-note">按此刻的价格把流动性撤出来，拿着所有 ETH（撤出来的加上钱包里原有的），等 ETH 涨到成本价以上再卖：本金不亏、到目前为止的利息全拿。卖到回本价：本金不亏，利息抵掉了 ETH 的跌价。随实时价格更新。</p>
-      <p class="lp-note" id="exit-scope" hidden>这里是几个钱包合起来算的；各自的成本价见上面的对比表。</p>
-      <div class="lp-exits" id="exit-rows"></div>
+    <section class="lp-card" id="earn">
+      <h2>赚了多少</h2>
+      <div class="lp-kpis">
+        <div class="lp-kpi"><span class="lp-kpi-label">累计利息</span><span class="lp-kpi-value" id="k-earn">—</span><span class="lp-kpi-sub" id="k-earn-sub">—</span></div>
+        <div class="lp-kpi"><span class="lp-kpi-label" id="k-apr-label">近 7 日年化</span><span class="lp-kpi-value" id="k-apr">—</span><span class="lp-kpi-sub" id="k-apr-sub">—</span></div>
+        <div class="lp-kpi"><span class="lp-kpi-label">对比拿着原币不动</span><span class="lp-kpi-value" id="k-hodl">—</span><span class="lp-kpi-sub" id="k-hodl-sub">—</span></div>
+        <div class="lp-kpi"><span class="lp-kpi-label">对比一直持有 USDC</span><span class="lp-kpi-value" id="k-pnl">—</span><span class="lp-kpi-sub" id="k-pnl-pct">—</span></div>
+      </div>
+      <p class="lp-kpi-foot" id="k-invested">—</p>
+      <div class="lp-warn" id="lp-warn" role="alert" hidden>
+        <p id="warn-unpriced" hidden></p>
+        <details class="lp-fold lp-fold-in" id="checks" hidden>
+          <summary><span class="lp-sum"><span class="lp-fold-title" id="checks-sum"></span><span class="lp-chev" aria-hidden="true"></span></span></summary>
+          <div class="lp-fold-body">
+            <p id="checks-more" hidden></p>
+            <ul id="checks-list"></ul>
+          </div>
+        </details>
+      </div>
     </section>
   </div>
 
-  <section class="lp-card" id="pools" hidden>
-    <h2 id="pools-title">哪个池子利息高</h2>
-    <p class="lp-move" id="pools-move" hidden></p>
-    <p class="lp-note" id="pools-note"></p>
-    <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>质押<br>拿 AERO</th><th>不质押<br>拿手续费</th></tr></thead><tbody id="pools-body"></tbody></table></div>
-    <p class="lp-note">质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。表格固定按 Aero 的 ±3.5% 宽度算，换了仓位或隔几天再看，数字都能直接比；同一个池子，区间越窄年化越高：宽度减半，年化大约翻倍（±3.5% 约是 ±7% 的 2 倍、±10% 的 2.8 倍，池子小、钱多时少一些），你实际的年化还要看你自己仓位的宽度。大字是用来比较的数：“平常”（近 7 天每天年化的中位数）和“最近 24 小时”里较低的那个。资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。“换过去”的成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）；本来就要重新开仓的话，多出来的只有跨链。按你仓位的宽度算，差 30 个百分点以内算差不多：同一个币对的池子之间，最近谁领先并不会持续（资金跟着奖励走，把收益拉平；10-22 以来的数据和 Base 上一代池子半年的数据都是这样），你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉换过去的成本后一周多挣多少。值得换的是明显而持久的差别，比如质押和不质押。某个钱包的去处数据满 7 天、平常和最近 24 小时都比现在的仓位高 30 个百分点以上（按你仓位的宽度算）、稳定领先（近 7 天里较差的日子也比现在高、最近两个 Aero 周都领先）、3 天内回本时，手机提醒一次（看“合计”时不提醒，按各个钱包提醒）。</p>
-  </section>
+  <div class="lp-folds">
+    <details class="lp-fold" id="exit" data-fold="exit">
+      <summary><span class="lp-sum"><span class="lp-fold-title">撤出后的 ETH 成本价</span><span class="lp-fold-hint lp-fig" id="exit-hint"></span><span class="lp-chev" aria-hidden="true"></span></span></summary>
+      <div class="lp-fold-body">
+        <div class="lp-exits" id="exit-rows"></div>
+        <p class="lp-note">撤出后拿着全部 ETH，涨过成本价再卖：本金不亏、利息全拿。</p>
+        <p class="lp-note" id="exit-scope" hidden></p>
+      </div>
+    </details>
 
-  <section class="lp-card" id="stocks" hidden>
-    <h2>股票池的利息（只看）</h2>
-    <p class="lp-note" id="stocks-note"></p>
-    <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>年化</th><th>72 小时<br>在区间</th></tr></thead><tbody id="stocks-body"></tbody></table></div>
-    <p><button type="button" class="lp-refresh" id="stocks-more" hidden></button></p>
-    <p class="lp-note">这里只是看收益率，不参与上面的比较，也不发提醒：换过去等于把 ETH 换成了股票的涨跌，看板现在也算不了股票仓位的盈亏和成本价。大字是“平常”（近 7 天每天年化的中位数）和“最近 24 小时”里较低的那个，质押和不质押取高的；这个数假设价格一直在区间内，也没算来回被套利的损耗；资金频繁进出的池子还会偏高（抽查一天，NFLXc 是实际的 1.3–2 倍，ORCLc 约 1.2 倍）。“72 小时在区间”是这几天任何一小时设好同样宽的区间不动，接下来 72 小时价格还在区间内的比例：比例低说明波动大，实际拿到的利息会打折，来回被套利的损耗也更大。</p>
-  </section>
+    <details class="lp-fold" id="pools" data-fold="pools" hidden>
+      <summary><span class="lp-sum"><span class="lp-fold-title">哪个池子利息高</span><span class="lp-fold-hint" id="pools-hint"></span><span class="lp-chev" aria-hidden="true"></span></span></summary>
+      <div class="lp-fold-body">
+        <p class="lp-line" id="pools-line" hidden></p>
+        <p class="lp-move" id="pools-move" hidden></p>
+        <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>质押<br>拿 AERO</th><th>不质押<br>拿手续费</th></tr></thead><tbody id="pools-body"></tbody></table></div>
+        <button type="button" class="lp-refresh lp-more" id="pools-more" hidden></button>
+        <p class="lp-note" id="pools-note"></p>
+      </div>
+    </details>
 
-  <div class="lp-viewbar" id="viewbar">
-    <div class="lp-switch" role="group" aria-label="按什么时间看"><button type="button" data-period="day">按天</button><button type="button" data-period="week">按周</button><button type="button" data-period="month">按月</button></div>
-    <div class="lp-switch" role="group" aria-label="看多长时间" id="range-switch"><button type="button" data-range="30">近 30 天</button><button type="button" data-range="90">近 90 天</button><button type="button" data-range="all">全部</button></div>
+    <details class="lp-fold" id="compare" data-fold="compare" hidden>
+      <summary><span class="lp-sum"><span class="lp-fold-title" id="compare-title">两个钱包对比</span><span class="lp-chev" aria-hidden="true"></span></span></summary>
+      <div class="lp-fold-body">
+        <div class="lp-tablewrap"><table class="lp-compare"><thead id="compare-head"></thead><tbody id="compare-body"></tbody></table></div>
+        <p class="lp-note">现值、盈亏和成本价按实时价格，利息按整点数据。</p>
+      </div>
+    </details>
+
+    <details class="lp-fold" id="f-earn" data-fold="earn">
+      <summary><span class="lp-sum"><span class="lp-fold-title">收益明细</span><span class="lp-fold-hint">图表 · 每日明细</span><span class="lp-chev" aria-hidden="true"></span></span></summary>
+      <div class="lp-fold-body">
+        <div class="lp-aero">
+          <p class="lp-line">没卖的 AERO <b id="k-aero">—</b><span class="lp-muted"> · <span id="k-aero-sub">—</span></span></p>
+          <p class="lp-line" id="k-aero-drift"></p>
+          <p class="lp-note" id="k-earn-mix"></p>
+        </div>
+        <div class="lp-viewbar" id="viewbar">
+          <div class="lp-switch" role="group" aria-label="按什么时间看"><button type="button" data-period="day">按天</button><button type="button" data-period="week">按周</button><button type="button" data-period="month">按月</button></div>
+          <div class="lp-switch" role="group" aria-label="看多长时间" id="range-switch"><button type="button" data-range="30">近 30 天</button><button type="button" data-range="90">近 90 天</button><button type="button" data-range="all">全部</button></div>
+        </div>
+        <h3 class="lp-subhead" id="interest-title">每日利息收益</h3>
+        <div class="lp-legend" id="interest-legend"></div>
+        <div class="lp-chart" id="interest-chart"></div>
+        <p class="lp-note">奖励按当天的 AERO 价格算，加上手续费；今天的颜色浅一些。</p>
+        <h3 class="lp-subhead" id="apr-title">每日年化</h3>
+        <div class="lp-legend" id="apr-legend"></div>
+        <div class="lp-chart lp-chart-sm" id="apr-chart"></div>
+        <p class="lp-note">当天利息 ÷ 池子里的平均资金 × 365；指上去看 AERO 价格、分到多少和手续费占比。</p>
+        <h3 class="lp-subhead">对比一直持有 USDC 的盈亏</h3>
+        <div class="lp-legend" id="pnl-legend"></div>
+        <div class="lp-chart" id="pnl-chart"></div>
+        <p class="lp-note">每天收盘时现值减去投入，0 以上表示比一直拿着 USDC 赚得多，含 ETH 涨跌。</p>
+        <h3 class="lp-subhead" id="days-title">每日明细</h3>
+        <div class="lp-tablewrap">
+          <table>
+            <thead><tr><th id="th-day">日期</th><th>利息收益</th><th class="lp-hide-sm">年化</th><th id="th-pnl-day">当日盈亏</th><th>累计盈亏</th><th class="lp-hide-sm">ETH 价格</th></tr></thead>
+            <tbody id="days-body"></tbody>
+          </table>
+        </div>
+        <button type="button" class="lp-refresh lp-more" id="days-more" hidden></button>
+        <p class="lp-note">“区间外”：当天收盘时不在区间内，那段时间没有利息。</p>
+      </div>
+    </details>
+
+    <details class="lp-fold" id="stocks" data-fold="stocks" hidden>
+      <summary><span class="lp-sum"><span class="lp-fold-title">股票池的利息（只看）</span><span class="lp-fold-hint" id="stocks-hint"></span><span class="lp-chev" aria-hidden="true"></span></span></summary>
+      <div class="lp-fold-body">
+        <div class="lp-tablewrap"><table class="lp-pools"><thead><tr><th>池子</th><th>年化</th><th>72 小时<br>在区间</th></tr></thead><tbody id="stocks-body"></tbody></table></div>
+        <button type="button" class="lp-refresh lp-more" id="stocks-more" hidden></button>
+        <p class="lp-note">只看收益率，不参与比较、不发提醒；算法同上面的池子表，资金进出频繁的池子偏高。</p>
+      </div>
+    </details>
+
+    <details class="lp-fold" id="about" data-fold="about">
+      <summary><span class="lp-sum"><span class="lp-fold-title">数字怎么算</span><span class="lp-chev" aria-hidden="true"></span></span></summary>
+      <div class="lp-fold-body lp-about">
+        <div>
+          <h3 class="lp-subhead">数字</h3>
+          <ul>
+            <li>投入：从外面转进钱包的钱，按到账时的价格算美元。现值：钱包里的币、池子里的币和没领的奖励，按现在的价格算。</li>
+            <li>利息：领到和待领的 AERO 奖励（按当天收盘价）加上交易手续费；今天是截至目前的数。</li>
+            <li>近 7 日年化：这几天的利息 ÷ 池子里的平均资金 × 365，只按池子里的钱算。每日年化同样算，今天按已经过去的时间折算成一整天；收益率变低，是 AERO 跌了、分得少了，还是没质押只赚手续费，指上去就能看出。</li>
+            <li>对比拿着原币不动：现值减去带进来的币现在值多少，差额含利息、无常损失和换币。对比一直持有 USDC：现值减去投入，含利息，也含 ETH 涨跌。</li>
+            <li>按周、按月看时，利息是这些天加起来；当周（当月）盈亏是这段时间累计盈亏的变化，累计盈亏按最后一天算。</li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="lp-subhead">成本价</h3>
+          <ul>
+            <li>撤出后的 ETH 成本价：按此刻的价格把流动性撤出来，拿着所有 ETH（撤出来的加上钱包里原有的），等 ETH 涨过这个价再全部卖出，投入的钱一分不少，到目前为止的利息全拿。卖到回本价：本金不亏，利息抵掉了 ETH 的跌价。</li>
+            <li>按现在的持仓算：之后再赚的利息会算进手里的资产，所以成本价不变、回本价更低。没卖的 AERO 按今天的价格算，卖出手续费没算。</li>
+            <li>看合计时是几个钱包合起来算；钱包对比表里每个钱包按自己的算。</li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="lp-subhead">更新</h3>
+          <ul>
+            <li>数据全部来自 Base 和以太坊链上（以太坊从 2026-10-31 起），价格都按 Base 上的池子算。利息和投入大约每小时更新一次；ETH 价格和跟着它变的数字（现值、盈亏、仓位、撤出成本价）每 15 秒直接从链上读一次。时间都是北京时间，按北京时间切日。</li>
+            <li>数据超过 2 小时没更新时，标题下面那行变成红字，页面也不再按实时价格重算。</li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="lp-subhead">池子和损耗线</h3>
+          <ul>
+            <li>质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。</li>
+            <li>表格固定按 Aero 的 ±3.5% 宽度、把你全部的钱放进去算，已算上放进去后被摊薄的部分，换了仓位或隔几天再看都能直接比。区间越窄年化越高：宽度减半，年化大约翻倍；你实际的年化还要看自己仓位的宽度。</li>
+            <li>平常：近 7 天每天年化的中位数。大字是平常和 24 小时里较低的那个：资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。</li>
+            <li>损耗线：按近 7 天 ETH 的波动，±3.5% 的仓位在区间里时，平均每年比拿着原币不动少赚多少；表格里的年化要高过它才划算。平常和它都按 ±3.5% 算，可以直接比。没算涨跌方向，看涨 ETH 时门槛更高。</li>
+            <li>出区间多久：从整点更新第一次看到仓位出区间算起，满 24 小时手机会提醒。那时平常高过损耗线才写按现价重挂的上下沿：和原来一样宽，对齐池子的刻度；要换多少只算撤出来的仓位，奖励不动。平常低于损耗线写“放回去不划算”。</li>
+            <li>“对你最划算的”、每天多挣多少和换池子的手机提醒按你仓位的宽度算，所以和表格里的数不一样。差 30 个百分点以内算差不多：你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉成本后一周多挣多少。成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）。</li>
+            <li>换池子的手机提醒：某个钱包的去处数据满 7 天，平常和 24 小时都比现在的仓位高 30 个百分点以上，稳定领先（近 7 天较差的日子也比现在高，最近两个 Aero 周都领先），3 天内回本，提醒一次；看合计时不提醒，按各个钱包提醒。</li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="lp-subhead">股票池</h3>
+          <ul>
+            <li>和上面的池子表一样的算法：按 ±3.5% 的区间、把你的钱全部放进去算，已算上摊薄；质押和不质押取高的。只列 Aero 上资金超过 $10 万的股票/USDC 池，现在都在 Base 上。</li>
+            <li>只看收益率，不参与比较、不发提醒：换过去等于把 ETH 换成股票的涨跌，看板也算不了股票仓位的盈亏和成本价。</li>
+            <li>年化假设价格一直在区间内，也没算来回被套利的损耗；资金频繁进出的池子还会偏高（抽查一天，NFLXc 是实际的 1.3–2 倍，ORCLc 约 1.2 倍）。</li>
+            <li>72 小时在区间：这几天任何一小时设好同样宽的区间不动，接下来 72 小时价格还在区间内的比例；比例低说明波动大，实际拿到的利息会打折。</li>
+          </ul>
+        </div>
+      </div>
+    </details>
   </div>
-
-  <section class="lp-card" id="interest">
-    <h2 id="interest-title">每日利息收益</h2>
-    <p class="lp-note">每天领到和待领的 AERO 奖励（按当天收盘价）加上交易手续费；按周、按月时是这些天加起来。今天是截至目前的数，颜色浅一些。</p>
-    <div class="lp-legend" id="interest-legend"></div>
-    <div class="lp-chart" id="interest-chart"></div>
-    <h3 class="lp-subhead" id="apr-title">每日年化</h3>
-    <div class="lp-legend" id="apr-legend"></div>
-    <p class="lp-note">当天利息 ÷ 当天池子里的平均资金 × 365，看收益率本身有没有变低；今天按已经过去的时间折算成一整天。指上去能看到当天的 AERO 价格、每 $1,000 分到多少 AERO 和手续费占多少：收益率变低，是 AERO 跌了、分得少了，还是没质押只赚手续费，一看便知。</p>
-    <div class="lp-chart lp-chart-sm" id="apr-chart"></div>
-  </section>
-
-  <section class="lp-card" id="vs-usdc">
-    <h2>对比一直持有 USDC 的盈亏</h2>
-    <p class="lp-note">每天收盘时，现值减去投入的钱：0 以上表示比一直拿着 USDC 赚得多。包含利息，也包含 ETH 涨跌的影响。</p>
-    <div class="lp-legend" id="pnl-legend"></div>
-    <div class="lp-chart" id="pnl-chart"></div>
-  </section>
-
-  <section class="lp-card" id="days">
-    <h2 id="days-title">每日明细</h2>
-    <div class="lp-tablewrap">
-      <table>
-        <thead><tr><th id="th-day">日期</th><th>利息收益</th><th class="lp-hide-sm">年化</th><th id="th-pnl-day">当日盈亏</th><th>累计盈亏</th><th class="lp-hide-sm">ETH 价格</th></tr></thead>
-        <tbody id="days-body"></tbody>
-      </table>
-    </div>
-    <p class="lp-note">当日（当周、当月）盈亏 = 这段时间累计盈亏的变化（利息加上 ETH 涨跌）；累计盈亏是对比一直持有 USDC，按这段时间最后一天算。标“区间外”是当天收盘时价格不在仓位区间内；不在区间内的那段时间没有利息。</p>
-  </section>
-
-  <section class="lp-about" id="about">
-    <ul>
-      <li>投入：从外面转进钱包的钱，按到账时的价格算美元。现值：钱包里的币、池子里的币和没领的奖励，按现在的价格算。</li>
-      <li>数据来自 Base 和以太坊链上（以太坊从 2026-10-31 起），价格都按 Base 上的池子算：利息和投入大约每小时更新一次；ETH 价格和跟着它变的数字（现值、盈亏、区间位置、撤出成本价）每 15 秒直接从链上读一次。按北京时间切日。</li>
-      <li>ETH 成本价：把流动性撤出来，拿着手里所有的 ETH（撤出来的加上钱包里原有的），等 ETH 涨到成本价以上再全部卖出，投入的钱一分不少、目前为止的利息全部到手。按现在的持仓算；之后再赚的利息会同时算进手里的资产，所以成本价不变、回本价会更低。没卖的 AERO 按今天的价格算，卖出手续费没算。</li>
-    </ul>
-  </section>
 </div>
 
 <script>
@@ -208,16 +318,29 @@
   // ---------- formatting ----------
   const usd0 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
   const usd2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fmtUsd = (v) => (v == null ? '—' : Math.abs(v) >= 1000 ? usd0.format(v) : usd2.format(v));
+  // Cents only under $100.
+  const fmtUsd = (v) => (v == null ? '—' : Math.abs(v) >= 100 ? usd0.format(v) : usd2.format(v));
   const sign = (v) => (v > 0 ? '+' : v < 0 ? '-' : '');
   const fmtSigned = (v) => (v == null ? '—' : sign(v) + fmtUsd(Math.abs(v)));
-  const fmtPct = (v) => (v == null ? '—' : sign(v) + (Math.abs(v) * 100).toFixed(2) + '%');
+  const fmtPct = (v) => (v == null ? '—' : sign(v) + (Math.abs(v) * 100).toFixed(1) + '%');
   const fmtNum = (v, d) => (v == null ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: d }));
-  const fmtApr = (v) => (v == null || !Number.isFinite(v) ? '—' : `${(v * 100).toFixed(1)}%`);
+  const fmtEth = (v) => fmtNum(v, v >= 0.1 ? 2 : 4);
+  // Every yearly rate on the page: whole percents from 10%, one decimal below.
+  const rateText = (v, d = 0) => `${(v * 100).toFixed(Math.max(d, v < 0.1 ? 1 : 0))}%`;
+  const fmtRate = (v) => (v == null || !Number.isFinite(v) ? '—' : rateText(v));
+  // Two rates side by side (平常 and the loss line): a decimal more while they would read the same, as
+  // the phone alerts write them (lib/alerts.mjs).
+  const ratePair = (a, b) => { let d = 0; while (d < 2 && rateText(a, d) === rateText(b, d)) d++; return [rateText(a, d), rateText(b, d)]; };
   const fmtTick = (v) => (Number.isInteger(v) ? usd0.format(v) : fmtUsd(v));
   const tone = (el, v) => { el.classList.toggle('lp-pos', v > 0); el.classList.toggle('lp-neg', v < 0); };
   const parseDay = (d) => new Date(d + 'T00:00:00Z');
   const dayLabel = d3.utcFormat('%-m/%-d');
+  // Dates as M/D; a Beijing time 'YYYY-MM-DD HH:MM' as M/D HH:MM; a moment (ms) the same way.
+  const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+  const mdHm = (t) => (t ? `${md(t.slice(0, 10))} ${t.slice(11, 16)}` : '—');
+  const cstMdHm = (ms) => mdHm(new Date(ms + 8 * 3600e3).toISOString().replace('T', ' '));
+  // Text written only when it changes: the live redraw every 15 s leaves the rest alone.
+  const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
 
   // ---------- scope ----------
   const scopeList = () => { const S = dash.data('summary'); return S.status === 'ok' ? S.data.map((r) => ({ key: r.scope, label: r.scope_label })) : []; };
@@ -236,6 +359,9 @@
     }
     scopeBox.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.scope === sc)));
   }
+  // The combined view of several wallets: its table of wallets is named after how many there are.
+  const multiView = (s) => s?.scope === 'total' && walletKeys().length > 1;
+  const compareName = () => { const n = walletKeys().length; return n === 2 ? '两个钱包对比' : `${n} 个钱包对比`; };
 
   // ---------- the ETH curve: what the wallets hold at any ETH price ----------
   // Each live WETH/USDC position turns into ETH as the price falls and into USDC as it rises; the
@@ -255,28 +381,120 @@
   const ratio = (v) => v.toPrecision(4);
   const walletColor = (label) => { const i = walletKeys().findIndex((k) => labelOf(k) === label); return dash.colors[Math.max(0, i) % dash.colors.length]; };
 
+  // ---------- a range put back around the price ----------
+  // The same as lib/curve.mjs recentre (test/ checks the two agree): as wide as the position's own ticks,
+  // centred on the dollar price P and on the pool's tick grid when its spacing is known; ticks are of the
+  // pool's raw price, P / 1e12 where WETH is token0 (Base), 1e12 / P where USDC is (`invert`, Ethereum).
+  // Without a spacing (or ticks) the same width around P, not on the grid, and null ticks.
+  /* recentre:start */
+  function recentre(pos, P, spacing) {
+    const W = pos.tick_upper - pos.tick_lower;
+    const ticks = Number.isInteger(pos.tick_lower) && Number.isInteger(pos.tick_upper) && W > 0;
+    if (!(spacing > 0) || !ticks) {
+      const r = ticks ? 1.0001 ** W : pos.high / pos.low;
+      return { tick_lower: null, tick_upper: null, low: P / Math.sqrt(r), high: P * Math.sqrt(r) };
+    }
+    const t = Math.log(pos.invert ? 1e12 / P : P / 1e12) / Math.log(1.0001);
+    const lower = Math.round((t - W / 2) / spacing) * spacing + 0, upper = lower + W;
+    return pos.invert
+      ? { tick_lower: lower, tick_upper: upper, low: 1e12 / 1.0001 ** upper, high: 1e12 / 1.0001 ** lower }
+      : { tick_lower: lower, tick_upper: upper, low: 1e12 * 1.0001 ** lower, high: 1e12 * 1.0001 ** upper };
+  }
+  /* recentre:end */
+  // The share of its value a range [low, high] holds in ETH at the price P (lib/curve.mjs splitShare):
+  // e·P / (e·P + u) for e = 1/√P − 1/√high and u = √P − √low; a half at its geometric centre.
+  const splitShare = (low, high, P) => {
+    if (P <= low) return 1;
+    if (P >= high) return 0;
+    const e = 1 / Math.sqrt(P) - 1 / Math.sqrt(high), u = Math.sqrt(P) - Math.sqrt(low);
+    return (e * P) / (e * P + u);
+  };
+  // Whether a range out for a day is worth putting back, as the phone alert decides it (lib/alerts.mjs
+  // putBackRates; test/ checks the two agree): its pool's 平常, staked unless none of the money there is
+  // (the column the loss line sits under), against the loss line, both at the table's width.
+  /* putback:start */
+  function putBackRates(poolRow, costLine) {
+    const mode = poolRow?.here === 'unstaked' ? 'fee' : 'staked';
+    const usual = poolRow?.fixed?.[mode]?.median, line = costLine?.rate;
+    const both = Number.isFinite(usual) && Number.isFinite(line);
+    return { both, under: both && usual < line, usual, line, stopped: !both && mode === 'staked' && poolRow?.stopped === true };
+  }
+  /* putback:end */
+  // What a range out for a day gets, judged as its phone alert judges it (lib/alerts.mjs out24; test/ checks
+  // the two agree): by its own wallet's table. On a wallet's view that is the view's; on a total or combined
+  // view (scope 'total') it is the row of the one wallet the position names by its label (none, or a label two
+  // wallets share: nothing is judged), never the view's own table, which pools every wallet's money (its 平常
+  // is diluted by all of it, its staking is theirs together). In the table the position's pool is found as
+  // the alerts find it (chain, Base by default, and address), and its tick spacing from its label 'CL{n}'.
+  // 'plain' (only the day: a range against another coin, or a number missing), 'stopped', 'under' (平常 below
+  // the loss line) or 'move' (a range as wide is worth putting back).
+  /* outline:start */
+  function outVerdict(rows, s, p) {
+    const own = s.scope !== 'total' ? [s] : rows.filter((r) => r.scope !== 'total' && (r.scope_label ?? r.scope) === p.wallet);
+    const pc = own.length === 1 ? own[0].pool_compare : null;
+    if (p.quote || !pc) return { kind: 'plain' };
+    const row = p.pool_address ? pc.pools?.find((q) => (q.chain ?? 'base') === (p.chain ?? 'base') && q.pool_address?.toLowerCase() === p.pool_address.toLowerCase()) ?? null : null;
+    const r = putBackRates(row, pc.cost_line);
+    if (r.stopped) return { kind: 'stopped' };
+    if (!r.both) return { kind: 'plain' };
+    return { kind: r.under ? 'under' : 'move', usual: r.usual, line: r.line, spacing: Number(/^CL(\d+)$/.exec(row?.label ?? '')?.[1]) || null };
+  }
+  /* outline:end */
+  // The line under an out-of-range position, from p.out_since (when the hourly job first saw its range out,
+  // the phone alert's clock; absent in older data): the hours until the 24-hour alert, then what outVerdict
+  // found: for a range worth putting back, where one as wide lies around its pool's live price and how much
+  // of what withdrawing it gives to swap first so the new range takes all of it (its own liquidity only: the
+  // rewards stay aside); a stopped gauge, or 平常 below the line, said instead; otherwise only the day. On a
+  // total view (`apart`) the 平常 and loss line above the positions are the view's: the wallet's own are said.
+  const DAY_MS = 24 * 3600e3;
+  function actOf(v, p, P, under, apart) {
+    const since = p.out_since;
+    if (typeof since !== 'number' || !Number.isFinite(since)) return null;
+    const ms = Math.max(0, Date.now() - since);
+    if (ms < DAY_MS) {
+      const h = Math.floor(ms / 3600e3);
+      return { due: false, text: `出区间${h ? ` ${h} 小时` : '不到 1 小时'}，满 24 小时（约 ${cstMdHm(since + DAY_MS)}，北京时间）再看。` };
+    }
+    const done = { due: true, text: '出区间已满 24 小时。' };
+    if (!(P > 0) || v.kind === 'plain') return done;
+    if (v.kind === 'stopped') return { due: true, text: '出区间已满 24 小时。这个池子的质押奖励已停。' };
+    const [u, l] = ratePair(v.usual, v.line), own = `单看这个钱包：平常 ${u}，${v.kind === 'under' ? '低于' : '高过'}损耗线 ${l}`;
+    if (v.kind === 'under') return { due: true, text: `出区间已满 24 小时。${apart ? `${own}，` : '平常低于损耗线，'}放回去不划算。` };
+    const nb = recentre(p, P, v.spacing);
+    if (!(nb.low > 0 && nb.high > nb.low)) return done;
+    let swap = '';
+    if ([p.L, p.sa, p.sb].every(Number.isFinite) && p.L > 0) {
+      const [e, u] = amountsAt(p, P), share = splitShare(nb.low, nb.high, P);
+      swap = under ? `，先把约 ${fmtEth(e * (1 - share))} ETH 换成 USDC` : `，先把约 ${fmtUsd(u * share)} USDC 换成 ETH`;
+    }
+    return { due: true, text: `出区间已满 24 小时。${apart ? `${own}。` : ''}要按现价重挂、宽度不变的话：${usd0.format(nb.low)} – ${usd0.format(nb.high)}${swap}。` };
+  }
+
+  // In range needs no sentence: the green 区间内 beside each position says it.
   const STATES = {
-    in: '在区间内，正在赚利息。',
-    part: '部分仓位在自己的区间内，那部分在赚利息。',
-    gap: '每个仓位都在自己的区间外，现在不赚利息。',
-    below: '已经跌破区间，仓位全部变成了 ETH，现在不赚利息。',
-    above: '已经涨过区间，仓位全部变成了 USDC，现在不赚利息。',
+    in: '',
+    part: '部分仓位在区间内，只有那部分在赚利息。',
+    gap: '都在区间外，现在不赚利息。',
+    below: '跌破区间，全是 ETH，现在不赚利息。',
+    above: '涨破区间，全是 USDC，现在不赚利息。',
     none: '现在没有 LP 仓位。',
   };
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 
-  // ---------- where the price sits in each range ----------
+  // ---------- 仓位: where the price sits in each range ----------
   function drawRange(s) {
     const state = $('range-state'), list = $('range-rows');
-    state.replaceChildren(); list.replaceChildren();
-    if (!s) { state.textContent = '—'; return; }
-    const b = el('b', null, fmtUsd(s.eth_usd));
+    list.replaceChildren();
+    setText($('range-eth'), s ? `ETH ${fmtUsd(s.eth_usd)}` : '');
+    if (!s) { setText(state, '—'); state.hidden = false; return; }
     const held = s.curve?.positions ?? [], coins = [...new Set(held.filter((p) => p.quote).map((p) => p.quote.symbol))];
     const above = [...(held.some((p) => !p.quote) ? ['USDC'] : []), ...coins].join(' 或 ');
-    state.append('ETH 现价 ', b, '，', s.range_state === 'above' && coins.length ? `已经涨过区间，仓位全部变成了 ${above}，现在不赚利息。` : STATES[s.range_state] ?? '');
+    const said = s.range_state === 'above' && coins.length ? `涨破区间，全是 ${above}，现在不赚利息。` : STATES[s.range_state] ?? '';
+    setText(state, said);
+    state.hidden = !said;
     // Positions of one wallet with the same range move together: show them as one.
     const ps = [];
-    for (const p of s.curve?.positions ?? []) {
+    for (const p of held) {
       const same = ps.find((q) => q.wallet === p.wallet && q.low === p.low && q.high === p.high && (q.chain ?? 'base') === (p.chain ?? 'base'));
       if (same) same.L += p.L; else ps.push({ ...p });
     }
@@ -285,8 +503,20 @@
     const lo0 = Math.min(now, ...ps.map((p) => p.low)), hi0 = Math.max(now, ...ps.map((p) => p.high));
     const pad = (hi0 - lo0) * 0.12 || now * 0.05, lo = lo0 - pad, hi = hi0 + pad;
     const at = (v) => `${(((v - lo) / (hi - lo)) * 100).toFixed(2)}%`;
-    const several = new Set(ps.map((p) => p.wallet)).size > 1;
-    for (const p of ps) {
+    // On the combined view each row names its wallet, and a wallet without a position says so in its place.
+    const multi = multiView(s), order = multi ? [...new Set(walletKeys().map(labelOf))] : [];
+    const several = multi || new Set(ps.map((p) => p.wallet)).size > 1;
+    const items = multi ? [...order.flatMap((w) => { const mine = ps.filter((p) => p.wallet === w); return mine.length ? mine : [w]; }), ...ps.filter((p) => !order.includes(p.wallet))] : ps;
+    // While the data is old the positions may have changed: no line says what to do with them. On a total
+    // view each position is judged by its own wallet's row among the view's rows.
+    const stale = staleHours(s) > 0, S = dash.data('summary'), rows = S.status === 'ok' ? S.data : [];
+    for (const p of items) {
+      if (typeof p === 'string') {
+        const row = el('div', 'lp-range lp-range-none');
+        row.append(el('div', 'lp-range-head', `${p} · 没有仓位`));
+        list.appendChild(row);
+        continue;
+      }
       const row = el('div', 'lp-range');
       const at0 = p.pool ?? now, inside = p.in_range ?? (at0 >= p.low && at0 < p.high), under = at0 < (p.low + p.high) / 2;
       const head = el('div', 'lp-range-head');
@@ -298,31 +528,61 @@
       const seg = el('i', 'lp-seg'); seg.style.left = at(p.low); seg.style.width = `calc(${at(p.high)} - ${at(p.low)})`; seg.style.background = walletColor(p.wallet);
       const mark = el('i', 'lp-now'); mark.style.left = at(at0); mark.title = q ? `现价 1 ETH = ${ratio(at0 / q.usd)} ${q.symbol}` : `现价 ${fmtUsd(at0)}`;
       track.append(seg, mark);
-      const [e, u] = amountsAt(p, at0);
       const where = inside ? `跌 ${pct((at0 - p.low) / at0)} 到下沿 · 涨 ${pct((p.high - at0) / at0)} 到上沿`
         : under ? `要涨 ${pct(Math.max(0, p.low - at0) / at0)} 才回到区间` : `要跌 ${pct(Math.max(0, at0 - p.high) / at0)} 才回到区间`;
-      const sub = q ? `1 ETH = ${ratio(at0 / q.usd)} ${q.symbol} · ETH 对 ${q.symbol} ${where} · 池子里 ${fmtNum(e, 2)} ETH + ${fmtNum(u / q.usd, 4)} ${q.symbol}` : `${where} · 池子里 ${fmtNum(e, 2)} ETH + ${fmtUsd(u)} USDC`;
-      row.append(head, track, el('div', 'lp-range-sub', sub));
+      // Out of range the position is all one coin: what a re-centre would move.
+      let all = '';
+      if (!inside) { const [e, u] = amountsAt(p, at0); all = under ? ` · 全是 ${fmtNum(e, 2)} ETH` : q ? ` · 全是 ${fmtNum(u / q.usd, 4)} ${q.symbol}` : ` · 全是 ${fmtUsd(u)} USDC`; }
+      const sub = q ? `1 ETH = ${ratio(at0 / q.usd)} ${q.symbol} · ETH 对 ${q.symbol} ${where}${all}` : `${where}${all}`;
+      const act = el('div', 'lp-act');
+      act.dataset.range = `${p.wallet}|${p.chain ?? 'base'}|${q ? `${q.low}-${q.high}` : `${p.low}-${p.high}`}`;
+      const a = !stale && !inside ? actOf(outVerdict(rows, s, p), p, at0, under, s.scope === 'total') : null;
+      if (a) { act.textContent = a.text; act.classList.add(a.due ? 'lp-act-due' : 'lp-act-wait'); }
+      row.append(head, track, el('div', 'lp-range-sub', sub), act);
       list.appendChild(row);
     }
   }
 
+  // ---------- 平常 against the loss line, first in the 仓位 card ----------
+  // For each pool the view's money is in: its 平常 (staked or not, as it is held) and the loss line, both at
+  // the table's fixed width, so they compare directly. Nothing while the data is old (the positions may
+  // have changed since), and the page can go stale while open, so the box is emptied first every time.
+  function drawDecide(s) {
+    const box = $('decide');
+    box.replaceChildren();
+    if (!s || staleHours(s)) return;
+    const pc = s.pool_compare, line = pc?.cost_line?.rate;
+    if (!Number.isFinite(line) || !pc.fixed_label) return;
+    for (const p of pc.pools ?? []) {
+      if (!p.here || !p.fixed) continue;
+      // The same 平常 the out-of-range line and the phone alert judge by.
+      const { usual, stopped } = putBackRates(p, pc.cost_line), known = Number.isFinite(usual);
+      const [u, l] = known ? ratePair(usual, line) : [stopped ? '已停' : '—', fmtRate(line)];
+      const n = el('p');
+      n.append(`${p.chain_label} ${p.label}：平常 `, el('b', known && usual < line ? 'lp-neg' : null, u), ' · 损耗线 ', el('b', null, l), `（都按 ${pc.fixed_label}）`);
+      box.append(n);
+    }
+  }
+
   // ---------- the ETH cost price after withdrawing now ----------
-  // Withdrawing now, each position at its own pool's price, and holding all the ETH.
+  // Withdrawing now, each position at its own pool's price, and holding all the ETH. Returns the block and
+  // the short figure for the fold row's summary.
   function exitBlock(head, sub, s, withdraw, compare) {
     const b = el('div', 'lp-exit');
     const h = el('div', 'lp-exit-head', head[0]);
-    if (head[1]) h.append(' ', el('span', null, head[1]));
+    if (head[1]) h.append(' · ', el('span', null, head[1]));
     const [pe, pu, coins = {}] = withdraw, e = s.curve.eth + pe, u = s.curve.usd + pu;
     const c = needed(e, u, s.invested_usd + s.earn_total_usd), even = needed(e, u, s.invested_usd);
     const price = el('div', 'lp-exit-price');
     const short = `比本金加利息少 ${fmtUsd(s.invested_usd + s.earn_total_usd - u)}`;
+    let hint = '—';
     if (c == null) price.append(el('span', 'lp-kpi-value', '—'), el('span', 'lp-exit-gap', `没有要卖的 ETH；${short}`));
     else if (c > 5 * s.eth_usd) price.append(el('span', 'lp-kpi-value', '—'), el('span', 'lp-exit-gap', `ETH 太少，靠卖 ETH 补不回；${short}`));
-    else if (c === 0) price.append(el('span', 'lp-kpi-value', '已覆盖'), el('span', 'lp-exit-gap', '不用卖 ETH，其他资产已经够本金加利息'));
+    else if (c === 0) { price.append(el('span', 'lp-kpi-value', '已覆盖'), el('span', 'lp-exit-gap', '不用卖 ETH，其他资产已经够本金加利息')); hint = '已覆盖'; }
     else {
       const g = c / compare[1] - 1;
       price.append(el('span', 'lp-kpi-value', fmtUsd(c)), el('span', 'lp-exit-gap', g > 0 ? `比${compare[0]} ${fmtUsd(compare[1])} 高 ${pct(g)}` : `${compare[0]} ${fmtUsd(compare[1])} 就已经够了`));
+      hint = g > 0 ? `${fmtUsd(c)} · 比${compare[0]}高 ${pct(g)}` : `${fmtUsd(c)} · ${compare[0]}已高于它`;
     }
     // What the pools pay besides ETH: dollars and other coins.
     const held = Object.entries(coins), dollars = pu - held.reduce((a, [, x]) => a + x.usd, 0);
@@ -332,7 +592,7 @@
     for (const [k, x] of held) if (x.usd >= 0.5) parts.push(`${k} 按现价 ${fmtUsd(x.usd / x.amount)} 算`);
     if (c && c <= 5 * s.eth_usd && even != null) parts.push(even === 0 ? '回本价：任何价格都不亏本金' : `回本价 ${fmtUsd(even)}`);
     b.append(h, price, el('div', 'lp-range-sub', parts.join(' · ')));
-    return b;
+    return { node: b, hint };
   }
   const poolOut = (ps, at) => ps.reduce(([e, u, coins], p) => {
     const [a, b] = amountsAt(p, at(p)), up = p.coin_up ?? 1;
@@ -340,14 +600,19 @@
     return [e + a, u + b * up, coins];
   }, [0, 0, {}]);
   function drawExit(s) {
-    const rows = $('exit-rows');
+    const rows = $('exit-rows'), hint = $('exit-hint'), note = $('exit-scope');
     rows.replaceChildren();
-    $('exit-scope').hidden = !(s?.scope === 'total' && walletKeys().length > 1);
+    const multi = multiView(s);
+    note.hidden = !multi;
+    setText(note, multi ? `几个钱包合起来算；各钱包的见「${compareName()}」。` : '');
     const ps = s?.curve?.positions ?? [];
-    if (!s?.curve) { rows.textContent = '—'; return; }
+    if (!s?.curve) { rows.textContent = '—'; setText(hint, ''); return; }
     const now = s.eth_usd;
-    if (!ps.length) rows.append(exitBlock(['现在没有仓位'], '', s, [0, 0], ['现价', now]));
-    else rows.append(exitBlock(['现在撤出', s.range_state === 'below' ? '已跌出区间，全是 ETH' : `ETH ${fmtUsd(now)}`], '', s, poolOut(ps, (p) => p.pool ?? now), ['现价', now]));
+    const out = !ps.length ? exitBlock(['现在没有仓位'], '', s, [0, 0], ['现价', now])
+      : exitBlock(['现在撤出', s.range_state === 'below' ? '已跌破，全是 ETH' : `ETH ${fmtUsd(now)}`], '', s, poolOut(ps, (p) => p.pool ?? now), ['现价', now]);
+    rows.append(out.node);
+    // The row's figure follows the live prices; with old data it would only look live, so it is left out.
+    setText(hint, staleHours(s) ? '' : out.hint);
   }
 
   // ---------- chart helpers ----------
@@ -449,7 +714,7 @@
       segs.forEach((s, i) => {
         const top = y(y0 + s.v), bot = y(y0);
         svg.append('rect').attr('x', x(r.day) + (x.bandwidth() - bw) / 2).attr('width', bw).attr('y', top).attr('height', Math.max(1, bot - top))
-          .attr('rx', i === segs.length - 1 ? 3 : 0).attr('fill', color(s.k)).attr('opacity', r.partial ? 0.5 : 1);
+          .attr('rx', i === segs.length - 1 ? 4 : 0).attr('fill', color(s.k)).attr('opacity', r.partial ? 0.5 : 1);
         y0 += s.v;
       });
     }
@@ -495,7 +760,7 @@
     const ticks = y.ticks(3), pctTick = (v) => `${Math.round(v * 100)}%`;
     m.l = Math.ceil(measure(svg, ticks.map(pctTick))) + 8;
     const lastOf = (x) => x.rows.filter((r) => Number.isFinite(r.apr_day)).at(-1);
-    const endText = (x) => { const l = lastOf(x); return l ? (multi ? `${x.label} ${fmtApr(l.apr_day)}` : fmtApr(l.apr_day)) : ''; };
+    const endText = (x) => { const l = lastOf(x); return l ? (multi ? `${x.label} ${fmtRate(l.apr_day)}` : fmtRate(l.apr_day)) : ''; };
     m.r = Math.ceil(measure(svg, series.map(endText))) + 12;
     const days = [...new Set(series.flatMap((x) => x.rows.map((r) => r.day)))].sort();
     const x = d3.scaleBand(days, [m.l, W - m.r]).paddingInner(0.3).paddingOuter(0.1);
@@ -528,12 +793,12 @@
         const i = Math.max(0, Math.min(days.length - 1, Math.floor((px - m.l - x.step() * x.paddingOuter()) / x.step())));
         const day = days[i], r = rows.find((q) => q.day === day) ?? series.map((sr) => sr.rows.find((q) => q.day === day)).find(Boolean);
         rule.style('display', null).attr('x1', cx({ day })).attr('x2', cx({ day }));
-        const lines = multi ? series.map((sr) => [sr.label, fmtApr(sr.rows.find((q) => q.day === day)?.apr_day)]) : [['年化', fmtApr(r.apr_day)]];
+        const lines = multi ? series.map((sr) => [sr.label, fmtRate(sr.rows.find((q) => q.day === day)?.apr_day)]) : [['年化', fmtRate(r.apr_day)]];
         lines.push([multi ? '合计利息' : '利息', fmtUsd(r.earn_usd)], ['池子里平均', fmtUsd(r.lp_tw_usd)]);
         if (r.aero_per_1k != null) lines.push(['每 $1,000 每天分到', `${fmtNum(r.aero_per_1k, 2)} AERO`]);
         if (r.earn_fee_usd) lines.push(['其中手续费', `${fmtUsd(r.earn_fee_usd)}（${Math.round((r.earn_fee_usd / r.earn_usd) * 100)}%）`]);
         if (period === 'day' && r.aero_usd != null) lines.push(['AERO 价格', `$${Number(r.aero_usd).toFixed(3)}`]);
-        if (series.some((sr) => { const q = sr.rows.find((z) => z.day === day); return q && short(q); })) lines.push(['', `${period === 'day' ? '当天' : '这段时间'}中途加了或撤了钱，按平均资金折算，波动可能大`]);
+        if (series.some((sr) => { const q = sr.rows.find((z) => z.day === day); return q && short(q); })) lines.push(['', `${period === 'day' ? '当天' : '这段时间'}中途加了或撤了钱，`], ['', '按平均资金折算，波动可能大']);
         const yAt = Number.isFinite(r.apr_day) ? yv(r.apr_day) : H / 2;
         tip.show(toBox(box, W, cx({ day })), yAt, periodTitle(r, period), lines);
       })
@@ -585,13 +850,13 @@
         const lines = multi
           ? [...series.map((sr) => [`${sr.label} 累计盈亏`, at(sr) ? fmtSigned(at(sr).pnl_usd) : '—']), ['ETH 价格', fmtUsd(r.eth_usd)]]
           : [['累计盈亏', fmtSigned(r.pnl_usd)], ['当日盈亏', fmtSigned(r.pnl_day_usd)], ['其中利息', fmtUsd(r.earn_usd)], ['ETH 价格', fmtUsd(r.eth_usd)]];
-        tip.show(toBox(box, W, x(date)), y(r.pnl_usd), r.day + (r.partial ? '（今日至今）' : ''), lines);
+        tip.show(toBox(box, W, x(date)), y(r.pnl_usd), md(r.day) + (r.partial ? '（至今）' : ''), lines);
       })
       .on('mouseleave', () => { tip.hide(); dots.forEach((d) => d.style('display', 'none')); });
   }
 
   // ---------- several wallets side by side (the combined view) ----------
-  const STATE_SHORT = { in: '区间内', part: '部分在区间内', gap: '区间外', below: '已跌破', above: '已涨破', none: '没有仓位' };
+  // Each wallet's ranges are in 仓位, so the table has no row for them.
   const exitCost = (s) => {
     if (!s.curve) return null;
     const [pe, pu] = poolOut(s.curve.positions ?? [], (p) => p.pool ?? s.eth_usd);
@@ -603,23 +868,23 @@
     card.hidden = sc !== 'total' || wallets.length < 2;
     if (card.hidden) return;
     const cols = [...wallets, 'total'].map((k) => lives.find((r) => r.scope === k)).filter(Boolean);
-    $('compare-title').textContent = `${wallets.length === 2 ? '两' : wallets.length} 个钱包对比`.replace('两 个', '两个');
+    // On the summary's inner span: the row's layout and chevron stay.
+    setText($('compare-title'), compareName());
     const th = (t) => { const e = document.createElement('th'); e.textContent = t; return e; };
     const hr = document.createElement('tr'); hr.append(th(''), ...cols.map((r) => th(r.scope_label)));
     $('compare-head').replaceChildren(hr);
     const rowsDef = [
       ['投入', (r) => fmtUsd(r.invested_usd)],
       ['现值', (r) => fmtUsd(r.value_usd)],
-      ['对比持有 USDC', (r) => fmtSigned(r.pnl_usd), (r) => r.pnl_usd],
+      ['对比一直持有 USDC', (r) => fmtSigned(r.pnl_usd), (r) => r.pnl_usd],
       ['对比拿着原币不动', (r) => (r.vs_hodl_usd == null ? '—' : fmtSigned(r.vs_hodl_usd)), (r) => r.vs_hodl_usd],
       ['盈亏比例', (r) => fmtPct(r.pnl_pct), (r) => r.pnl_pct],
       ['累计利息', (r) => fmtUsd(r.earn_total_usd)],
       ['昨日利息', (r) => fmtUsd(r.yesterday_usd)],
       ['今日至今', (r) => fmtUsd(r.today_usd)],
-      ['近 7 日年化', (r) => (r.apr_7d == null ? '—' : `${(r.apr_7d * 100).toFixed(1)}%${r.apr_days < 7 ? `（${r.apr_days} 天）` : ''}`)],
+      ['近 7 日年化', (r) => (r.apr_7d == null ? '—' : `${fmtRate(r.apr_7d)}${r.apr_days < 7 ? `（${r.apr_days} 天）` : ''}`)],
       ['没卖的 AERO', (r) => fmtUsd(r.aero_unsold_usd)],
       ['现在撤出成本价', (r) => fmtCost(exitCost(r), r)],
-      ['区间', (r) => STATE_SHORT[r.range_state] ?? '—'],
     ];
     $('compare-body').replaceChildren(...rowsDef.map(([name, f, toneOf]) => {
       const tr = document.createElement('tr');
@@ -630,25 +895,30 @@
   }
 
   // ---------- pools: what a position like the owners' earned in each pool, staked or not ----------
-  const fmtRate = (v) => (v == null ? '—' : `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`);
   const fmtCompact = (v) => (v == null ? '—' : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${Math.round(v / 1e3)}K` : fmtUsd(v));
+  // The table lists the top rows, the pools the money is in and the options the text names; the rest on request.
+  const POOLS_SHOWN = 3;
+  let poolsAll = false;
   function drawPools(s) {
     const card = $('pools'), pc = s?.pool_compare;
     card.hidden = !pc || !pc.pools.length;
     if (card.hidden) return;
     const days = Math.max(...pc.pools.map((p) => p.days));
-    $('pools-title').textContent = `哪个池子利息高（近 ${days} 天）`;
     // Widths in Aero's convention, (high - low) / (high + low): an Aero ±10% range reads ±10.0%, like the ±3.5% label.
     const width = `±${(((pc.ratio - 1) / (pc.ratio + 1)) * 100).toFixed(1)}%`, fixedLabel = pc.fixed_label ?? null;
-    // The table reads every pool at one fixed width (src/run.mjs: Aero's ±3.5%); the line above it, the
+    // The table reads every pool at one fixed width (src/run.mjs: Aero's ±3.5%); the text above it, the
     // extra a day and the alert at the positions' own width. Older data has no fixed width: then both are the position's.
     const own = pc.default_width ? `${s.curve?.positions?.length ? '现在的仓位不在这些池子里' : '现在没有仓位'}，按 ${fixedLabel ?? width} 的区间` : `按${s.scope === 'total' ? '最大那个' : '你的'}仓位的区间宽度（${width}）`;
-    const mine = s.apr_7d != null ? `你${s.apr_days && s.apr_days < 7 ? `近 ${s.apr_days} 天` : '近 7 天'}实际拿到的年化 ${(s.apr_7d * 100).toFixed(1)}%（按池子里的钱算，就是页面顶部的那个数）。` : '';
-    const cl = pc.cost_line;
-    const bar = cl?.rate != null && fixedLabel ? `按近 ${cl.days} 天 ETH 的波动（年波动 ${fmtRate(cl.vol)}），${fixedLabel} 的仓位在区间里时，平均每年比拿着原币不动少赚约 ${fmtRate(cl.rate)}，表格里的年化要高过它才划算；这没算涨跌方向，看涨 ETH 时门槛更高。` : '';
-    $('pools-note').textContent = fixedLabel
-      ? `表格里每个池子都按 ${fixedLabel} 的区间（和 Aero 页面上选 ${fixedLabel} 一样宽）、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。${bar}${mine}${pc.default_width ? '' : `上面那段话里的年化、每天多挣多少和手机提醒都${own}算，${pc.ratio > pc.fixed_ratio ? '所以比表格里同一个池子的数低' : '所以和表格里的数不一样'}。`}`
-      : `${own}、把 ${fmtUsd(pc.my_usd)} 全部放进去算，已算上这笔钱放进去后被摊薄的部分。`;
+    const ownNote = fixedLabel && !pc.default_width ? `按${s.scope === 'total' ? '最大那个' : '你'}仓位的宽度（${width}）算，${pc.ratio > pc.fixed_ratio ? '比表格里的数低' : '和表格里的数不一样'}` : '';
+    // The loss line, what a rate in the table has to clear, and the owner's own rate beside it.
+    const cl = pc.cost_line, lossOk = cl?.rate != null && Boolean(fixedLabel);
+    const line = $('pools-line');
+    line.replaceChildren();
+    line.hidden = !lossOk;
+    if (lossOk) {
+      const mine = s.apr_7d != null ? `你${s.apr_days && s.apr_days < 7 ? `近 ${s.apr_days} 天` : '近 7 天'}的年化是 ${fmtRate(s.apr_7d)}。` : '';
+      line.append('损耗线 ', el('b', null, fmtRate(cl.rate)), `（年波动 ${fmtRate(cl.vol)}）：表格里的年化要高过它才划算。${mine}`);
+    }
     // Where the money earns most, against where it is now (src/run.mjs switchTo).
     const sw = pc.switch, move = $('pools-move'), modeName = (m) => (m === 'staked' ? '质押' : '不质押');
     move.hidden = !sw;
@@ -656,14 +926,17 @@
     const same = (a, b) => Boolean(a && b && a.to.chain === b.to.chain && a.to.label === b.to.label && a.to.mode === b.to.mode);
     const payback = (j) => (j.payback_days < 0.1 ? '不到 0.1 天' : `约 ${j.payback_days.toFixed(1)} 天`);
     // The usual (median day) and now (last 24 hours); options are judged by the lower (lib/switch.mjs).
-    const both = (j) => `平常 ${fmtRate(j.to.median)}、最近 24 小时 ${fmtRate(j.to.recent)}`;
+    const both = (j) => `平常 ${fmtRate(j.to.median)}、24 小时 ${fmtRate(j.to.recent)}`;
     const lowerOf = (j) => Math.min(j.to.median, j.to.recent ?? j.to.median);
     const pk = sw?.pick ?? sw;
+    // The fold row's hint: staying, or the pick with what holds it back.
+    const qualifier = (j) => (j.extra_day_usd == null ? '（多挣多少算不出）' : j.extra_day_usd <= 0 ? '（现在不多挣）' : !j.stable ? '（未稳定）' : !j.to.tracked ? '（看板追踪不到）' : '');
+    setText($('pools-hint'), !sw ? '' : sw.stay || pk.here ? '最划算：就是现在这样' : `最划算：${name(pk)}${qualifier(pk)}`);
     if (sw) {
       const from = [...new Set(sw.from.filter((f) => f.label).map((f) => `${f.chain_label} ${f.label} ${modeName(f.mode)}`))].join('、');
       move.replaceChildren();
       // The one that suits the owners best (lib/switch.mjs: staying, or the pick), then the top median when it differs.
-      const nowAt = sw.current == null ? null : `平常约 ${fmtRate(sw.current)}、最近 24 小时约 ${fmtRate(sw.current_recent ?? sw.current)}`;
+      const nowAt = sw.current == null ? null : `平常约 ${fmtRate(sw.current)}、24 小时约 ${fmtRate(sw.current_recent ?? sw.current)}`;
       if (sw.stay || pk.here) move.append('对你最划算的就是现在这样：', el('b', null, from || name(pk)), `（${nowAt ?? both(pk)}）。`);
       else {
         move.append('对你最划算的是 ', el('b', null, name(pk)), `：${both(pk)}`, nowAt == null ? '。' : `；你现在的仓位${nowAt}${from ? `（${from}）` : ''}。`);
@@ -690,28 +963,47 @@
           `：${both(st)}，每天多约 ${fmtUsd(st.extra_day_usd)}，成本约 ${fmtUsd(st.cost_usd)}，${payback(st)}回本。`);
       }
       if (!pc.complete) move.append('有的池子数据还在补，补齐前结论可能会变。');
+      if (ownNote) move.append(` 这段${ownNote}。`);
     }
-    // Green marks the option that suits the owners best, as the line above says.
+    setText($('pools-note'), fixedLabel
+      ? `大字是“平常”和“24 小时”里较低的那个，按 ${fixedLabel} 宽、把 ${fmtUsd(pc.my_usd)} 全部放进去算（近 ${days} 天）。${!sw && ownNote ? `换池子的手机提醒${ownNote}。` : ''}`
+      : `大字是“平常”和“24 小时”里较低的那个，${own}、把 ${fmtUsd(pc.my_usd)} 全部放进去算（近 ${days} 天）。`);
+    // Bold marks the option that suits the owners best, as the text says.
     const isPick = (p, mode) => Boolean(pk && !sw.stay && p.chain === pk.to.chain && p.label === pk.to.label && mode === pk.to.mode);
-    $('pools-body').replaceChildren(...pc.pools.map((p) => {
+    const named = (p, j) => Boolean(j && p.chain === j.to.chain && p.label === j.to.label);
+    const short = pc.pools.filter((p, i) => i < POOLS_SHOWN || p.here || named(p, pk) || named(p, sw) || named(p, sw?.steady));
+    const more = $('pools-more');
+    more.hidden = short.length >= pc.pools.length;
+    setText(more, poolsAll ? '收起' : `展开全部 ${pc.pools.length} 个池子`);
+    $('pools-body').replaceChildren(...(poolsAll ? pc.pools : short).map((p) => {
       const tr = document.createElement('tr');
-      const name = el('td');
-      name.append(`${p.chain_label} ${p.label}`);
-      if (p.here) name.append(el('span', 'lp-chip lp-chip-here', p.here === 'staked' ? '你在这 · 已质押' : '你在这 · 未质押'));
-      if (p.stopped) name.append(el('span', 'lp-chip', '奖励已停'));
-      name.append(el('span', 'lp-cell-sub', `池子 ${fmtCompact(p.tvl_usd)} · ${p.days ? `${p.days} 天` : '数据还在补'}${p.days && p.missing_hours ? ' · 还在补' : ''}`));
-      if (p.stale && p.last_sample) name.append(el('span', 'lp-cell-sub', `数据停在 ${p.last_sample}`));
+      const head = el('td');
+      head.append(`${p.chain_label} ${p.label}`);
+      if (p.here) head.append(el('span', 'lp-chip lp-chip-here', p.here === 'staked' ? '你在这 · 已质押' : '你在这 · 未质押'));
+      if (p.stopped) head.append(el('span', 'lp-chip', '奖励已停'));
+      // Days only while a pool's data is shorter than the others' or still filling in.
+      head.append(el('span', 'lp-cell-sub', `池子 ${fmtCompact(p.tvl_usd)}${!p.days ? ' · 数据还在补' : p.days < days ? ` · ${p.days} 天` : ''}${p.days && p.missing_hours ? ' · 还在补' : ''}`));
+      if (p.stale && p.last_sample) head.append(el('span', 'lp-cell-sub', `数据停在 ${mdHm(p.last_sample)}`));
+      // The money's own cell (staked, or the fee column when not staked) has the loss line under 平常, and
+      // 平常 turns red below it: both at the table's width.
+      const held = p.here === 'staked' ? 'staked' : p.here === 'unstaked' ? 'fee' : null;
       // The number options are compared by: the lower of the usual (median day) and the last 24 hours.
       const cell = (x, mode) => {
         const td = el('td', isPick(p, mode) ? 'lp-best' : null);
-        td.append(fmtRate(x.median == null ? null : Math.min(x.median, x.recent ?? x.median)), el('span', 'lp-cell-sub', `平常 ${fmtRate(x.median)}`), el('span', 'lp-cell-sub', `最近 24 小时 ${fmtRate(x.recent)}`));
+        const bar = held === mode && lossOk && p.fixed ? cl.rate : null, paired = bar != null && Number.isFinite(x.median);
+        const [usualText, barText] = paired ? ratePair(x.median, bar) : [fmtRate(x.median), fmtRate(bar)];
+        const usual = el('span', paired && x.median < bar ? 'lp-cell-sub lp-neg' : 'lp-cell-sub', `平常 ${usualText}`);
+        td.append(fmtRate(x.median == null ? null : Math.min(x.median, x.recent ?? x.median)), usual);
+        if (bar != null) td.append(el('span', 'lp-cell-sub', `损耗线 ${barText}`));
+        td.append(el('span', 'lp-cell-sub', `24 小时 ${fmtRate(x.recent)}`));
         return td;
       };
       const fx = p.fixed ?? p;
-      tr.append(name, cell(fx.staked, 'staked'), cell(fx.fee, 'fee'));
+      tr.append(head, cell(fx.staked, 'staked'), cell(fx.fee, 'fee'));
       return tr;
     }));
   }
+  $('pools-more').addEventListener('click', () => { poolsAll = !poolsAll; drawPools(current()); });
 
   // ---------- the stock pools, only listed ----------
   const STOCKS_SHOWN = 8;
@@ -720,13 +1012,13 @@
     const card = $('stocks'), st = s?.stock_pools;
     card.hidden = !st?.rows.length;
     if (card.hidden) return;
-    $('stocks-note').textContent = `和上面表格一样的算法：按 ${st.width_label ?? `±${(st.width_pct * 100).toFixed(1)}%`} 的区间、把 ${fmtUsd(st.my_usd)} 全部放进去算，已算上这笔钱带来的摊薄。只列 Aero 上资金超过 $10 万的股票/USDC 池，现在都在 Base 上。`;
-    const row = (name, sub, r, chip) => {
+    setText($('stocks-hint'), `${st.rows.length} 个池子`);
+    const row = (name, sub, r, chip, chipClass = 'lp-chip') => {
       const tr = document.createElement('tr'), td = el('td');
       td.append(name);
-      if (chip) td.append(el('span', 'lp-chip', chip));
+      if (chip) td.append(el('span', chipClass, chip));
       td.append(el('span', 'lp-cell-sub', sub));
-      if (r.stale && r.last_sample) td.append(el('span', 'lp-cell-sub', `数据停在 ${r.last_sample}`));
+      if (r.stale && r.last_sample) td.append(el('span', 'lp-cell-sub', `数据停在 ${mdHm(r.last_sample)}`));
       const rate = el('td');
       rate.append(fmtRate(r.rate));
       if (r.mode) rate.append(el('span', 'lp-cell-sub', r.mode === 'fee' ? '不质押' : '质押'), el('span', 'lp-cell-sub', `平常 ${fmtRate(r.median)}`), el('span', 'lp-cell-sub', `24 小时 ${fmtRate(r.recent)}`));
@@ -735,17 +1027,20 @@
     };
     const shown = stocksAll ? st.rows : st.rows.slice(0, STOCKS_SHOWN);
     $('stocks-body').replaceChildren(
-      ...(st.ref ? [row(`${st.ref.chain_label} ${st.ref.label}`, `WETH/USDC 里最高 · 池子 ${fmtCompact(st.ref.tvl_usd)}`, st.ref, '对照')] : []),
+      ...(st.ref ? [row(`${st.ref.chain_label} ${st.ref.label}`, `WETH/USDC 里最高 · 池子 ${fmtCompact(st.ref.tvl_usd)}`, st.ref, '对照', 'lp-chip lp-chip-here')] : []),
       ...shown.map((r) => row(r.symbol, `${r.label} · 池子 ${fmtCompact(r.tvl_usd)} · ${r.days ? `${r.days} 天` : '数据还在补'}${r.days && r.missing_hours ? ' · 还在补' : ''}`, r, r.stopped ? '奖励已停' : null)));
     const more = $('stocks-more');
     more.hidden = st.rows.length <= STOCKS_SHOWN;
-    more.textContent = stocksAll ? '收起' : `展开全部 ${st.rows.length} 个`;
+    setText(more, stocksAll ? '收起' : `展开全部 ${st.rows.length} 个`);
   }
   $('stocks-more').addEventListener('click', () => { stocksAll = !stocksAll; drawStocks(current()); });
 
-  // ---------- table ----------
+  // ---------- table: the newest rows, all of them on request ----------
+  const DAYS_SHOWN = 14;
+  let daysAll = false;
   function drawDays(rowsAll, sc, period) {
-    const rows = rowsAll.filter((r) => r.scope === sc).slice().reverse();
+    const all = rowsAll.filter((r) => r.scope === sc).slice().reverse();
+    const rows = daysAll ? all : all.slice(0, DAYS_SHOWN);
     const today = cstDay(Date.now());
     $('days-body').replaceChildren(...rows.map((r) => {
       const tr = document.createElement('tr');
@@ -755,11 +1050,15 @@
       const day = cell(periodLabel(r, period) + (isNow ? { day: ' 今天', week: ' 本周', month: ' 本月' }[period] : ''));
       const chip = period === 'day' ? { out: '区间外', none: '无仓位' }[r.range_status] : r.out_days ? `区间外 ${r.out_days} 天` : r.none_days === r.n ? '无仓位' : '';
       if (chip) { const c = document.createElement('span'); c.className = 'lp-chip'; c.textContent = chip; day.appendChild(c); }
-      if (period !== 'day') day.classList.add('lp-wrap');
-      tr.append(day, cell(fmtUsd(r.earn_usd)), cell(fmtApr(r.apr_day), undefined, 'lp-hide-sm'), cell(fmtSigned(r.pnl_day_usd), r.pnl_day_usd), cell(fmtSigned(r.pnl_usd), r.pnl_usd), cell(fmtUsd(r.eth_usd), undefined, 'lp-hide-sm'));
+      day.classList.add('lp-wrap'); // its chip goes under the date when the row is too wide for a phone
+      tr.append(day, cell(fmtUsd(r.earn_usd)), cell(fmtRate(r.apr_day), undefined, 'lp-hide-sm'), cell(fmtSigned(r.pnl_day_usd), r.pnl_day_usd), cell(fmtSigned(r.pnl_usd), r.pnl_usd), cell(fmtUsd(r.eth_usd), undefined, 'lp-hide-sm'));
       return tr;
     }));
+    const more = $('days-more');
+    more.hidden = all.length <= DAYS_SHOWN;
+    setText(more, daysAll ? '收起' : `展开全部 ${all.length} ${{ day: '天', week: '周', month: '个月' }[period]}`);
   }
+  $('days-more').addEventListener('click', () => { daysAll = !daysAll; draw(); });
 
   // ---------- live prices ----------
   // Interest changes by the hour, the ETH price by the second. Between the hourly updates the page
@@ -858,7 +1157,7 @@
       // By this row's own scale: a coin's changes with every update, and this quote may be older than the row.
       const scale = p.scale ?? 1e12, pool = q.invert ? scale / q.raw : q.raw * scale;
       // The other coin moves too: its price now is ETH's over the pool's coin per ETH.
-      return { ...p, pool, in_range: q.tick >= p.tick_lower && q.tick < p.tick_upper, ...(p.quote ? { coin_up: live.ref / pool } : {}) };
+      return { ...p, pool, tick: q.tick, in_range: q.tick >= p.tick_lower && q.tick < p.tick_upper, ...(p.quote ? { coin_up: live.ref / pool } : {}) };
     });
     let value = s.curve.usd + s.curve.eth * live.ref;
     for (const p of ps) { const [e, u] = amountsAt(p, p.pool); value += e * live.ref + u * (p.coin_up ?? 1); }
@@ -900,11 +1199,11 @@
   });
   const addDays = (d, n) => new Date(parseDay(d).getTime() + n * 864e5).toISOString().slice(0, 10);
   const periodOf = (d, period) => (period === 'month' ? d.slice(0, 7) : period === 'week' ? addDays(d, -((parseDay(d).getUTCDay() + 6) % 7)) : d);
-  const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
   // A week as its days (10/19–25, 9/28–10/4); a month cut short at its start says from when.
   const weekLabel = (r) => (r.first === r.last ? md(r.first) : r.first.slice(5, 7) === r.last.slice(5, 7) ? `${md(r.first)}–${Number(r.last.slice(8, 10))}` : `${md(r.first)}–${md(r.last)}`);
-  const periodLabel = (r, period) => (period === 'month' ? (r.first.endsWith('-01') ? r.day : `${r.day}（${md(r.first)} 起）`) : period === 'week' ? weekLabel(r) : r.day.slice(5));
-  const periodTitle = (r, period) => (period === 'day' ? r.day : periodLabel(r, period)) + (r.partial ? '（至今）' : '');
+  const monthLabel = (r) => `${Number(r.day.slice(5, 7))}月${r.first.endsWith('-01') ? '' : `（${md(r.first)} 起）`}`;
+  const periodLabel = (r, period) => (period === 'month' ? monthLabel(r) : period === 'week' ? weekLabel(r) : md(r.day));
+  const periodTitle = (r, period) => periodLabel(r, period) + (r.partial ? '（至今）' : '');
   const dayCount = (rows) => new Set(rows.map((r) => r.day)).size;
   // The range in effect: one the data is too short for means all of it.
   const rangeFor = (n) => (view.range !== 'all' && n > Number(view.range) ? view.range : 'all');
@@ -951,10 +1250,10 @@
     $('range-switch').hidden = n <= 30;
     $('range-switch').querySelectorAll('button').forEach((b) => { b.hidden = b.dataset.range === '90' && n <= 90; b.setAttribute('aria-pressed', String(b.dataset.range === range)); });
     const word = { day: '日', week: '周', month: '月' }[view.period];
-    $('interest-title').textContent = `每${word}利息收益`;
-    $('days-title').textContent = `每${word}明细`;
-    $('th-day').textContent = { day: '日期', week: '周', month: '月份' }[view.period];
-    $('th-pnl-day').textContent = `当${word}盈亏`;
+    setText($('interest-title'), `每${word}利息收益`);
+    setText($('days-title'), `每${word}明细`);
+    setText($('th-day'), { day: '日期', week: '周', month: '月份' }[view.period]);
+    setText($('th-pnl-day'), `当${word}盈亏`);
   }
   // The rows each part draws: live, cut to the chosen days, grouped for the bars and the table.
   // Every scope's rows follow its own live figures, so the wallets and the total agree on the charts.
@@ -968,65 +1267,78 @@
   // ---------- draw ----------
   const current = () => { const S = dash.data('summary'); return applyLive(S.status === 'ok' ? S.data.find((r) => r.scope === scope()) ?? null : null); };
   const allLive = () => { const S = dash.data('summary'); return S.status === 'ok' ? S.data.map(applyLive) : []; };
-  // Red notes above the numbers: data the hourly update has not refreshed for a while, tokens without a
-  // price, and transactions the rules could not settle (each linked to the block explorer).
+  // The header's as-of line (red, and the only stale warning, while the data is old) and the live time;
+  // in 赚了多少, red lines for tokens without a price and transactions the rules could not settle. The
+  // to-check fold is static, only its list refilled when it changes: drawLive runs this every 15 s.
   function drawHead(s) {
-    const warn = $('lp-warn'), notes = [], hours = staleHours(s), bad = s?.unpriced ?? [], checks = s?.to_check ?? [];
-    const para = (text) => { const p = document.createElement('p'); p.textContent = text; return p; };
-    if (hours) notes.push(para(`数据停在 ${s.as_of_cst}（北京时间），已经 ${hours} 小时没更新，整点更新可能出了问题。下面的数字是那时的，没有按实时价格重算，先别按它做决定。`));
-    if (bad.length) notes.push(para(`有代币没有价格：${bad.map((t) => `${t.symbol ?? '未知代币'}（${t.address.slice(0, 6)}…${t.address.slice(-4)}）`).join('、')}。它在池子和手续费里的部分被按 $0 算了，所以现值、盈亏和利息都不完整；要先给它加上价格来源。`));
-    if (checks.length) {
-      const n = s.to_check_count ?? checks.length;
-      notes.push(para(`有 ${n} 处需要人工确认，投入和盈亏可能不准${n > checks.length ? `（下面是最近 ${checks.length} 处）` : ''}：`));
-      const ul = document.createElement('ul');
-      for (const x of checks) {
-        const li = document.createElement('li'), a = document.createElement('a');
-        a.href = `${EXPLORERS[x.chain] ?? EXPLORERS.base}/tx/${x.tx}`; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = '查看交易';
-        li.append(`${x.time_cst}${s.scope === 'total' ? ` · ${x.wallet}` : ''} · ${x.text}${x.usd != null ? `（${fmtSigned(x.usd)}）` : ''} · `, a);
-        ul.append(li);
-      }
-      notes.push(ul);
-    }
-    warn.replaceChildren(...notes);
-    warn.hidden = !notes.length;
-    $('lp-asof').textContent = s ? `数据截至 ${s.as_of_cst}（北京时间），利息大约每小时更新` : '—';
+    const hours = staleHours(s), bad = s?.unpriced ?? [], checks = s?.to_check ?? [];
+    const asof = $('lp-asof');
+    asof.className = hours ? 'lp-neg' : '';
+    setText(asof, !s ? '—' : hours ? `数据停在 ${mdHm(s.as_of_cst)}，已 ${hours} 小时没更新，先别按它做决定。` : `数据截至 ${mdHm(s.as_of_cst)}`);
+    const time = s?.live_at ? new Date(s.live_at).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : null;
+    const failed = !s || hours ? '' : time ? (liveFailed ? '（最新一次没取到）' : live?.partial ? '（有的池子没取到）' : '') : liveFailed ? '实时价格暂时取不到' : '';
     const note = $('lp-live');
-    note.className = s?.live_at ? 'lp-live-on' : '';
-    note.textContent = (!s || hours ? '' : s.live_at
-      ? `价格实时 ${new Date(s.live_at).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}${liveFailed ? '（最新一次没取到）' : live?.partial ? '（有的池子没取到，用整点的）' : ''}`
-      : liveFailed ? '实时价格暂时取不到，用的是整点的价格' : '') + (dataFailed ? ' · 整点数据没刷新成功，稍后再试' : '');
+    note.className = failed || dataFailed ? 'lp-live-warn' : '';
+    setText(note, (!s || hours ? '' : time ? ` · 价格实时 ${time}${failed}` : failed ? ` · ${failed}` : '') + (dataFailed ? ' · 刷新没成功，稍后再试' : ''));
+    const unpriced = $('warn-unpriced');
+    unpriced.hidden = !bad.length;
+    setText(unpriced, bad.length ? `有代币没有价格：${bad.map((t) => t.symbol ?? `未知代币（${t.address.slice(0, 6)}…${t.address.slice(-4)}）`).join('、')}，按 $0 算了，现值、盈亏和利息不完整。` : '');
+    const box = $('checks');
+    box.hidden = !checks.length;
+    if (checks.length) {
+      // Transactions, not items: one transaction can have several items to check.
+      setText($('checks-sum'), `有 ${s.to_check_txs?.length || s.to_check_count || checks.length} 笔交易要人工确认，投入和盈亏可能不准`);
+      const more = $('checks-more'), cut = (s.to_check_count ?? checks.length) > checks.length;
+      more.hidden = !cut;
+      setText(more, cut ? `只列最近 ${checks.length} 处：` : '');
+      const list = $('checks-list'), key = JSON.stringify([s.scope, checks]);
+      if (list.dataset.key !== key) {
+        list.dataset.key = key;
+        list.replaceChildren(...checks.map((x) => {
+          const li = document.createElement('li'), a = document.createElement('a');
+          a.href = `${EXPLORERS[x.chain] ?? EXPLORERS.base}/tx/${x.tx}`; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = '查看交易';
+          li.append(`${mdHm(x.time_cst)}${s.scope === 'total' ? ` · ${x.wallet}` : ''} · ${x.text}${x.usd != null ? `（${fmtSigned(x.usd)}）` : ''} · `, a);
+          return li;
+        }));
+      }
+    }
+    $('lp-warn').hidden = !bad.length && !checks.length;
   }
   function drawNumbers(s) {
-    const put = (id, text, v) => { const el = $(id); el.textContent = text; if (v !== undefined) tone(el, v); };
-    put('k-value', s ? fmtUsd(s.value_usd) : '—');
-    put('k-invested', s ? `投入 ${fmtUsd(s.invested_usd)}` : '—');
+    const put = (id, text, v) => { const n = $(id); setText(n, text); if (v !== undefined) tone(n, v); };
+    put('k-earn', s ? fmtUsd(s.earn_total_usd) : '—');
+    // Today's interest is not worked out between Beijing midnight and the first hourly update.
+    put('k-earn-sub', !s ? '—' : `昨天 ${fmtUsd(s.yesterday_usd)}${s.today_usd == null ? '' : ` · 今天 ${fmtUsd(s.today_usd)}`}`);
+    put('k-apr-label', s?.apr_days && s.apr_days < 7 ? `近 ${s.apr_days} 日年化` : '近 7 日年化');
+    put('k-apr', s ? fmtRate(s.apr_7d) : '—');
+    put('k-apr-sub', !s ? '—' : s.apr_days ? `${s.apr_days} 天赚 ${fmtUsd(s.earn_7d_usd)}` : '还没有完整的一天');
+    put('k-hodl', s?.vs_hodl_usd != null ? fmtSigned(s.vs_hodl_usd) : '—', s?.vs_hodl_usd);
+    put('k-hodl-sub', s?.hodl_usd != null ? `原币现在值 ${fmtUsd(s.hodl_usd)}` : '—');
     put('k-pnl', s ? fmtSigned(s.pnl_usd) : '—', s?.pnl_usd);
     put('k-pnl-pct', s ? fmtPct(s.pnl_pct) : '—', s?.pnl_pct);
-    put('k-hodl', s?.vs_hodl_usd != null ? fmtSigned(s.vs_hodl_usd) : '—', s?.vs_hodl_usd);
-    put('k-hodl-sub', s?.hodl_usd != null ? `原币现在值 ${fmtUsd(s.hodl_usd)}，差额含利息、无常损失和换币` : '—');
-    put('k-earn', s ? fmtUsd(s.earn_total_usd) : '—');
-    put('k-earn-sub', s ? `${fmtNum(s.aero_earned, 2)} 个 AERO + 手续费 ${fmtUsd(s.fees_usd)}` : '—');
-    put('k-yday', s ? fmtUsd(s.yesterday_usd) : '—');
-    put('k-today', s ? `今日至今 ${fmtUsd(s.today_usd)}` : '—');
-    put('k-apr-label', s?.apr_days && s.apr_days < 7 ? `近 ${s.apr_days} 日年化` : '近 7 日年化');
-    put('k-apr', s?.apr_7d != null ? `${(s.apr_7d * 100).toFixed(1)}%` : '—');
-    put('k-apr-sub', !s ? '—' : s.apr_days ? `这几天赚 ${fmtUsd(s.earn_7d_usd)}，按池子里的钱算` : '还没有完整的一天');
+    put('k-invested', s ? `现值 ${fmtUsd(s.value_usd)}，投入 ${fmtUsd(s.invested_usd)}` : '—');
+    // In 收益明细: the AERO not sold yet, and what the interest is made of.
     const unsold = s ? (s.aero_held ?? 0) + (s.aero_pending ?? 0) : null;
     put('k-aero', s?.aero_unsold_usd != null ? fmtUsd(s.aero_unsold_usd) : '—');
     put('k-aero-sub', s ? `${fmtNum(unsold, 0)} 个，其中待领 ${fmtNum(s.aero_pending, 0)}${s.aero_usd != null ? ` · 现价 $${Number(s.aero_usd).toFixed(3)}` : ''}` : '—');
     const drift = s?.aero_drift_usd;
     put('k-aero-drift', drift && Math.abs(drift) >= 0.5 ? `AERO 涨跌让利息${drift < 0 ? '少了' : '多了'} ${fmtUsd(Math.abs(drift))}` : '', drift);
+    put('k-earn-mix', s ? `累计利息里 ${fmtNum(s.aero_earned, 2)} 个 AERO + 手续费 ${fmtUsd(s.fees_usd)}` : '');
   }
   const tipOpen = (id) => [...document.querySelectorAll(`#${id} .lp-tip`)].some((t) => t.style.display === 'block');
+  // A closed fold has no width (a chart drawn there falls back to 600 units and its text shrinks): the
+  // charts and the table of 收益明细 are drawn while it is open, and at once when it opens.
+  const earnOpen = () => $('f-earn').open;
   function draw() {
     const D = dash.data('daily');
     const sc = scope();
     drawScopes(sc);
     const lives = allLive(), s = lives.find((r) => r.scope === sc) ?? null;
-    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc); drawPools(s); drawStocks(s);
+    drawHead(s); drawRange(s); drawDecide(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc); drawPools(s); drawStocks(s);
     if (D.status === 'ok') {
       const v = viewRows(D, lives, sc);
-      drawViewbar(v.n, v.range); drawInterest(v.grouped, sc, view.period); drawApr(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period);
+      drawViewbar(v.n, v.range);
+      if (earnOpen()) { drawInterest(v.grouped, sc, view.period); drawApr(v.grouped, sc, view.period); drawPnl(v.rows, sc); drawDays(v.grouped, sc, view.period); }
     }
   }
   // A live price changes only the price-driven parts; leave a chart alone while its tooltip is open.
@@ -1034,8 +1346,8 @@
     const D = dash.data('daily');
     const sc = scope();
     const lives = allLive(), s = lives.find((r) => r.scope === sc) ?? null;
-    drawHead(s); drawRange(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc);
-    if (D.status === 'ok') {
+    drawHead(s); drawRange(s); drawDecide(s); drawExit(s); drawNumbers(s); drawCompare(lives, sc);
+    if (D.status === 'ok' && earnOpen()) {
       const v = viewRows(D, lives, sc);
       drawViewbar(v.n, v.range);
       if (!tipOpen('interest-chart')) drawInterest(v.grouped, sc, view.period);
@@ -1044,6 +1356,20 @@
       drawDays(v.grouped, sc, view.period);
     }
   }
+
+  // ---------- folds: closed by default, each one's state kept per device ----------
+  const FOLDS_KEY = 'aero-folds';
+  let folds = {};
+  try { const v = JSON.parse(localStorage.getItem(FOLDS_KEY) ?? '{}'); if (v && typeof v === 'object' && !Array.isArray(v)) folds = v; } catch {}
+  for (const d of root.querySelectorAll('details.lp-fold[data-fold]')) {
+    if (folds[d.dataset.fold] === true) d.open = true;
+    d.addEventListener('toggle', () => {
+      folds[d.dataset.fold] = d.open;
+      try { localStorage.setItem(FOLDS_KEY, JSON.stringify(folds)); } catch {}
+      if (d.id === 'f-earn' && d.open) draw();
+    });
+  }
+
   let liveStarted = false;
   dash.onData(() => {
     dataFailed = false; // new data arrived
