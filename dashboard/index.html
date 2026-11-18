@@ -741,10 +741,11 @@
   // one made of such days is short too.
   // The highest rate the axis must show: every row counts, however high, so a lasting change of level (a
   // narrower range) or one odd day is drawn at its real height. The exceptions are a short row and today's
-  // first six hours (a cent of interest can read as hundreds of percent): they count only up to twice the
-  // highest of the other rows. Above that the axis need not reach them, and one above the top sits on the
-  // top edge as a triangle, its real rate in the tooltip. With no other row above 0%, every row counts.
-  // test/ checks the rule.
+  // first six hours (a cent of interest can read as hundreds of percent), and a week or month whose
+  // money-time is mostly those hours (money put in this morning after days with none; byPeriod's early):
+  // they count only up to twice the highest of the other rows. Above that the axis need not reach them, and
+  // one above the top sits on the top edge as a triangle, its real rate in the tooltip. With no other row
+  // above 0%, every row counts. test/ checks the rule.
   /* aprtop:start */
   function aprShort(r) {
     return r.pool_share === null ? Number.isFinite(r.apr_day) : r.pool_share < 0.5;
@@ -755,7 +756,7 @@
     return r.pool_share === null ? 0 : r.pool_share ?? 1;
   }
   function aprTop(rows) {
-    const shaky = (r) => aprShort(r) || (r.partial === true && (r.span_days ?? r.days) < 0.25);
+    const shaky = (r) => aprShort(r) || r.early === true || (r.partial === true && (r.span_days ?? r.days) < 0.25);
     let most = 0, top = 0;
     for (const r of rows) if (Number.isFinite(r.apr_day) && !shaky(r)) most = Math.max(most, r.apr_day);
     for (const r of rows) if (Number.isFinite(r.apr_day) && !(most > 0 && r.apr_day > most * 2)) top = Math.max(top, r.apr_day);
@@ -1240,7 +1241,7 @@
   }
   // Rows grouped by week (Monday to Sunday) or month, per scope: interest and the period's P&L add
   // up; the cumulative P&L and the ETH price are those of the period's last day. test/ checks the fields
-  // the yearly-rate axis reads (apr_day, pool_share, partial, days).
+  // the yearly-rate axis reads (apr_day, pool_share, partial, days, early).
   /* byperiod:start */
   function byPeriod(rows, period) {
     if (period === 'day') return rows;
@@ -1252,6 +1253,8 @@
       if (r.earn_usd != null && r.lp_tw_usd != null && r.span_days) {
         g.lp_days += r.lp_tw_usd * r.span_days; g.days += r.span_days;
         g.share_days = (g.share_days ?? 0) + aprWeight(r) * r.lp_tw_usd * r.span_days;
+        // Today's first six hours, as aprTop tells them on a day row.
+        if (r.partial === true && r.span_days < 0.25) g.early_days = (g.early_days ?? 0) + r.lp_tw_usd * r.span_days;
       }
       // A day whose interest is not worked out yet (just after midnight) adds nothing; a period with only such days has none.
       if (r.earn_usd != null) { g.earn_usd = (g.earn_usd ?? 0) + r.earn_usd; g.earn_aero = (g.earn_aero ?? 0) + (r.earn_aero ?? 0); g.earn_fee_usd = (g.earn_fee_usd ?? 0) + (r.earn_fee_usd ?? 0); }
@@ -1269,6 +1272,10 @@
       // made of such days is as unsteady as they are; money simply growing over a month is not. A day
       // the money went in and came out within counts as money not in (aprWeight).
       g.pool_share = g.lp_days > 0 ? g.share_days / g.lp_days : null;
+      // A period whose money-time is mostly today's first six hours (money put in this morning after days
+      // with none) rests on those hours as today's row does, however many empty days came before it: aprTop
+      // treats it the same way.
+      g.early = 2 * (g.early_days ?? 0) > g.lp_days;
     }
     return out;
   }

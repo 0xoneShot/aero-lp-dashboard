@@ -229,6 +229,35 @@ test('a week or month made of days the money went in and came out within is shor
   assert.equal(early[2].partial, true)
   assert.ok(Math.abs(early[2].days - 0.125) < 1e-12, `${early[2].days}`)
   assert.equal(aprTop(early), early[0].apr_day)
+  // Money put in at 01:00 after two days with none in the pool (rows the job still writes: no money, no rate):
+  // the week rests on today's first hour as today's row does, though its days count past two, so it is left
+  // out the same way. With money in on those days the week stays steady.
+  const empty = (day) => ({ ...dayRow(day, 0, { lp_tw_usd: 0, pool_share: null }), apr_day: null })
+  const firstHour = dayRow('2026-03-18', 24, { partial: true, span_days: 1 / 24, pool_share: 0.9 })
+  const back = byPeriod([...past, empty('2026-03-16'), empty('2026-03-17'), firstHour], 'week')
+  assert.ok(back[2].days > 2, `${back[2].days}`)
+  assert.ok(Math.abs(back[2].apr_day - 24) < 1e-9, `${back[2].apr_day}`)
+  assert.equal(aprShort(back[2]), false)
+  assert.equal(back[2].early, true)
+  assert.equal(aprTop(back), back[0].apr_day)
+  const along = byPeriod([...past, ...dayRows('2026-03-16', 2, 1.6), firstHour], 'week')
+  assert.equal(along[2].early, false)
+  assert.equal(aprTop(along), along[2].apr_day)
+  assert.deepEqual(byPeriod(past, 'week').map((w) => w.early), [false, false])
+  // More than half of the week's money-time: exactly half is not.
+  const earlyOf = (lp) => byPeriod([...past, dayRow('2026-03-16', 1.6, { lp_tw_usd: lp }), dayRow('2026-03-17', 24, { partial: true, span_days: 0.125 })], 'week')[2].early
+  assert.equal(earlyOf(1250), false)
+  assert.equal(earlyOf(1249), true)
+  // As on a day row, only today's first six hours: by 08:00 the week counts, and a past day that was short
+  // because the wallet was first seen late that day is no first hours either.
+  const at8 = byPeriod([...past, empty('2026-03-16'), empty('2026-03-17'), dayRow('2026-03-18', 24, { partial: true, span_days: 1 / 3, pool_share: 0.9 })], 'week')
+  assert.equal(at8[2].early, false)
+  assert.equal(aprTop(at8), at8[2].apr_day)
+  assert.equal(byPeriod([dayRow('2026-03-19', 3, { span_days: 0.17 })], 'week')[0].early, false)
+  // The same by month: the 4th, after three days with none.
+  const months4th = byPeriod([...dayRows('2026-01-05', 20, 1.5), ...dayRows('2026-02-02', 20, 1.4), empty('2026-03-01'), empty('2026-03-02'), empty('2026-03-03'), dayRow('2026-03-04', 24, { partial: true, span_days: 0.125, pool_share: 0.9 })], 'month')
+  assert.deepEqual(months4th.map((m) => m.early), [false, false, true])
+  assert.equal(aprTop(months4th), months4th[0].apr_day)
 })
 
 test('on random rows, the 每日年化 axis never leaves out a steady row, and leaves out a short one exactly when it is more than twice them', () => {
