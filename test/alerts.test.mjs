@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evaluate, withLivePrices, costLinks, costSource, costSources, costSourcesFor, putBackRates, STALE_MS, OUT_MS } from '../lib/alerts.mjs'
+import { evaluate, withLivePrices, costLinks, costSource, costSources, costSourcesFor, putBackRates, ranges, STALE_MS, OUT_MS } from '../lib/alerts.mjs'
 import { recentre, splitShare } from '../lib/curve.mjs'
 
 // One wallet with two positions of the same range, as the summary publishes them.
@@ -233,6 +233,89 @@ test('from the last good data, a range whose chain could not be read waits; the 
   const r = evaluate([live, total], { 'a:2000-2500': 'in', 'a:eth:2000-2500': 'in', 'a:cost': 'na' }, { lastGood: true })
   assert.deepEqual(r.messages.map((m) => m.key), ['a:2000-2500'])
   assert.deepEqual([r.state['a:eth:2000-2500'], r.state['a:cost']], ['in', 'na'])
+})
+
+// An order (lib/curve.mjs orderOf, published by src/run.mjs): the 2000–2500 range opened with one coin, $1,000 of
+// USDC below the price to buy ETH, or 0.5 ETH above it to sell, its liquidity split over the row's two positions.
+const oSa = Math.sqrt(2000e-12), oSb = Math.sqrt(2500e-12)
+const orderRow = (pool, order, extra = {}) => {
+  const x = row(pool, extra), L = order === 'buy' ? 1000e6 / (oSb - oSa) : 0.5e18 / (1 / oSa - 1 / oSb)
+  x.curve.positions = x.curve.positions.map((p) => ({ ...p, order, L: L / 2, sa: oSa, sb: oSb }))
+  return x
+}
+const said = (rows, hours) => { let s = null; return rows.map((r, i) => { const e = evaluate([r, total], s, hours ? { now: hours[i] * 3600e3 } : undefined); s = e.state; return e }) }
+const titles = (runs) => runs.map((e) => e.messages.map((m) => m.title))
+
+test('a buy order is said as one: waiting above it is quiet, falling in starts it, out below it is all bought, back in and back above undo it', () => {
+  const r = said([2600, 2600, 2400, 1900, 2200, 2600].map((p) => orderRow(p, 'buy')))
+  assert.deepEqual(titles(r), [[], [], ['A 挂单开始成交'], ['A 挂单全部成交'], ['A 回到挂单区间'], ['A 挂单回到未成交']])
+  const m = r.map((e) => e.messages[0]?.message)
+  assert.ok(m[2].startsWith('ETH $2,400.00，跌进挂单区间 $2,000.00–$2,500.00：开始用 USDC 买 ETH，这段也赚利息。'), m[2])
+  assert.ok(m[3].includes('这笔挂单全部买成了 ETH：约 0.45 ETH，均价 $2,236.07，现在不赚利息。'), m[3])
+  assert.ok(m[4].includes('涨回 $2,000.00–$2,500.00 之内：买到的 ETH 开始换回 USDC'), m[4])
+  assert.ok(m[5].includes('又全是 USDC 了，跌回 $2,500.00 以下再开始买'), m[5])
+  assert.deepEqual(r.map((e) => e.messages.map((x) => x.kind)), [[], [], ['back'], ['below'], ['back'], ['above']])
+  assert.ok(!r.some((e) => e.messages.some((x) => /涨出|跌出|重挂/.test(x.title + x.message))))
+})
+
+test('a sell order the other way round: rising in starts it, out above it is all sold, with what it got and the average price', () => {
+  const r = said([1900, 1900, 2100, 2600, 2300, 1900].map((p) => orderRow(p, 'sell')))
+  assert.deepEqual(titles(r), [[], [], ['A 挂单开始成交'], ['A 挂单全部成交'], ['A 回到挂单区间'], ['A 挂单回到未成交']])
+  const m = r.map((e) => e.messages[0]?.message)
+  assert.ok(m[2].startsWith('ETH $2,100.00，涨进挂单区间 $2,000.00–$2,500.00：开始把 ETH 卖成 USDC，这段也赚利息。'), m[2])
+  assert.ok(m[3].includes('这笔挂单全部卖成了 USDC：约 $1,118，均价 $2,236.07，现在不赚利息。'), m[3])
+  assert.ok(m[4].includes('跌回 $2,000.00–$2,500.00 之内：卖出的 USDC 开始换回 ETH'), m[4])
+  assert.ok(m[5].includes('又全是 ETH 了，涨回 $2,000.00 以上再开始卖'), m[5])
+})
+
+test('an order waits out of its range by design: no day out is counted or said for it, and a clock from before is dropped', () => {
+  for (const [order, p] of [['buy', 2600], ['buy', 1900], ['sell', 1900], ['sell', 2600]]) {
+    const r = said([p, p, p].map((x) => orderRow(x, order)), [0, 25, 50])
+    assert.deepEqual(titles(r), [[], [], []], `${order} ${p}`)
+    assert.ok(r.every((e) => e.state['a:2000-2500:out'] === 'order'), `${order} ${p}`)
+  }
+  // A clock from before it was read as an order, 29 hours out and not yet told (it would be due), told, or ended.
+  for (const clock of [String(3600e3), `${3600e3}:sent`, 'in']) {
+    const e = evaluate([orderRow(2600, 'buy'), total], { 'a:2000-2500': 'above', 'a:2000-2500:out': clock, 'a:cost': 'na' }, { now: 30 * 3600e3 })
+    assert.deepEqual(e.messages, [], clock)
+    assert.equal(e.state['a:2000-2500:out'], 'order', clock)
+  }
+})
+
+test('a range that stops being an order while out (an ordinary position added to it) starts its day out then, and says it a day later', () => {
+  const plain = (pool) => { const x = orderRow(pool, 'buy'); delete x.curve.positions[1].order; return x }
+  for (const [pool, side] of [[2600, 'above'], [1900, 'below']]) {
+    const r = said([orderRow(pool, 'buy'), plain(pool), plain(pool), plain(pool), plain(pool)], [0, 1, 24.5, 25, 26])
+    assert.deepEqual(r.map((e) => e.messages.map((m) => m.kind)), [[], [], [], ['out24'], []], side)
+    assert.equal(r[1].state['a:2000-2500:out'], String(3600e3), side)
+    assert.equal(r[3].state['a:2000-2500:out'], `${3600e3}:sent`, side)
+    assert.ok(r[3].messages[0].title.includes('出区间已满 24 小时'), r[3].messages[0].title)
+  }
+  // And back: an ordinary range out with its clock running that becomes an order again counts no more.
+  const back = said([plain(2600), plain(2600), orderRow(2600, 'buy'), orderRow(2600, 'buy')], [0, 1, 2, 30])
+  assert.deepEqual(back.map((e) => e.messages.map((m) => m.kind)), [[], [], [], []])
+  assert.equal(back[3].state['a:2000-2500:out'], 'order')
+})
+
+test('an order entering its range just past a bound (within 1% of it) is said as an order too', () => {
+  // $2,015 is 0.75% inside the lower bound: a sell order starts selling, a bought-up buy order starts selling back.
+  assert.deepEqual(titles(said([1900, 1900, 2015].map((p) => orderRow(p, 'sell')))), [[], [], ['A 挂单开始成交']])
+  assert.deepEqual(titles(said([2600, 1900, 1900, 2015].map((p) => orderRow(p, 'buy')))), [[], ['A 挂单全部成交'], [], ['A 回到挂单区间']])
+  // And from above: $2,485 is 0.6% inside the upper bound.
+  assert.deepEqual(titles(said([2600, 2600, 2485].map((p) => orderRow(p, 'buy')))), [[], [], ['A 挂单开始成交']])
+  assert.deepEqual(titles(said([1900, 2600, 2600, 2485].map((p) => orderRow(p, 'sell')))), [[], ['A 挂单全部成交'], [], ['A 回到挂单区间']])
+})
+
+test('a range is an order only while every position of it is one, and never against another coin', () => {
+  const mixed = (p) => { const x = orderRow(p, 'buy'); delete x.curve.positions[1].order; return x }
+  assert.deepEqual(titles(said([2200, 2600, 1900].map(mixed))), [[], ['A 涨出区间'], ['A 跌出区间']])
+  // A buy and a sell in one range are no order either.
+  const both = (p) => { const x = orderRow(p, 'buy'); x.curve.positions[1].order = 'sell'; return x }
+  assert.deepEqual(titles(said([2200, 2600, 1900].map(both))), [[], ['A 涨出区间'], ['A 跌出区间']])
+  assert.deepEqual(ranges(both(2600)).map((r) => r.order), [null])
+  assert.deepEqual(ranges(orderRow(2600, 'sell')).map((r) => [r.order, r.L]), [['sell', orderRow(2600, 'sell').curve.positions.reduce((a, p) => a + p.L, 0)]])
+  const coin = (ratio) => { const x = btcRow(ratio); x.curve.positions = x.curve.positions.map((p) => ({ ...p, order: 'sell' })); return x }
+  assert.deepEqual(titles(said([coin(0.0295), coin(0.032)])).map((t) => t.filter((x) => x.includes('cbBTC'))), [[], ['A WETH/cbBTC 涨出区间']])
 })
 
 // A day out of a range: said once per time out, counted from the first update that found it out.

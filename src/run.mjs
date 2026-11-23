@@ -9,11 +9,11 @@ import { scan } from '../lib/scan.mjs'
 import { buildLedger, isExternal, owedPrincipal, positionsAt, gaugesAt } from '../lib/ledger.mjs'
 import { escrowByAsset } from '../lib/orders.mjs'
 import { matchCrossChain } from '../lib/crosschain.mjs'
-import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
+import { usdCurve, amountsAtUsd, orderOf, openingDeposit } from '../lib/curve.mjs'
 import { hodlHeld } from '../lib/hodl.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf, savePrices } from '../lib/prices.mjs'
-import { samplePools, readPoolCache, blockFinder, poolStats, stayShare, ethVol, rangeLoss } from '../lib/pools.mjs'
+import { samplePools, readPoolCache, blockFinder, poolStats, stayShare, ethVol, rangeLoss, lineRun } from '../lib/pools.mjs'
 import { sampleStockPools, readStockCache, stockRows } from '../lib/stocks.mjs'
 import { switchTo } from '../lib/switch.mjs'
 import { overrideLookup, unmatchedOverrides } from '../lib/overrides.mjs'
@@ -581,7 +581,7 @@ for (const w of WALLETS) {
     if (e.gas) gas.push({ block: e.block, wei: e.gas })
     for (const x of e.lp) {
       const pair = await pairOf(e.chain, x.npm, x.tokenId, e.chainBlock)
-      lpEvents.push({ ...x, ...pair, block: e.block, ts: e.ts, hash: e.hash, usd: valueOf(pair.token0, x.amount0, p) + valueOf(pair.token1, x.amount1, p), chain: e.chain })
+      lpEvents.push({ ...x, ...pair, block: e.block, chainBlock: e.chainBlock, ts: e.ts, hash: e.hash, usd: valueOf(pair.token0, x.amount0, p) + valueOf(pair.token1, x.amount1, p), chain: e.chain })
     }
   }
 
@@ -707,6 +707,19 @@ function lpNetFlow(key, a, b) {
   return net
 }
 
+// What a position took when it was opened (lib/curve.mjs openingDeposit; orderOf reads an order from it): its
+// mint as the wallet's own books have it (born), found among the deposits of the wallets those books count
+// (the configured ones, or all of them for an address added on the page), so a position opened by one and
+// moved to another keeps its opening; none for one opened before the records begin or received from outside.
+const bookPositions = (key) => [...ledger[key].positions, ...Object.values(extLedger).flatMap((X) => X[key]?.positions ?? [])]
+const peerIncreases = new Map()
+const increasesFor = (key) => {
+  const extra = WALLETS.find((w) => w.key === key)?.extra ? 'all' : 'base'
+  if (!peerIncreases.has(extra)) peerIncreases.set(extra, (extra === 'all' ? WALLETS : BASE_READY).flatMap((w) => walletData[w.key].lpEvents.filter((y) => y.type === 'increase')))
+  return peerIncreases.get(extra)
+}
+const openingOf = (key, x) => openingDeposit(x, bookPositions(key), increasesFor(key))
+
 // Value of some wallets' current holdings as a function of the ETH price, with AERO and every
 // other token held at today's price. Concentrated positions follow their real curve: as ETH falls
 // they turn into ETH, below the range entirely. Used for the ETH cost and break-even prices.
@@ -731,7 +744,7 @@ function ethCurve(keys) {
       if (c) {
         // Only live positions follow a curve and set the lowest bound: one whose liquidity was all
         // removed but not burned holds nothing, and must not keep the scope looking "in a range".
-        if (x.liquidity > 0n) curves.push({ ...c, key: k, address: x.pool, chain: x.chain ?? 'base' })
+        if (x.liquidity > 0n) curves.push({ ...c, key: k, address: x.pool, chain: x.chain ?? 'base', order: orderOf(openingOf(k, x), c) })
         ethUnits += c.extraEth; fixedUsd += c.extraUsd
       } else {
         fixedUsd += valueOf(x.token0, x.amount0 + x.fees0, pNowCurve) + valueOf(x.token1, x.amount1 + x.fees1, pNowCurve)
@@ -873,6 +886,8 @@ function ethPrices(keys, invested, interest, value) {
   const sides = c.curves.map((x) => (x.inRange ? 'in' : x.pool < (x.low + x.high) / 2 ? 'below' : 'above'))
   const ethHeld = (s) => [...Object.entries(s.balances), ...(s.escrow ?? [])].reduce((a, [t, raw]) => a + (hodlKey(t) === 'ETH' ? units(raw, 18) : 0), 0)
   const wallEth = keys.reduce((a, k) => a + ethHeld(snaps[k][head]), 0)
+  // The rest of what the wallets hold themselves (outside any position, unclaimed reward or fee), at the prices the curve uses.
+  const restHeld = (s) => [...Object.entries(s.balances), ...(s.escrow ?? [])].reduce((a, [t, raw]) => a + (hodlKey(t) === 'ETH' ? 0 : valueOf(t, raw, pNowCurve)), 0)
   const highest = Math.max(...c.curves.map((x) => x.high), -Infinity)
   // Withdrawing now pays each position out at its own pool's price, which can differ a little from
   // the reference price the rest is valued at.
@@ -886,7 +901,7 @@ function ethPrices(keys, invested, interest, value) {
     breakeven_eth_price: even, breakeven_gap_pct: gap(even || null),
     hold_cost_eth_price: holdCost == null ? null : r2(holdCost), hold_cost_gap_pct: gap(holdCost || null),
     hold_breakeven_eth_price: holdEven == null ? null : r2(holdEven), hold_breakeven_gap_pct: gap(holdEven || null),
-    eth_units_now: r6(ethNow), eth_units_below: r6(eth), eth_units_wallet: r6(wallEth), eth_units_positions_below: r6(Math.max(0, eth - wallEth)),
+    eth_units_now: r6(ethNow), eth_units_below: r6(eth), eth_units_wallet: r6(wallEth), wallet_rest_usd: r2(keys.reduce((a, k) => a + restHeld(snaps[k][head]), 0)), eth_units_positions_below: r6(Math.max(0, eth - wallEth)),
     range_low_min: c.lowest == null ? null : r2(c.lowest), range_high_max: Number.isFinite(highest) ? r2(highest) : null,
     rest_usd: r2(rest),
     now_cost_eth_price: priceNow(invested + interest), now_breakeven_eth_price: priceNow(invested), rest_now_usd: r2(restNow),
@@ -895,7 +910,9 @@ function ethPrices(keys, invested, interest, value) {
       // chain: which chain's RPCs the page reads the pool from; invert: its slot0 price is dollars per ETH
       // inverted (USDC is token0 there). Against another coin, low, high and pool are dollars per ETH at the
       // coin's price now: scale turns the pool's raw price into them, quote gives the bounds in the coin.
+      // order: a WETH/USDC range opened outside the price as an order to buy or sell ETH (lib/curve.mjs orderOf).
       positions: [...c.curves].sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key) || Boolean(a.quote) - Boolean(b.quote) || a.low - b.low).map((x) => ({ wallet: label(x.key), low: r2(x.low), high: r2(x.high), pool: r6(x.pool), in_range: x.inRange, pool_address: x.address, tick_lower: x.tickLower, tick_upper: x.tickUpper, L: x.L, sa: x.sa, sb: x.sb, chain: x.chain, invert: x.invert,
+        ...(x.order ? { order: x.order } : {}),
         ...(x.quote ? { scale: x.scale, quote: { symbol: x.quote.symbol, usd: x.quote.usd, low: sig8(x.quote.low), high: sig8(x.quote.high) } } : {}) })),
     },
   }
@@ -979,6 +996,21 @@ function poolCompare(keys, myUsd) {
   }
   const nowTs = tsOfBlock(head), asOf = statsTs()
   const rate = (x) => (x == null || !Number.isFinite(x) ? null : r6(x))
+  // What ETH's swings cost a range of the table's width kept centred (lib/pools.mjs rangeLoss): the bar a
+  // rate in the table has to clear before the direction of the price is even counted. The median over the
+  // pools of their 7-day volatility: all of them read the same reference price, so any would do. Worked out
+  // as at earlier hours too, for how long each pool's 平常 has been on its side of it (lineRun).
+  const volAt = new Map()
+  const volOf = (t) => {
+    if (!volAt.has(t)) {
+      const vols = Object.values(poolCache.pools).map((e) => ethVol(e, { days: 7, nowTs: t })).filter((v) => v != null)
+      volAt.set(t, vols.length ? vols.sort((a, b) => a - b)[vols.length >> 1] : null)
+    }
+    return volAt.get(t)
+  }
+  const lineAt = (t) => rangeLoss(volOf(t), COMPARE_RATIO)
+  // Since when (ms, for the page) and on which side, as the page sets that pool's 平常 against the line.
+  const run = (days, mode) => { const x = lineRun(days, mode, lineAt, asOf); return x && { side: x.side, since: x.since * 1000, at_least: x.atLeast } }
   const pools = Object.entries(poolCache.pools).map(([k, e]) => {
     const mine = inPool.get(k)
     const opts = { myUsd: Math.max(0, myUsd), inStakedUsd: mine?.staked ?? 0, inPoolUsd: mine?.all ?? 0, nowTs: asOf }
@@ -997,7 +1029,8 @@ function poolCompare(keys, myUsd) {
       tvl_usd: r2(units(e.tvl.weth, 18) * pNow.eth + units(e.tvl.usdc, 6)), staked_share: rate(st.last?.stakedShare), missing_hours: e.missing ?? null,
       days: st.days, last_sample: st.last ? cstTime(st.last.ts) : null, age_h: ageH, stale: ageH == null || ageH > 3, stopped, in_range_72h: rate(stayShare(e, ratio, { nowTs: asOf })),
       staked: staked(st), fee: fee(st),
-      fixed: { staked: staked(fx), fee: fee(fx), in_range_72h: rate(stayShare(e, COMPARE_RATIO, { nowTs: asOf })) },
+      fixed: { staked: staked(fx), fee: fee(fx), in_range_72h: rate(stayShare(e, COMPARE_RATIO, { nowTs: asOf })),
+        run: { staked: stopped ? null : run(fx.allDays, 'staked'), fee: run(fx.allDays, 'fee') } },
       daily: st.daily.map((d) => ({ day: d.day, staked: rate(d.staked), fee: rate(d.fee) })),
       // A week with under a day of data (the week under way at its start, or before a pool's gauge paid) says nothing yet.
       weeks: st.weeks.filter((w) => w.hours >= 24).map((w) => ({ start: w.start, hours: w.hours, staked: rate(w.staked), fee: rate(w.fee), emitted_day: Math.round(w.emitted_day) })),
@@ -1011,11 +1044,7 @@ function poolCompare(keys, myUsd) {
   // chain can fail for a while): until then the best option may be one whose rivals are not read, and
   // the switch alert waits.
   const complete = pools.every((p) => p.missing_hours === 0 && !p.stale)
-  // What ETH's swings cost a range of the table's width kept centred (lib/pools.mjs rangeLoss): the bar a
-  // rate in the table has to clear before the direction of the price is even counted. The median over the
-  // pools of their 7-day volatility: all of them read the same reference price, so any would do.
-  const vols = Object.values(poolCache.pools).map((e) => ethVol(e, { days: 7, nowTs: asOf })).filter((v) => v != null)
-  const vol = vols.length ? vols.sort((a, b) => a - b)[vols.length >> 1] : null
+  const vol = volOf(asOf)
   const cost_line = vol == null ? null : { days: 7, vol: r6(vol), rate: r6(rangeLoss(vol, COMPARE_RATIO)) }
   // The pick sees the pools in the order it always did (by its own width's numbers), so ties fall as before.
   const judged = (x) => (x.median == null ? -1 : Math.min(x.median, x.recent ?? x.median))
@@ -1077,7 +1106,8 @@ for (const sc of SCOPES) {
     scope: sc.key, scope_label: sc.label, ...(sc.group ? { group: true } : {}), ...(sc.added ? { added: true } : {}), ...(costFrom ? { cost_from: costFrom } : {}),
     as_of: new Date(tsOfBlock(head) * 1000).toISOString(), as_of_cst: cstTime(tsOfBlock(head)), as_of_block: head,
     start_day: rows[0]?.day ?? null,
-    invested_usd: invested, value_usd: value, pnl_usd: pnl, pnl_pct: invested ? r6(pnl / invested) : null,
+    // Against the money put in, net of what came out: none once more came out than went in.
+    invested_usd: invested, value_usd: value, pnl_usd: pnl, pnl_pct: invested > 0 ? r6(pnl / invested) : null,
     hodl_usd: hodl, vs_hodl_usd: r2(value - hodl),
     // The held coins split so the page can move them with the live ETH price: the ETH, and the rest in dollars.
     hodl_eth: r6(units(n.c.hodl.get('ETH') ?? 0n, 18)), hodl_rest_usd: r2(hodl - units(n.c.hodl.get('ETH') ?? 0n, 18) * pNow.eth),

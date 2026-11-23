@@ -7,7 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { recentre } from '../lib/curve.mjs'
-import { putBackRates, evaluate } from '../lib/alerts.mjs'
+import { putBackRates, evaluate, orderKind, orderFill, ranges } from '../lib/alerts.mjs'
 
 const page = fs.readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8')
 // The function `name` that the blocks marked `markers` define, built on their own (the blocks may use
@@ -389,3 +389,147 @@ test('on random rows, the 每日年化 axis never leaves out a steady row, and l
   // than twice another steady one, reached.
   assert.ok(seen.leftOut > 1000 && seen.shortIn > 1000 && seen.vouchedIn > 300 && seen.steadyFar > 1000, JSON.stringify(seen))
 })
+
+test('the page\'s orderKind and orderFill are lib/alerts.mjs\'s', () => {
+  const kindOf = pageFn('orderfill', 'orderKind'), fillOf = pageFn('orderfill', 'orderFill'), rand = rng(1123)
+  for (const p of [{ order: 'buy' }, { order: 'sell' }, { order: 'buy', quote: { symbol: 'cbBTC' } }, { order: 'hold' }, { order: null }, {}])
+    assert.equal(kindOf(p), orderKind(p), JSON.stringify(p))
+  for (let k = 0; k < 500; k++) {
+    const low = 500 + rand() * 4000, high = low * (1 + rand() * 0.6)
+    const L = k % 50 === 0 ? [0, -1, NaN, undefined, null][(k / 50) % 5] : rand() * 1e17
+    const r = { L, sa: Math.sqrt(low * 1e-12), sb: k % 97 === 1 ? NaN : Math.sqrt(high * 1e-12) }
+    assert.deepEqual(fillOf(r), orderFill(r), `${k}`)
+  }
+})
+
+test('the page\'s mergeRanges is lib/alerts.mjs ranges, wallet by wallet: an order only while every position of a range is the same one', () => {
+  const merge = pageFn(['orderfill', 'mergeranges'], 'mergeRanges'), rand = rng(1124), pick = (xs) => xs[Math.floor(rand() * xs.length)]
+  const seen = { order: 0, undone: 0, merged: 0 }
+  for (let k = 0; k < 600; k++) {
+    const held = Array.from({ length: 1 + Math.floor(rand() * 6) }, () => {
+      const [low, high] = pick([[2000, 2500], [2100, 2300], [1800, 1900]]), coin = rand() < 0.15
+      // Against another coin a range's dollar bounds are its own (its bounds in the coin times the coin's price).
+      return { wallet: pick(['A', 'B']), chain: pick(['base', 'base', 'eth', undefined]), L: Math.round(rand() * 1e6), in_range: rand() < 0.3, order: pick(['buy', 'sell', 'buy', null, undefined, 'hold']),
+        ...(coin ? { low: low + 0.5, high: high + 0.5, quote: { symbol: 'cbBTC', low: low / 1e5, high: high / 1e5 } } : { low, high }) }
+    })
+    const before = JSON.stringify(held), mine = merge(held)
+    assert.equal(JSON.stringify(held), before, 'the positions are left as they were')
+    for (const w of ['A', 'B']) {
+      const own = held.filter((p) => p.wallet === w)
+      const page = mine.filter((p) => p.wallet === w).map((p) => [p.low, p.high, p.chain ?? 'base', p.L, orderKind(p), Boolean(p.in_range)])
+      const lib = ranges({ curve: { positions: own } }).map((r) => [r.low, r.high, r.chain, r.L, r.order, Boolean(r.in_range)])
+      assert.deepEqual(page, lib, JSON.stringify(own))
+      seen.merged += own.length - lib.length
+      seen.order += lib.filter((r) => r[4]).length
+      seen.undone += ranges({ curve: { positions: own } }).filter((r) => !r.order && own.some((p) => p.low === r.low && p.high === r.high && orderKind(p))).length
+    }
+  }
+  // Each came up often: a range that is an order, one whose positions are not all the same order, and positions merged.
+  assert.ok(seen.order > 300 && seen.undone > 100 && seen.merged > 150, JSON.stringify(seen))
+})
+
+test('the page says where an order stands, and the card\'s state line only when every range is an order and none is in it', () => {
+  const fn = (name) => pageFn(['orderfill', 'orderstate'], name), said = fn('ordersSaid'), place = fn('placeOf'), state = fn('orderState')
+  const o = (order, extra = {}) => ({ low: 2000, high: 2500, order, ...extra }), at = (p, P) => state(p, place(p, P))
+  assert.deepEqual([2600, 2400, 1900].map((P) => at(o('buy'), P)), ['wait', 'in', 'done'])
+  assert.deepEqual([1900, 2400, 2600].map((P) => at(o('sell'), P)), ['wait', 'in', 'done'])
+  // Its pool's own price, and in_range as published, come first.
+  assert.equal(at(o('buy', { pool: 1900 }), 2600), 'done')
+  assert.equal(at(o('sell', { pool: 2600, in_range: true }), 2600), 'in')
+  assert.deepEqual(place(o('buy', { pool: 1950 }), 2600), { at0: 1950, inside: false, under: true })
+  assert.equal(said([o('buy', { pool: 2600 }), o('sell', { pool: 1900 })], 2000), '挂单还没成交，现在不赚利息。')
+  assert.equal(said([o('buy', { pool: 1900 }), o('sell', { pool: 2600 })], 2000), '挂单已全部成交，现在不赚利息。')
+  assert.equal(said([o('buy', { pool: 2600 }), o('sell', { pool: 2600 })], 2000), '挂单都不在成交区间，现在不赚利息。')
+  // One in its range, a range that is no order, one against another coin, or none: the card's usual line.
+  for (const ps of [[o('buy', { pool: 2600 }), o('sell', { pool: 2200 })], [o('buy', { pool: 2600 }), o(null, { pool: 2600 })], [o('buy', { pool: 2600, quote: { symbol: 'cbBTC' } })], []])
+    assert.equal(said(ps, 2000), null, JSON.stringify(ps))
+})
+
+test('the page says how long 平常 has been on its side of the loss line, and nothing it does not know', () => {
+  const runText = pageFn(['mdhm', 'runtext'], 'runText'), H = 3600e3, t0 = Date.UTC(2026, 9, 5, 2) // 10/5 10:00, Beijing
+  assert.equal(runText({ side: 'above', since: t0, at_least: false }, t0 + 42 * H + 5), '平常已连续 42 小时高过损耗线（10/5 10:00 起）')
+  assert.equal(runText({ side: 'below', since: t0, at_least: false }, t0 + 100 * H), '平常已连续 4 天低于损耗线（10/5 10:00 起）')
+  assert.equal(runText({ side: 'below', since: t0, at_least: false }, t0 + 20 * 60e3), '平常刚低于损耗线（10/5 10:00 起）')
+  assert.equal(runText({ side: 'above', since: t0, at_least: true }, t0 + 7 * 24 * H), '平常已连续超过 7 天高过损耗线')
+  assert.equal(runText({ side: 'above', since: t0, at_least: true }, t0 + 3 * H), '平常已连续超过 3 小时高过损耗线')
+  // A clock behind the data's is never a negative time.
+  assert.equal(runText({ side: 'above', since: t0 + H, at_least: false }, t0), '平常刚高过损耗线（10/5 11:00 起）')
+  // Under an hour known, when it began not known: nothing, as with no run.
+  assert.equal(runText({ side: 'above', since: t0, at_least: true }, t0 + 30 * 60e3), '')
+  for (const r of [null, undefined, {}, { side: 'above', since: null }, { side: 'above', since: Number.NaN }]) assert.equal(runText(r, t0), '', JSON.stringify(r))
+})
+
+test('the page reads a wallet as emptied only once it has held money and holds nothing now', () => {
+  const emptied = pageFn('emptied', 'emptied'), r = (x) => ({ start_day: '2026-10-01', value_usd: 0.4, invested_usd: -12, curve: { positions: [] }, ...x })
+  assert.equal(emptied(r()), true)
+  assert.equal(emptied(r({ curve: null })), true)
+  // Never held any (its rows not started), still holding something or a position, or nothing put in known.
+  for (const x of [{ start_day: null }, { start_day: undefined }, { value_usd: 5 }, { value_usd: -3 }, { curve: { positions: [{}] } }, { invested_usd: null }])
+    assert.equal(emptied(r(x)), false, JSON.stringify(x))
+  assert.equal(emptied(null), false)
+})
+
+test('the page\'s pnl % is against the money put in, net of what came out, and none once more has come out', () => {
+  const pnlPct = pageFn('pnlpct', 'pnlPct')
+  assert.equal(pnlPct(50, 200), 0.25)
+  assert.equal(pnlPct(-50, 200), -0.25)
+  for (const invested of [0, -100, null, undefined, Number.NaN]) assert.equal(pnlPct(30, invested), null, String(invested))
+})
+
+test('the 仓位 card\'s first lines are about the pools the money is in, or with none the table\'s top pool, in its better column', () => {
+  const decide = pageFn('decide', 'decideRows'), names = (pc) => decide(pc).map(({ p, mode }) => `${p.label}:${mode}`)
+  const pool = (label, x = {}) => ({ label, fixed: { staked: { median: 1.2, recent: 1.0 }, fee: { median: 0.6 } }, days: 7, missing_hours: 0, ...x })
+  // As each pool's money is held there: with none of it staked, the fee column.
+  assert.deepEqual(names({ pools: [pool('a'), pool('b', { here: 'unstaked' }), pool('c', { here: 'staked' })] }), ['b:fee', 'c:staked'])
+  assert.deepEqual(names({ pools: [pool('a', { here: 'staked', fixed: null }), pool('b')] }), ['b:staked'])
+  // With none: the first read over the whole window, or failing that the first still filling in.
+  assert.deepEqual(names({ pools: [pool('a', { days: 3 }), pool('b')] }), ['b:staked'])
+  assert.deepEqual(names({ pools: [pool('a', { missing_hours: 2 }), pool('b', { stale: true })] }), ['a:staked'])
+  // Its better column, each read as the lower of 平常 and the last 24 hours.
+  assert.deepEqual(names({ pools: [pool('a', { fixed: { staked: { median: 1.2, recent: 0.5 }, fee: { median: 0.6 } } })] }), ['a:fee'])
+  assert.deepEqual(names({ pools: [pool('a', { fixed: { staked: { median: null }, fee: { median: 0.6 } } })] }), ['a:fee'])
+  assert.deepEqual(names({ pools: [pool('a', { fixed: { staked: { median: 0.6 }, fee: { median: 0.6 } } })] }), ['a:staked'])
+  for (const pc of [null, undefined, {}, { pools: [] }, { pools: [pool('a', { stale: true }), pool('b', { fixed: null })] }]) assert.deepEqual(decide(pc), [], JSON.stringify(pc))
+})
+
+// The card's state line, its 没放进池子 line and the withdrawal's label, each as the page draws it from a view.
+const ORDER_BLOCKS = ['orderfill', 'mergeranges', 'orderstate']
+const viewOf = (range_state, positions, x = {}) => ({ range_state, eth_usd: 2600, curve: { positions }, ...x })
+const pos = (order, x = {}) => ({ wallet: 'A', low: 2000, high: 2500, chain: 'base', L: 5, pool: 2600, in_range: false, order, ...x })
+
+test('the 仓位 card\'s state line is about its rows: positions of one range merged first, orders said as orders', () => {
+  const rangeSaid = pageFn([...ORDER_BLOCKS, 'rangestate'], 'rangeSaid')
+  assert.equal(rangeSaid(viewOf('above', [pos('buy'), pos('buy')])), '挂单还没成交，现在不赚利息。')
+  // A buy and a sell on one range are one row that is no order: it is out above like any range.
+  assert.equal(rangeSaid(viewOf('above', [pos('buy'), pos('sell')])), '涨破区间，全是 USDC，现在不赚利息。')
+  assert.equal(rangeSaid(viewOf('above', [pos('buy'), pos(null)])), '涨破区间，全是 USDC，现在不赚利息。')
+  // The same range in two wallets is two rows, each an order: one waiting, one all sold.
+  assert.equal(rangeSaid(viewOf('above', [pos('buy'), pos('sell', { wallet: 'B' })])), '挂单都不在成交区间，现在不赚利息。')
+  // Above ranges against other coins too: all in those coins.
+  const coin = pos(null, { low: 2000.5, high: 2500.5, quote: { symbol: 'cbBTC', low: 0.02, high: 0.025 } })
+  assert.equal(rangeSaid(viewOf('above', [pos(null), coin])), '涨破区间，全是 USDC 或 cbBTC，现在不赚利息。')
+  assert.equal(rangeSaid(viewOf('above', [coin])), '涨破区间，全是 cbBTC，现在不赚利息。')
+  assert.equal(rangeSaid(viewOf('none', [])), '现在没有 LP 仓位。')
+  assert.equal(rangeSaid(viewOf('in', [pos(null, { pool: 2200, in_range: true })])), '')
+  assert.equal(rangeSaid(viewOf('below', [pos(null, { pool: 1900 })])), '跌破区间，全是 ETH，现在不赚利息。')
+  assert.equal(rangeSaid({ range_state: 'odd', eth_usd: 2600 }), '')
+})
+
+test('the 没放进池子 line says what the wallets hold themselves, and nothing without the rest of it', () => {
+  const outsideText = pageFn(['fmt', 'outside'], 'outsideText')
+  assert.equal(outsideText({ eth_units_wallet: 0.2, wallet_rest_usd: 350.4, eth_usd: 2000 }), '没放进池子：0.2 ETH（$400）、其他资产 $350，不赚利息。')
+  assert.equal(outsideText({ eth_units_wallet: 1.23456, wallet_rest_usd: 0, eth_usd: 2000 }), '没放进池子：1.23 ETH（$2,469），不赚利息。')
+  assert.equal(outsideText({ eth_units_wallet: 0.001, wallet_rest_usd: 12.5, eth_usd: 2000 }), '没放进池子：其他资产 $12.50，不赚利息。')
+  // Next to nothing, or data from before wallet_rest_usd was published (its ETH alone would leave the rest out).
+  for (const s of [{ eth_units_wallet: 0.001, wallet_rest_usd: 0.4, eth_usd: 2000 }, { eth_units_wallet: 0.2, eth_usd: 2000 }, { eth_usd: 2000 }, { eth_units_wallet: null, wallet_rest_usd: 0, eth_usd: 2000 }])
+    assert.equal(outsideText(s), '', JSON.stringify(s))
+})
+
+test('the withdrawal says 已跌破 for ranges below their own, and only 全是 ETH when every row is an order', () => {
+  const exitBelow = pageFn([...ORDER_BLOCKS, 'exitbelow'], 'exitBelow')
+  assert.equal(exitBelow(viewOf('below', [pos('buy', { pool: 1900 }), pos('sell', { wallet: 'B', pool: 1900 })])), '全是 ETH')
+  assert.equal(exitBelow(viewOf('below', [pos('buy', { pool: 1900 }), pos(null, { low: 2100, high: 2300, pool: 1900 })])), '已跌破，全是 ETH')
+  assert.equal(exitBelow(viewOf('below', [pos('buy', { pool: 1900 }), pos('sell', { pool: 1900 })])), '已跌破，全是 ETH')
+  for (const st of ['above', 'in', 'part', 'gap', 'none']) assert.equal(exitBelow(viewOf(st, [pos('buy')])), null, st)
+})
+

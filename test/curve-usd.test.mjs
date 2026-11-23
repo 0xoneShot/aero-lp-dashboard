@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
+import { usdCurve, amountsAtUsd, orderOf, openingDeposit } from '../lib/curve.mjs'
 import { amountsForLiquidity, sqrtRatioAtTick } from '../lib/univ3.mjs'
 
 const W = '0xweth', U = '0xusdc'
@@ -89,4 +89,45 @@ test('fees in the other coin are paid out in dollars at its price', () => {
 
 test('a coin with no price to follow leaves the position off the curve', () => {
   assert.equal(usdCurve({ ...ethBtc, liquidity: 1n, sqrtP: sqrtRatioAtTick(0), fees0: 0n, fees1: 0n }, kind), null)
+})
+
+test('orderOf: a WETH/USDC range that took one coin at its opening deposit is an order, to buy ETH (USDC only: opened below the price) or sell it (ETH only: above)', () => {
+  const L = 4n * 10n ** 14n
+  for (const x of [ethFirst, usdFirst]) {
+    const at = (P) => BigInt(Math.round((x.token0 === W ? Math.sqrt(P * 1e-12) : Math.sqrt(1e12 / P)) * Q96))
+    // The opening deposit as its IncreaseLiquidity logs it, the range opened with ETH at P, read back from data/ as text.
+    const opened = (P) => { const { amount0, amount1 } = amountsForLiquidity(at(P), x.tickLower, x.tickUpper, L); return { amount0: String(amount0), amount1: String(amount1) } }
+    const c = usdCurve({ ...x, liquidity: L, sqrtP: at(2200), fees0: 0n, fees1: 0n }, kind)
+    const name = x === ethFirst ? 'eth first' : 'usd first'
+    assert.equal(orderOf(opened(2600), c), 'buy', name)
+    assert.equal(orderOf(opened(1900), c), 'sell', name)
+    assert.equal(orderOf(opened(2200), c), null, name)
+    assert.equal(orderOf({ amount0: 0n, amount1: 0n }, c), null, name)
+    assert.equal(orderOf(null, c), null, name)
+  }
+  // Against another coin a range is never read as an order.
+  const b = usdCurve({ ...ethBtc, liquidity: L, sqrtP: BigInt(Math.round(Math.sqrt(0.0295e-10) * Q96)), fees0: 0n, fees1: 0n }, withCoin)
+  assert.equal(orderOf({ amount0: '0', amount1: '100000' }, b), null)
+})
+
+test('openingDeposit: what the mint of a position took, in its own chain\'s block, all its additions there added up', () => {
+  // The same position manager on two chains can give one token number to a position on each.
+  const NPM = '0x00000000000000000000000000000000000000f1', OTHER = '0x00000000000000000000000000000000000000f2'
+  const inc = (tokenId, chain, chainBlock, amount0, amount1, extra = {}) => ({ type: 'increase', npm: NPM, tokenId, chain, chainBlock, amount0, amount1, ...extra })
+  const events = [
+    inc('5', 'base', 100, '0', '700'), inc('5', 'base', 100, '0', '300'), inc('5', 'base', 200, '9', '0'),
+    inc('5', 'eth', 40, '300', '8'), inc('5', 'eth', 100, '0', '50'), inc('5', 'base', 100, '1', '0', { npm: OTHER }),
+    { type: 'decrease', npm: NPM, tokenId: '5', chain: 'base', chainBlock: 100, amount0: '3', amount1: '0' },
+  ]
+  const books = [{ npm: NPM, tokenId: '5', chain: 'base', born: 100, minted: true }, { npm: NPM, tokenId: '5', chain: 'eth', born: 40, minted: true }]
+  assert.deepEqual(openingDeposit({ npm: NPM, tokenId: 5 }, books, events), { amount0: 0n, amount1: 1000n })
+  assert.deepEqual(openingDeposit({ npm: NPM, tokenId: '5', chain: 'base' }, books, events), { amount0: 0n, amount1: 1000n })
+  assert.deepEqual(openingDeposit({ npm: NPM, tokenId: '5', chain: 'eth' }, books, events), { amount0: 300n, amount1: 8n })
+  // Born where it arrived from outside (not minted in the records), held before them, or not in the books: not known.
+  const one = (born, minted) => openingDeposit({ npm: NPM, tokenId: '5' }, [{ npm: NPM, tokenId: '5', chain: 'base', born, minted }], events)
+  assert.equal(one(100, false), null)
+  assert.equal(one(100, undefined), null)
+  assert.equal(one(null, false), null)
+  assert.equal(one(150, true), null)
+  assert.equal(openingDeposit({ npm: NPM, tokenId: '6' }, books, events), null)
 })

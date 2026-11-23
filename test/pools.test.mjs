@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { dollarsPerL, poolStats, samplePools, readPoolCache, SAMPLE_VERSION, blockFinder, ethVol, rangeLoss } from '../lib/pools.mjs'
+import { dollarsPerL, poolStats, samplePools, readPoolCache, SAMPLE_VERSION, blockFinder, ethVol, rangeLoss, lineRun } from '../lib/pools.mjs'
+import { cstDay } from '../lib/time.mjs'
 import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
 import { evaluate } from '../lib/alerts.mjs'
 
@@ -121,15 +122,20 @@ test('rewards streamed but not yet credited count; an hour the price leaves the 
   assert.ok(near(d.staked.median, dollarsPerL(2400, 1.12) / dollarsPerL(2400, 1.12, 2160), 1e-4))
 })
 
-test('the usual rate is the median of the last seven full days only', () => {
-  // Ten days paying 100% a year, then four paying 300%: the last seven are four at 300% and three at 100%.
+// Ten days paying 100% a year, then four paying 300%.
+function tripled() {
   const e = pool({ hours: 24 * 14 }), ts = Object.keys(e.samples).map(Number).sort((a, b) => a - b), cut = 24 * 10
   const base = e.samples[ts[cut]]
   for (const t of ts.slice(cut + 1)) {
     const x = e.samples[t], rg = BigInt(base.rg) + (BigInt(x.rg) - BigInt(base.rg)) * 3n
     x.rg = rg.toString(); x.share = ((rg * BigInt(x.staked)) / Q128).toString()
   }
-  const s = poolStats(e, { ratio: 1.12, nowTs: T0 + 14 * 86400 + 600 })
+  return e
+}
+
+test('the usual rate is the median of the last seven full days only', () => {
+  // The last seven are four at 300% and three at 100%.
+  const s = poolStats(tripled(), { ratio: 1.12, nowTs: T0 + 14 * 86400 + 600 })
   assert.equal(s.days, 7)
   assert.ok(near(s.staked.median, 3, 1e-6), `${s.staked.median}`)
 })
@@ -316,4 +322,45 @@ test('ethVol is the realised yearly volatility of the hourly reference prices, a
   assert.ok(Math.abs(rangeLoss(1, 1.12) - 4.475) < 0.01)
   assert.ok(Math.abs(rangeLoss(1, 1.035 / 0.965) - 7.202) < 0.01)
   assert.equal(rangeLoss(null, 1.1), null)
+})
+
+test('lineRun: since when 平常 has been on its side of the loss line, both judged again at each whole hour back', () => {
+  // Ten days at 200% a year, then four at 400%; now is 05:10 Beijing on the day after the last.
+  const days = Array.from({ length: 14 }, (_, i) => ({ day: cstDay(T0 + i * 86400), hours: 24, staked: i < 10 ? 2 : 4, fee: 1 }))
+  const nowTs = T0 + 14 * 86400 + 5 * HOUR + 600, midnight = T0 + 14 * 86400
+  // 平常 is 400% (the seven days before today: three at 200%, four at 400%), over a line at 300% since this
+  // Beijing midnight: an hour earlier its days were four at 200% and three at 400%, the day then under way
+  // not counted.
+  assert.deepEqual(lineRun(days, 'staked', () => 3, nowTs), { side: 'above', since: midnight, atLeast: false })
+  // 平常 at the line is not below it.
+  assert.deepEqual(lineRun(days, 'staked', () => 4, nowTs), { side: 'above', since: midnight, atLeast: false })
+  // The column asked for: fees at 100% have been below it all along, so the run is longer than the days looked back.
+  assert.deepEqual(lineRun(days, 'fee', () => 3, nowTs), { side: 'below', since: T0 + 7 * 86400 + 6 * HOUR, atLeast: true })
+  assert.deepEqual(lineRun(days, 'fee', () => 3, nowTs, 2), { side: 'below', since: T0 + 12 * 86400 + 6 * HOUR, atLeast: true })
+  // The line moving: up past a steady 400% at 07:30 two days ago, the run starts at the first whole hour after;
+  // and after the last whole hour, at now itself.
+  const flat = days.map((r) => ({ ...r, staked: 4 })), at = T0 + 12 * 86400 + 7.5 * HOUR
+  assert.deepEqual(lineRun(flat, 'staked', (t) => (t >= at ? 5 : 3), nowTs), { side: 'below', since: T0 + 12 * 86400 + 8 * HOUR, atLeast: false })
+  assert.deepEqual(lineRun(flat, 'staked', (t) => (t >= nowTs - 300 ? 5 : 3), nowTs), { side: 'below', since: nowTs, atLeast: false })
+  // Back to where either number is unknown (the days begin, the line has no data): at least since then.
+  assert.deepEqual(lineRun(days.slice(10), 'staked', () => 3, nowTs), { side: 'above', since: T0 + 11 * 86400, atLeast: true })
+  assert.deepEqual(lineRun(flat, 'staked', (t) => (t >= T0 + 13 * 86400 ? 3 : null), nowTs), { side: 'above', since: T0 + 13 * 86400, atLeast: true })
+  // A day of under 20 hours is not one of the seven, as in poolStats.
+  assert.equal(lineRun(days, 'staked', () => 3.5, nowTs).side, 'above')
+  assert.equal(lineRun(days.map((r, i) => (i === 13 ? { ...r, hours: 12 } : r)), 'staked', () => 3.5, nowTs).side, 'below')
+  // Either unknown now: nothing to say.
+  assert.equal(lineRun(days, 'staked', () => null, nowTs), null)
+  assert.equal(lineRun([], 'staked', () => 3, nowTs), null)
+})
+
+test('lineRun sets the 平常 poolStats gives the table against the line, from its allDays', () => {
+  const nowTs = T0 + 14 * 86400 + 600, s = poolStats(tripled(), { ratio: 1.12, nowTs }), m = s.staked.median
+  assert.ok(near(m, 3, 1e-6), `${m}`)
+  assert.equal(lineRun(s.allDays, 'staked', () => m, nowTs).side, 'above')
+  assert.equal(lineRun(s.allDays, 'staked', () => m * (1 + 1e-9), nowTs).side, 'below')
+  // Over a line at 150% since the Beijing midnight the fourth day at 300% was over: an hour before, the seven
+  // days were three at 300% and four at 100% (with the days before the last seven cut off, the six left would
+  // have been over it a day longer).
+  assert.deepEqual(lineRun(s.allDays, 'staked', () => 1.5, nowTs), { side: 'above', since: T0 + 14 * 86400, atLeast: false })
+  assert.deepEqual(lineRun(s.allDays.slice(-7), 'staked', () => 1.5, nowTs), { side: 'above', since: T0 + 13 * 86400, atLeast: false })
 })

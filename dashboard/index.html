@@ -33,6 +33,7 @@
 
   .lp-decide { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
   .lp-decide b { font-weight: 600; }
+  .lp-decide .lp-run { font-size: 12px; color: var(--color-fg-muted); margin-top: -6px; }
   .lp-state { font-size: 14px; }
   .lp-ranges { display: flex; flex-direction: column; gap: 12px; }
   .lp-range-head { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
@@ -40,6 +41,7 @@
   .lp-range-tag { font-size: 12px; white-space: nowrap; }
   .lp-range-tag.in { color: var(--color-ok); }
   .lp-range-tag.out { color: var(--color-warn); }
+  .lp-range-tag.wait { color: var(--color-fg-muted); }
   .lp-track { position: relative; height: 8px; margin: 8px 0; border-radius: 4px; background: var(--cds-chart-grid); }
   .lp-seg { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
   .lp-now { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; border-radius: 4px; background: var(--color-fg); }
@@ -158,6 +160,7 @@
       <div class="lp-decide" id="decide"></div>
       <p class="lp-state" id="range-state">—</p>
       <div class="lp-ranges" id="range-rows"></div>
+      <p class="lp-range-sub" id="range-outside" hidden></p>
     </section>
 
     <section class="lp-card" id="earn">
@@ -262,7 +265,8 @@
         <div>
           <h3 class="lp-subhead">数字</h3>
           <ul>
-            <li>投入：从外面转进钱包的钱，按到账时的价格算美元。现值：钱包里的币、池子里的币和没领的奖励，按现在的价格算。</li>
+            <li>投入：从外面转进钱包的钱，按到账时的价格算美元。现值：钱包里的币、池子里的币和没领的奖励，按现在的价格算。钱全部转走的钱包只看对比一直持有 USDC 的盈亏，盈亏比例和对比原币不再算。</li>
+            <li>仓位卡片最后一行“没放进池子”：钱包里自己拿着、没放进池子的 ETH 和其他资产（USDC、AERO 等），不赚利息；还没领的奖励和手续费不算在里面。</li>
             <li>利息：领到和待领的 AERO 奖励（按当天收盘价）加上交易手续费；今天是截至目前的数。</li>
             <li>近 7 日年化：这几天的利息 ÷ 池子里的平均资金 × 365，只按池子里的钱算。每日年化同样算，今天按已经过去的时间折算成一整天；收益率变低，是 AERO 跌了、分得少了，还是没质押只赚手续费，指上去就能看出。</li>
             <li>对比拿着原币不动：现值减去带进来的币现在值多少，差额含利息、无常损失和换币。对比一直持有 USDC：现值减去投入，含利息，也含 ETH 涨跌。</li>
@@ -291,8 +295,9 @@
             <li>质押只拿 AERO 奖励（以太坊等链发 xAERO，按 AERO 算），不质押只拿手续费，二选一。</li>
             <li>表格固定按 Aero 的 ±3.5% 宽度、把你全部的钱放进去算，已算上放进去后被摊薄的部分，换了仓位或隔几天再看都能直接比。区间越窄年化越高：宽度减半，年化大约翻倍；你实际的年化还要看自己仓位的宽度。</li>
             <li>平常：近 7 天每天年化的中位数。大字是平常和 24 小时里较低的那个：资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。</li>
-            <li>损耗线：按近 7 天 ETH 的波动，±3.5% 的仓位在区间里时，平均每年比拿着原币不动少赚多少；表格里的年化要高过它才划算。平常和它都按 ±3.5% 算，可以直接比。没算涨跌方向，看涨 ETH 时门槛更高。</li>
+            <li>损耗线：按近 7 天 ETH 的波动，±3.5% 的仓位在区间里时，平均每年比拿着原币不动少赚多少；表格里的年化要高过它才划算。平常和它都按 ±3.5% 算，可以直接比。没算涨跌方向，看涨 ETH 时门槛更高。仓位卡片里还写平常已经连续多久高过（或低于）损耗线：每个整点按那时的平常和损耗线重算一遍往回数，最多看 7 天；钱不在表格里的任何一个池子时（比如只有 WETH/cbBTC 仓位），看表格里最高的那个池子。</li>
             <li>出区间多久：从每小时的整点更新第一次看到仓位出区间算起（刚出区间的头一个小时，这一行可能还没出现），满 24 小时手机会提醒。那时平常高过损耗线才写按现价重挂的上下沿：和原来一样宽，对齐池子的刻度；要换多少只算撤出来的仓位，奖励不动。平常低于损耗线写“放回去不划算”。</li>
+            <li>挂单：开仓时价格不在区间里、只放了一种币的仓位，比如只放 USDC 挂在现价下面、等跌下来买 ETH，或者只放 ETH 挂在上面、等涨上去卖。看板按挂单写：从哪个价开始成交，全部成交能换多少、均价多少（区间上下沿的几何平均）。它本来就在区间外等着，所以不数出区间多久、不写重挂；手机在开始成交、全部成交、回到挂单区间和回到未成交时各提醒一次。按开仓那一笔认，之后只补一种币不算；看板记录以前开的、从没追踪的地址转来的认不出，按普通仓位写（网页加的地址转给原有钱包的也认不出：原有钱包的账只认它们自己）。</li>
             <li>“对你最划算的”、每天多挣多少和换池子的手机提醒按你仓位的宽度算，所以和表格里的数不一样。差 30 个百分点以内算差不多：你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉成本后一周多挣多少。成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）。</li>
             <li>换池子的手机提醒：某个钱包的去处数据满 7 天，平常和 24 小时都比现在的仓位高 30 个百分点以上，稳定领先（近 7 天较差的日子也比现在高，最近两个 Aero 周都领先），3 天内回本，提醒一次；看合计时不提醒，按各个钱包提醒。</li>
           </ul>
@@ -317,6 +322,7 @@
   const $ = (id) => document.getElementById(id);
 
   // ---------- formatting ----------
+  /* fmt:start */
   const usd0 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
   const usd2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // Cents only under $100.
@@ -326,6 +332,7 @@
   const fmtPct = (v) => (v == null ? '—' : sign(v) + (Math.abs(v) * 100).toFixed(1) + '%');
   const fmtNum = (v, d) => (v == null ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: d }));
   const fmtEth = (v) => fmtNum(v, v >= 0.1 ? 2 : 4);
+  /* fmt:end */
   // Every yearly rate on the page: whole percents from 10%, one decimal below.
   const rateText = (v, d = 0) => `${(v * 100).toFixed(Math.max(d, v < 0.1 ? 1 : 0))}%`;
   const fmtRate = (v) => (v == null || !Number.isFinite(v) ? '—' : rateText(v));
@@ -339,9 +346,11 @@
   /* parseday:end */
   const dayLabel = d3.utcFormat('%-m/%-d');
   // Dates as M/D; a Beijing time 'YYYY-MM-DD HH:MM' as M/D HH:MM; a moment (ms) the same way.
+  /* mdhm:start */
   const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
   const mdHm = (t) => (t ? `${md(t.slice(0, 10))} ${t.slice(11, 16)}` : '—');
   const cstMdHm = (ms) => mdHm(new Date(ms + 8 * 3600e3).toISOString().replace('T', ' '));
+  /* mdhm:end */
   // Text written only when it changes: the live redraw every 15 s leaves the rest alone.
   const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
 
@@ -474,6 +483,53 @@
   }
 
   // In range needs no sentence: the green 区间内 beside each position says it.
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+
+  // A WETH/USDC range opened outside the price with one coin (lib/curve.mjs orderOf) is an order: to buy ETH
+  // with its USDC as the price falls through it ('buy'), or to sell its ETH as the price rises through it
+  // ('sell'). It waits out of range by design: its row says where it starts, what it gets in full and at what
+  // average price (the bounds' geometric mean), never 已涨破 / 已跌破, and no day out is counted for it.
+  // orderKind and orderFill are lib/alerts.mjs's (test/ checks the two agree).
+  /* orderfill:start */
+  const orderKind = (p) => (!p.quote && (p.order === 'buy' || p.order === 'sell') ? p.order : null);
+  function orderFill(r) {
+    if (!(r.L > 0) || ![r.sa, r.sb].every(Number.isFinite)) return null;
+    const eth = (r.L * (1 / r.sa - 1 / r.sb)) / 1e18, usdc = (r.L * (r.sb - r.sa)) / 1e6;
+    return eth > 0 ? { eth, usdc, avg: usdc / eth } : null;
+  }
+  /* orderfill:end */
+  /* mergeranges:start */
+  // Positions of one wallet with the same range move together: one row for them, their liquidity added up, in
+  // its range while any of them is, and an order only while every one of them is the same one (as lib/alerts.mjs
+  // ranges has it; test/ checks the two agree).
+  function mergeRanges(held) {
+    const ps = [];
+    for (const p of held) {
+      const same = ps.find((q) => q.wallet === p.wallet && q.low === p.low && q.high === p.high && (q.chain ?? 'base') === (p.chain ?? 'base'));
+      if (!same) { ps.push({ ...p }); continue; }
+      same.L += p.L;
+      if (p.in_range) same.in_range = true;
+      if (orderKind(same) !== orderKind(p)) same.order = null;
+    }
+    return ps;
+  }
+  /* mergeranges:end */
+  /* orderstate:start */
+  // Where a range sits at its pool's price (or ETH's): in it, and below its middle or not.
+  const placeOf = (p, ethUsd) => { const at0 = p.pool ?? ethUsd; return { at0, inside: p.in_range ?? (at0 >= p.low && at0 < p.high), under: at0 < (p.low + p.high) / 2 }; };
+  // An order there: 'in' its range (成交中), 'wait' on the side it waits on (above it for a buy, below it for a
+  // sell: 挂单未成交), or 'done' once the price has gone all the way through it (已全部成交).
+  const orderState = (p, { inside, under }) => (inside ? 'in' : (p.order === 'buy') !== under ? 'wait' : 'done');
+  // The 仓位 card's state line when every range of the view (mergeRanges) is an order and none is in its range:
+  // they wait, or are done, by design, not 涨破 / 跌破. null otherwise.
+  function ordersSaid(ps, ethUsd) {
+    if (!ps.length || !ps.every((p) => orderKind(p))) return null;
+    const st = ps.map((p) => orderState(p, placeOf(p, ethUsd)));
+    if (st.includes('in')) return null;
+    return st.every((x) => x === 'wait') ? '挂单还没成交，现在不赚利息。' : st.includes('wait') ? '挂单都不在成交区间，现在不赚利息。' : '挂单已全部成交，现在不赚利息。';
+  }
+  /* orderstate:end */
+  /* rangestate:start */
   const STATES = {
     in: '',
     part: '部分仓位在区间内，只有那部分在赚利息。',
@@ -482,25 +538,60 @@
     above: '涨破区间，全是 USDC，现在不赚利息。',
     none: '现在没有 LP 仓位。',
   };
-  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  // The 仓位 card's state line for a view: about its rows (mergeRanges), orders said as orders (ordersSaid),
+  // and a view above its ranges all in the coins they are against.
+  function rangeSaid(s) {
+    const held = s.curve?.positions ?? [], coins = [...new Set(held.filter((p) => p.quote).map((p) => p.quote.symbol))];
+    const above = [...(held.some((p) => !p.quote) ? ['USDC'] : []), ...coins].join(' 或 ');
+    return ordersSaid(mergeRanges(held), s.eth_usd) ?? (s.range_state === 'above' && coins.length ? `涨破区间，全是 ${above}，现在不赚利息。` : STATES[s.range_state] ?? '');
+  }
+  /* rangestate:end */
+  function orderRow(p, at0, inside, under) {
+    const f = orderFill(p);
+    if (!f) return null;
+    const buy = p.order === 'buy', st = orderState(p, { inside, under }), [e, u] = amountsAt(p, at0), eAll = f.eth, uAll = f.usdc, avg = f.avg;
+    const deal = buy ? `用 ${fmtUsd(uAll)} USDC 买约 ${fmtEth(eAll)} ETH，均价 ${fmtUsd(avg)}` : `${fmtEth(eAll)} ETH 卖约 ${fmtUsd(uAll)} USDC，均价 ${fmtUsd(avg)}`;
+    if (st === 'in') return { tag: '成交中', cls: 'in', sub: `跌 ${pct((at0 - p.low) / at0)} 到下沿 · 涨 ${pct((p.high - at0) / at0)} 到上沿 · 已${buy ? `买约 ${fmtEth(e)} ETH，还剩 ${fmtUsd(u)} USDC` : `卖约 ${fmtUsd(u)} USDC，还剩 ${fmtEth(e)} ETH`}（全部${deal}）` };
+    if (st === 'wait') return { tag: '挂单未成交', cls: 'wait', sub: buy ? `挂单买入：跌 ${pct((at0 - p.high) / at0)} 到 ${fmtUsd(p.high)} 开始买，跌到 ${fmtUsd(p.low)} 全部买完 · ${deal}`
+      : `挂单卖出：涨 ${pct((p.low - at0) / at0)} 到 ${fmtUsd(p.low)} 开始卖，涨到 ${fmtUsd(p.high)} 全部卖完 · ${deal}` };
+    return { tag: '已全部成交', cls: 'wait', sub: buy ? `已全部买成 ETH：约 ${fmtEth(eAll)} ETH，均价 ${fmtUsd(avg)} · 要涨 ${pct((p.low - at0) / at0)} 才回到区间`
+      : `已全部卖成 USDC：约 ${fmtUsd(uAll)}，均价 ${fmtUsd(avg)} · 要跌 ${pct((at0 - p.high) / at0)} 才回到区间` };
+  }
+  /* emptied:start */
+  // A wallet that has sent everything on (holds nothing and no position, after it once held money: its rows have
+  // started): what its money did is still counted, but a share of what is left in it, or against the coins it
+  // brought, no longer means anything. One that never held any is not one.
+  const emptied = (r) => Boolean(r) && r.start_day != null && Math.abs(r.value_usd ?? 0) < 1 && !(r.curve?.positions?.length) && r.invested_usd != null;
+  /* emptied:end */
+  /* outside:start */
+  // What the wallets hold themselves outside the pools, earning nothing: ETH (at its price now) and USDC, AERO
+  // and the rest (at the update's prices), not the rewards and fees still to claim (src/run.mjs
+  // eth_units_wallet, wallet_rest_usd). '' when that is next to nothing, or not published (data from before).
+  function outsideText(s) {
+    const eth = s.eth_units_wallet ?? 0, rest = s.wallet_rest_usd;
+    if (rest == null || !(eth >= 0.005 || rest >= 1)) return '';
+    return `没放进池子：${[eth >= 0.005 && `${fmtEth(eth)} ETH（${fmtUsd(eth * s.eth_usd)}）`, rest >= 1 && `其他资产 ${fmtUsd(rest)}`].filter(Boolean).join('、')}，不赚利息。`;
+  }
+  /* outside:end */
+  /* exitbelow:start */
+  // The withdrawal's label when every range of a view is below its own, all ETH: 跌破 for a range, not for an
+  // order (a buy order all bought, a sell order back to all ETH). null otherwise.
+  const exitBelow = (s) => (s.range_state !== 'below' ? null : mergeRanges(s.curve?.positions ?? []).every((p) => orderKind(p)) ? '全是 ETH' : '已跌破，全是 ETH');
+  /* exitbelow:end */
 
   // ---------- 仓位: where the price sits in each range ----------
   function drawRange(s) {
     const state = $('range-state'), list = $('range-rows');
     list.replaceChildren();
     setText($('range-eth'), s ? `ETH ${fmtUsd(s.eth_usd)}` : '');
-    if (!s) { setText(state, '—'); state.hidden = false; return; }
-    const held = s.curve?.positions ?? [], coins = [...new Set(held.filter((p) => p.quote).map((p) => p.quote.symbol))];
-    const above = [...(held.some((p) => !p.quote) ? ['USDC'] : []), ...coins].join(' 或 ');
-    const said = s.range_state === 'above' && coins.length ? `涨破区间，全是 ${above}，现在不赚利息。` : STATES[s.range_state] ?? '';
+    if (!s) { setText(state, '—'); state.hidden = false; $('range-outside').hidden = true; return; }
+    // One row for the positions of one wallet with the same range; the state line is about those rows.
+    const ps = mergeRanges(s.curve?.positions ?? []), said = rangeSaid(s);
     setText(state, said);
     state.hidden = !said;
-    // Positions of one wallet with the same range move together: show them as one.
-    const ps = [];
-    for (const p of held) {
-      const same = ps.find((q) => q.wallet === p.wallet && q.low === p.low && q.high === p.high && (q.chain ?? 'base') === (p.chain ?? 'base'));
-      if (same) same.L += p.L; else ps.push({ ...p });
-    }
+    const outside = $('range-outside'), outText = outsideText(s);
+    setText(outside, outText);
+    outside.hidden = !outText;
     if (!ps.length) return;
     const now = s.eth_usd;
     const lo0 = Math.min(now, ...ps.map((p) => p.low)), hi0 = Math.max(now, ...ps.map((p) => p.high));
@@ -515,18 +606,19 @@
     const stale = staleHours(s) > 0, S = dash.data('summary'), rows = S.status === 'ok' ? S.data : [];
     for (const p of items) {
       if (typeof p === 'string') {
-        const row = el('div', 'lp-range lp-range-none');
-        row.append(el('div', 'lp-range-head', `${p} · 没有仓位`));
+        const row = el('div', 'lp-range lp-range-none'), mine = rows.find((r) => r.scope !== 'total' && r.scope_label === p);
+        row.append(el('div', 'lp-range-head', `${p} · 没有仓位${emptied(mine) ? '，钱已全部转出' : ''}`));
         list.appendChild(row);
         continue;
       }
       const row = el('div', 'lp-range');
-      const at0 = p.pool ?? now, inside = p.in_range ?? (at0 >= p.low && at0 < p.high), under = at0 < (p.low + p.high) / 2;
+      const { at0, inside, under } = placeOf(p, now);
+      const ord = orderKind(p) ? orderRow(p, at0, inside, under) : null;
       const head = el('div', 'lp-range-head');
       // A range against another coin is set in that coin per ETH, and only its price against the coin moves it.
       const q = p.quote, bounds = q ? `WETH/${q.symbol} · ${ratio(q.low)} – ${ratio(q.high)}` : `${fmtUsd(p.low)} – ${fmtUsd(p.high)}`;
       head.append(el('span', null, `${several ? p.wallet + ' · ' : ''}${CHAIN_NAMES[p.chain] ? CHAIN_NAMES[p.chain] + ' · ' : ''}${bounds}`),
-        el('span', `lp-range-tag ${inside ? 'in' : 'out'}`, inside ? '区间内' : under ? '已跌破' : '已涨破'));
+        ord ? el('span', `lp-range-tag ${ord.cls}`, ord.tag) : el('span', `lp-range-tag ${inside ? 'in' : 'out'}`, inside ? '区间内' : under ? '已跌破' : '已涨破'));
       const track = el('div', 'lp-track');
       const seg = el('i', 'lp-seg'); seg.style.left = at(p.low); seg.style.width = `calc(${at(p.high)} - ${at(p.low)})`; seg.style.background = walletColor(p.wallet);
       const mark = el('i', 'lp-now'); mark.style.left = at(at0); mark.title = q ? `现价 1 ETH = ${ratio(at0 / q.usd)} ${q.symbol}` : `现价 ${fmtUsd(at0)}`;
@@ -536,10 +628,10 @@
       // Out of range the position is all one coin: what a re-centre would move.
       let all = '';
       if (!inside) { const [e, u] = amountsAt(p, at0); all = under ? ` · 全是 ${fmtNum(e, 2)} ETH` : q ? ` · 全是 ${fmtNum(u / q.usd, 4)} ${q.symbol}` : ` · 全是 ${fmtUsd(u)} USDC`; }
-      const sub = q ? `1 ETH = ${ratio(at0 / q.usd)} ${q.symbol} · ETH 对 ${q.symbol} ${where}${all}` : `${where}${all}`;
+      const sub = ord ? ord.sub : q ? `1 ETH = ${ratio(at0 / q.usd)} ${q.symbol} · ETH 对 ${q.symbol} ${where}${all}` : `${where}${all}`;
       const act = el('div', 'lp-act');
       act.dataset.range = `${p.wallet}|${p.chain ?? 'base'}|${q ? `${q.low}-${q.high}` : `${p.low}-${p.high}`}`;
-      const a = !stale && !inside ? actOf(outVerdict(rows, s, p), p, at0, under, s.scope === 'total') : null;
+      const a = !stale && !inside && !ord ? actOf(outVerdict(rows, s, p), p, at0, under, s.scope === 'total') : null;
       if (a) { act.textContent = a.text; act.classList.add(a.due ? 'lp-act-due' : 'lp-act-wait'); }
       row.append(head, track, el('div', 'lp-range-sub', sub), act);
       list.appendChild(row);
@@ -548,22 +640,55 @@
 
   // ---------- 平常 against the loss line, first in the 仓位 card ----------
   // For each pool the view's money is in: its 平常 (staked or not, as it is held) and the loss line, both at
-  // the table's fixed width, so they compare directly. Nothing while the data is old (the positions may
-  // have changed since), and the page can go stale while open, so the box is emptied first every time.
+  // the table's fixed width, so they compare directly, and since when 平常 has been on that side of the line
+  // (src/run.mjs, lib/pools.mjs lineRun: worked out again as at each hour back, up to 7 days). With no money
+  // in any pool, the table's top pool (in its better column): where the money would go back to. Nothing while
+  // the data is old (the positions may have changed since), and the page can go stale while open, so the box
+  // is emptied first every time.
+  /* runtext:start */
+  // How long 平常 has been on its side of the loss line (a pool's fixed.run at the time `now`): '' unknown, or when
+  // all that is known is that it has been for under an hour (a run reaching past the hours worked out is at least
+  // that long, and when it began is not known).
+  function runText(r, now = Date.now()) {
+    if (!r || !Number.isFinite(r.since)) return '';
+    const h = Math.max(0, Math.floor((now - r.since) / 3600e3));
+    if (r.at_least && h < 1) return '';
+    const side = r.side === 'below' ? '低于' : '高过', from = r.at_least ? '' : `（${cstMdHm(r.since)} 起）`;
+    if (h < 1) return `平常刚${side}损耗线${from}`;
+    return `平常已连续${r.at_least ? '超过 ' : ' '}${h < 96 ? `${h} 小时` : `${Math.floor(h / 24)} 天`}${side}损耗线${from}`;
+  }
+  /* runtext:end */
+  /* decide:start */
+  // The pools the first lines are about (a pool_compare's), each with the column read: every pool the view's money
+  // is in, as it is held there (none of it staked: the fee column; else staked); with none, the table's top pool
+  // (the pools come best first) read over the whole window, or failing that the top one still filling in, in its
+  // better column (the lower of 平常 and the last 24 hours, as the table judges them).
+  function decideRows(pc) {
+    const pools = pc?.pools ?? [], held = pools.filter((p) => p.here && p.fixed);
+    if (held.length) return held.map((p) => ({ p, mode: p.here === 'unstaked' ? 'fee' : 'staked' }));
+    const ok = (p) => p.fixed && !p.stale, whole = (p) => ok(p) && !p.missing_hours && p.days >= 7;
+    const top = pools.find(whole) ?? pools.find(ok);
+    const lower = (x) => (x?.median == null ? -1 : Math.min(x.median, x.recent ?? x.median));
+    return top ? [{ p: top, mode: lower(top.fixed.fee) > lower(top.fixed.staked) ? 'fee' : 'staked' }] : [];
+  }
+  /* decide:end */
   function drawDecide(s) {
     const box = $('decide');
     box.replaceChildren();
     if (!s || staleHours(s)) return;
     const pc = s.pool_compare, line = pc?.cost_line?.rate;
     if (!Number.isFinite(line) || !pc.fixed_label) return;
-    for (const p of pc.pools ?? []) {
-      if (!p.here || !p.fixed) continue;
-      // The same 平常 the out-of-range line and the phone alert judge by.
-      const { usual, stopped } = putBackRates(p, pc.cost_line), known = Number.isFinite(usual);
+    for (const { p, mode } of decideRows(pc)) {
+      // The same 平常 the out-of-range line and the phone alert judge by (putBackRates); the top pool's better column.
+      const { usual, stopped } = p.here ? putBackRates(p, pc.cost_line) : { usual: p.fixed[mode]?.median, stopped: mode === 'staked' && p.stopped === true };
+      const known = Number.isFinite(usual);
       const [u, l] = known ? ratePair(usual, line) : [stopped ? '已停' : '—', fmtRate(line)];
       const n = el('p');
-      n.append(`${p.chain_label} ${p.label}：平常 `, el('b', known && usual < line ? 'lp-neg' : null, u), ' · 损耗线 ', el('b', null, l), `（都按 ${pc.fixed_label}）`);
+      n.append(p.here ? `${p.chain_label} ${p.label}：平常 ` : `最高的池子（${p.chain_label} ${p.label} ${mode === 'fee' ? '不质押' : '质押'}）：平常 `,
+        el('b', known && usual < line ? 'lp-neg' : null, u), ' · 损耗线 ', el('b', null, l), `（都按 ${pc.fixed_label}）`);
       box.append(n);
+      const run = known ? runText(p.fixed.run?.[mode]) : '';
+      if (run) box.append(el('p', 'lp-run', run));
     }
   }
 
@@ -612,7 +737,7 @@
     if (!s?.curve) { rows.textContent = '—'; setText(hint, ''); return; }
     const now = s.eth_usd;
     const out = !ps.length ? exitBlock(['现在没有仓位'], '', s, [0, 0], ['现价', now])
-      : exitBlock(['现在撤出', s.range_state === 'below' ? '已跌破，全是 ETH' : `ETH ${fmtUsd(now)}`], '', s, poolOut(ps, (p) => p.pool ?? now), ['现价', now]);
+      : exitBlock(['现在撤出', exitBelow(s) ?? `ETH ${fmtUsd(now)}`], '', s, poolOut(ps, (p) => p.pool ?? now), ['现价', now]);
     rows.append(out.node);
     // The row's figure follows the live prices; with old data it would only look live, so it is left out.
     setText(hint, staleHours(s) ? '' : out.hint);
@@ -906,8 +1031,8 @@
       ['投入', (r) => fmtUsd(r.invested_usd)],
       ['现值', (r) => fmtUsd(r.value_usd)],
       ['对比一直持有 USDC', (r) => fmtSigned(r.pnl_usd), (r) => r.pnl_usd],
-      ['对比拿着原币不动', (r) => (r.vs_hodl_usd == null ? '—' : fmtSigned(r.vs_hodl_usd)), (r) => r.vs_hodl_usd],
-      ['盈亏比例', (r) => fmtPct(r.pnl_pct), (r) => r.pnl_pct],
+      ['对比拿着原币不动', (r) => (r.vs_hodl_usd == null || emptied(r) ? '—' : fmtSigned(r.vs_hodl_usd)), (r) => (emptied(r) ? 0 : r.vs_hodl_usd)],
+      ['盈亏比例', (r) => (emptied(r) ? '—' : fmtPct(r.pnl_pct)), (r) => (emptied(r) ? 0 : r.pnl_pct)],
       ['累计利息', (r) => fmtUsd(r.earn_total_usd)],
       ['昨日利息', (r) => fmtUsd(r.yesterday_usd)],
       ['今日至今', (r) => fmtUsd(r.today_usd)],
@@ -1183,6 +1308,11 @@
   const STALE_AFTER = 2 * 3600e3;
   const staleHours = (s) => (s?.as_of && Date.now() - Date.parse(s.as_of) > STALE_AFTER ? Math.floor((Date.now() - Date.parse(s.as_of)) / 3600e3) : 0);
 
+  /* pnlpct:start */
+  // What was made or lost against the money put in, net of what came out: none once more has come out than went in
+  // (its sign would be wrong), as src/run.mjs publishes pnl_pct.
+  const pnlPct = (pnl, invested) => (invested > 0 ? pnl / invested : null);
+  /* pnlpct:end */
   // A summary row as of the live prices; the row itself when there are none, or the data is stale.
   function applyLive(s) {
     if (!live || !s?.curve || staleHours(s)) return s;
@@ -1202,7 +1332,7 @@
     const pnl = value - s.invested_usd;
     // The coins brought in, held as they were: their ETH moves with the live price, the rest stays as published.
     const hodl = s.hodl_eth != null && s.hodl_rest_usd != null ? s.hodl_eth * live.ref + s.hodl_rest_usd : null;
-    return { ...s, eth_usd: live.ref, value_usd: value, pnl_usd: pnl, pnl_pct: s.invested_usd ? pnl / s.invested_usd : null,
+    return { ...s, eth_usd: live.ref, value_usd: value, pnl_usd: pnl, pnl_pct: pnlPct(pnl, s.invested_usd),
       ...(hodl != null ? { hodl_usd: hodl, vs_hodl_usd: value - hodl } : {}), range_state, curve: { ...s.curve, positions: ps }, live_at: live.at };
   }
   const cstDay = (t) => new Date(t + 8 * 3600e3).toISOString().slice(0, 10);
@@ -1362,10 +1492,12 @@
     put('k-apr-label', s?.apr_days && s.apr_days < 7 ? `近 ${s.apr_days} 日年化` : '近 7 日年化');
     put('k-apr', s ? fmtRate(s.apr_7d) : '—');
     put('k-apr-sub', !s ? '—' : s.apr_days ? `${s.apr_days} 天赚 ${fmtUsd(s.earn_7d_usd)}` : '还没有完整的一天');
-    put('k-hodl', s?.vs_hodl_usd != null ? fmtSigned(s.vs_hodl_usd) : '—', s?.vs_hodl_usd);
-    put('k-hodl-sub', s?.hodl_usd != null ? `原币现在值 ${fmtUsd(s.hodl_usd)}` : '—');
+    // A wallet that has sent everything on: only what it made or lost against USDC still means something.
+    const gone = emptied(s);
+    put('k-hodl', s?.vs_hodl_usd != null && !gone ? fmtSigned(s.vs_hodl_usd) : '—', gone ? 0 : s?.vs_hodl_usd);
+    put('k-hodl-sub', gone ? '钱已全部转出' : s?.hodl_usd != null ? `原币现在值 ${fmtUsd(s.hodl_usd)}` : '—');
     put('k-pnl', s ? fmtSigned(s.pnl_usd) : '—', s?.pnl_usd);
-    put('k-pnl-pct', s ? fmtPct(s.pnl_pct) : '—', s?.pnl_pct);
+    put('k-pnl-pct', !s ? '—' : gone ? '钱已全部转出' : fmtPct(s.pnl_pct), gone ? 0 : s?.pnl_pct);
     put('k-invested', s ? `现值 ${fmtUsd(s.value_usd)}，投入 ${fmtUsd(s.invested_usd)}` : '—');
     // In 收益明细: the AERO not sold yet, and what the interest is made of.
     const unsold = s ? (s.aero_held ?? 0) + (s.aero_pending ?? 0) : null;

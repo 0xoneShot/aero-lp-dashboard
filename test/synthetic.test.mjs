@@ -29,13 +29,13 @@ const claim = (gauge, account, id, recipient, amt) => ({ address: gauge, topics:
 const deferredClaim = (account, recipient, amt) => ({ address: GAUGE, topics: [TOPIC.DeferredEmissionsClaimed, pad(account), pad(recipient)], data: num(amt) })
 const deposit = (gauge, user, id) => ({ address: gauge, topics: [TOPIC.GaugeDeposit, pad(EOA), pad(user), num(id)], data: num(1) })
 
-function ledgerOf(txs, { eoas = [], overrides = {}, wallets = WALLETS } = {}) {
+function ledgerOf(txs, { eoas = [], overrides = {}, wallets = WALLETS, seed = [] } = {}) {
   const state = {
     wallets: { a: { openingBlock: 0, openingEth: '0' }, b: { openingBlock: 0, openingEth: '0' } },
     txs: Object.fromEntries(txs.map((t, i) => [t.hash, { block: t.block ?? 100 + i, index: 0, ts: 0, from: t.from ?? EOA, to: t.to ?? EOA, selector: '0x12345678', value: '0', status: 'success', gasCost: '0', eth: {}, ...t, logs: t.logs.map((l, j) => ({ ...l, logIndex: j })) }])),
   }
   const eoa = new Set(eoas)
-  return buildLedger(state, (a) => (eoa.has(a) ? 'eoa' : 'contract'), { gaugeOk: (a) => a === GAUGE, overrides, wallets })
+  return buildLedger(state, (a) => (eoa.has(a) ? 'eoa' : 'contract'), { gaugeOk: (a) => a === GAUGE, overrides, wallets, seed })
 }
 const legsOf = (L, k, hash) => L[k].events.find((e) => e.hash === hash)?.legs.map((g) => `${g.asset === 'ETH' ? 'ETH' : g.asset.slice(0, 6)}:${g.amount}:${g.cls}${g.review ? ':review' : ''}`) ?? []
 
@@ -507,4 +507,69 @@ test('money from another tracked wallet links the two for the cost alerts; money
   assert.deepEqual(flowsOf(N, 'b').map((f) => [f.kind, f.cp]), [['transfer', WA]])
   assert.deepEqual(costLinks(flowsOf(N, 'b'), keyAt, 'b', ['a', 'b'], { present: new Set(['b']) }), ['a'])
   assert.deepEqual(costLinks(flowsOf(N, 'b'), keyAt, 'b', ['a', 'b'], { present: new Set(['a', 'b']) }), [])
+})
+
+import { usdCurve, orderOf, openingDeposit } from '../lib/curve.mjs'
+import { sqrtRatioAtTick, amountsForLiquidity } from '../lib/univ3.mjs'
+
+// An order is known by what its mint took (lib/curve.mjs openingDeposit and orderOf, as src/run.mjs reads them):
+// a 2000–2500 range on Base (WETH first), its liquidity added with both coins at 2200, with ETH only at 1900
+// (the range above the price) or USDC only at 2600 (below it). The records begin after block 60.
+test('an order is read from the opening deposit: a later one-coin top-up, a range from before the records or from outside is none', () => {
+  const tickOf = (P) => Math.round(Math.log(P * 1e-12) / Math.log(1.0001))
+  const lower = Math.round(tickOf(2000) / 100) * 100, upper = Math.round(tickOf(2500) / 100) * 100, L = 4n * 10n ** 14n
+  const dep = (P) => { const d = amountsForLiquidity(sqrtRatioAtTick(tickOf(P)), lower, upper, L); return [d.amount0, d.amount1] }
+  const both = dep(2200), ethOnly = dep(1900), usdOnly = dep(2600), OPEN = 60
+  assert.ok(both.every((x) => x > 0n) && ethOnly[1] === 0n && ethOnly[0] > 0n && usdOnly[0] === 0n && usdOnly[1] > 0n)
+  // What `key` holds as token `id` reads as at the price P.
+  const read = (txs, key, id, P, seed = []) => {
+    const Lg = ledgerOf(txs, { seed })
+    // As src/run.mjs: the wallets' IncreaseLiquidity events after the records begin, with their chain block.
+    const events = WALLETS.flatMap((w) => Lg[w.key].events.filter((e) => e.block > OPEN).flatMap((e) => e.lp.map((x) => ({ ...x, block: e.block, chainBlock: e.block, chain: 'base' }))))
+    const positions = Lg[key].positions.map((p) => ({ ...p, chain: 'base' }))
+    const x = { npm: NPM, tokenId: String(id), chain: 'base', token0: WETH, token1: USDC, tickLower: lower, tickUpper: upper, liquidity: 2n * L, sqrtP: sqrtRatioAtTick(tickOf(P)), fees0: 0n, fees1: 0n, inRange: P >= 2000 && P < 2500 }
+    return orderOf(openingDeposit(x, positions, events), usdCurve(x, { eth: (a) => a === WETH, usd: (a) => a === USDC }))
+  }
+  const mint = (hash, block, from, id, [a0, a1]) => ({ hash, block, from, logs: [nft(ZERO, from, id), increase(id, L, a0, a1)] })
+  const add = (hash, block, from, id, [a0, a1]) => ({ hash, block, from, logs: [increase(id, L, a0, a1)] })
+  // Opened by the holder in the records: with USDC only below the price a buy, with ETH only above it a sell, with
+  // both none; a later ETH-only top-up while the price is below it changes nothing.
+  assert.equal(read([mint('0x01', 100, WB, 1, usdOnly)], 'b', 1, 2600), 'buy')
+  assert.equal(read([mint('0x02', 100, WB, 2, ethOnly)], 'b', 2, 1900), 'sell')
+  assert.equal(read([mint('0x03', 100, WB, 3, both), add('0x04', 200, WB, 3, ethOnly)], 'b', 3, 1900), null)
+  assert.equal(read([mint('0x05', 100, WB, 4, usdOnly), add('0x06', 200, WB, 4, ethOnly)], 'b', 4, 1900), 'buy')
+  // Several additions in the mint's block are one opening.
+  assert.equal(read([mint('0x07', 100, WB, 5, usdOnly), add('0x08', 100, WB, 5, usdOnly)], 'b', 5, 2600), 'buy')
+  assert.equal(read([mint('0x09', 100, WB, 6, usdOnly), add('0x0a', 100, WB, 6, ethOnly)], 'b', 6, 2600), null)
+  // Opened by the other wallet and moved on: still known by its mint.
+  assert.equal(read([mint('0x0b', 100, WA, 7, usdOnly), { hash: '0x0c', block: 150, from: WA, logs: [nft(WA, WB, 7)] }], 'b', 7, 2600), 'buy')
+  assert.equal(read([mint('0x0d', 100, WA, 8, both), { hash: '0x0e', block: 150, from: WA, logs: [nft(WA, WB, 8)] }, add('0x0f', 200, WB, 8, ethOnly)], 'b', 8, 1900), null)
+  // Not known: held before the records (seeded), minted before they begin (even with one coin), or received from an
+  // outside address; an ETH-only top-up of one is never taken for its opening.
+  assert.equal(read([add('0x10', 200, WB, 9, ethOnly)], 'b', 9, 1900, [{ wallet: WB, npm: NPM, tokenId: '9' }]), null)
+  assert.equal(read([mint('0x11', 50, WB, 10, usdOnly), add('0x12', 200, WB, 10, ethOnly)], 'b', 10, 1900), null)
+  assert.equal(read([{ hash: '0x13', block: 100, from: EOA, logs: [nft(EOA, WB, 11)] }, add('0x14', 200, WB, 11, ethOnly)], 'b', 11, 1900), null)
+  assert.equal(read([{ hash: '0x15', block: 100, from: EOA, logs: [nft(EOA, WB, 12)] }], 'b', 12, 2600), null)
+  // Not even a top-up in the very block it arrived in, a transaction after the one that brought it.
+  const arrive = (id) => ({ hash: `0x2${id}`, block: 300, index: 0, from: EOA, logs: [nft(EOA, WB, id)] })
+  assert.equal(read([arrive(13), { ...add('0x30', 300, WB, 13, usdOnly), index: 1 }], 'b', 13, 2600), null)
+  assert.equal(read([arrive(14), { ...add('0x31', 300, WB, 14, ethOnly), index: 1 }], 'b', 14, 1900), null)
+  assert.equal(ledgerOf([arrive(15), { ...add('0x32', 300, WB, 15, usdOnly), index: 1 }]).b.positions.find((p) => p.tokenId === '15')?.born, 300)
+})
+
+// src/run.mjs runs the update when loaded, so what the test above stands in for is held as text (without its
+// comments): it reads each event's own chain block, a position's opening among the wallets it is counted with,
+// and publishes the wallets' own holdings and pnl_pct as the page reads them.
+import fs from 'node:fs'
+test('src/run.mjs reads orders as the test above does, and publishes what the page\'s 仓位 card and pnl % read', () => {
+  const run = fs.readFileSync(new URL('../src/run.mjs', import.meta.url), 'utf8').replace(/(^|\s)\/\/.*$/gm, '')
+  // Whole lines, so a change to what they choose (which wallets a position is looked up among, the books of the
+  // other chains, ETH left out of the rest) has to change this test too.
+  for (const text of ['chainBlock: e.chainBlock, ts: e.ts', 'openingDeposit(x, bookPositions(key), increasesFor(key))', 'order: orderOf(openingOf(k, x), c)',
+    'const bookPositions = (key) => [...ledger[key].positions, ...Object.values(extLedger).flatMap((X) => X[key]?.positions ?? [])]',
+    "const extra = WALLETS.find((w) => w.key === key)?.extra ? 'all' : 'base'",
+    "if (!peerIncreases.has(extra)) peerIncreases.set(extra, (extra === 'all' ? WALLETS : BASE_READY).flatMap((w) => walletData[w.key].lpEvents.filter((y) => y.type === 'increase')))",
+    "const restHeld = (s) => [...Object.entries(s.balances), ...(s.escrow ?? [])].reduce((a, [t, raw]) => a + (hodlKey(t) === 'ETH' ? 0 : valueOf(t, raw, pNowCurve)), 0)",
+    'eth_units_wallet: r6(wallEth), wallet_rest_usd: r2(keys.reduce((a, k) => a + restHeld(snaps[k][head]), 0))', 'pnl_pct: invested > 0 ? r6(pnl / invested) : null'])
+    assert.ok(run.includes(text), `src/run.mjs no longer says: ${text}`)
 })
