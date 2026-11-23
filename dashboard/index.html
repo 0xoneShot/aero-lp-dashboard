@@ -207,7 +207,7 @@
       <summary><span class="lp-sum"><span class="lp-fold-title" id="compare-title">两个钱包对比</span><span class="lp-chev" aria-hidden="true"></span></span></summary>
       <div class="lp-fold-body">
         <div class="lp-tablewrap"><table class="lp-compare"><thead id="compare-head"></thead><tbody id="compare-body"></tbody></table></div>
-        <p class="lp-note">现值、盈亏和成本价按实时价格，利息按整点数据。</p>
+        <p class="lp-note">现值、盈亏和成本价按实时价格，利息大约每 10 分钟更新一次。</p>
       </div>
     </details>
 
@@ -280,7 +280,8 @@
         <div>
           <h3 class="lp-subhead">更新</h3>
           <ul>
-            <li>数据全部来自 Base 和以太坊链上（以太坊从 2026-10-31 起），价格都按 Base 上的池子算。利息和投入大约每小时更新一次；ETH 价格和跟着它变的数字（现值、盈亏、仓位、撤出成本价）每 15 秒直接从链上读一次。时间都是北京时间，按北京时间切日。</li>
+            <li>数据全部来自 Base 和以太坊链上（以太坊从 2026-10-31 起），价格都按 Base 上的池子算。持仓（有哪些仓位、投了多少钱）和利息大约每 10 分钟更新一次，换了区间、加了钱或撤了钱，一般 10 来分钟内就能看到。ETH 价格和跟着它变的数字（现值、盈亏、在不在区间、撤出成本价）每 15 秒直接从链上读一次。时间都是北京时间，按北京时间切日。</li>
+            <li>池子的利息对比和手机提醒每小时一次（整点更新），比页面慢：刚挂的新区间，手机要等整点更新看到它之后才开始提醒，最长一个多小时。</li>
             <li>数据超过 2 小时没更新时，标题下面那行变成红字，页面也不再按实时价格重算。</li>
           </ul>
         </div>
@@ -291,7 +292,7 @@
             <li>表格固定按 Aero 的 ±3.5% 宽度、把你全部的钱放进去算，已算上放进去后被摊薄的部分，换了仓位或隔几天再看都能直接比。区间越窄年化越高：宽度减半，年化大约翻倍；你实际的年化还要看自己仓位的宽度。</li>
             <li>平常：近 7 天每天年化的中位数。大字是平常和 24 小时里较低的那个：资金涌进来、收益被摊薄时马上看得出，某一天暴涨也不会被当真。都假设仓位一直在区间正中，实际还要看在区间内的时间。</li>
             <li>损耗线：按近 7 天 ETH 的波动，±3.5% 的仓位在区间里时，平均每年比拿着原币不动少赚多少；表格里的年化要高过它才划算。平常和它都按 ±3.5% 算，可以直接比。没算涨跌方向，看涨 ETH 时门槛更高。</li>
-            <li>出区间多久：从整点更新第一次看到仓位出区间算起，满 24 小时手机会提醒。那时平常高过损耗线才写按现价重挂的上下沿：和原来一样宽，对齐池子的刻度；要换多少只算撤出来的仓位，奖励不动。平常低于损耗线写“放回去不划算”。</li>
+            <li>出区间多久：从每小时的整点更新第一次看到仓位出区间算起（刚出区间的头一个小时，这一行可能还没出现），满 24 小时手机会提醒。那时平常高过损耗线才写按现价重挂的上下沿：和原来一样宽，对齐池子的刻度；要换多少只算撤出来的仓位，奖励不动。平常低于损耗线写“放回去不划算”。</li>
             <li>“对你最划算的”、每天多挣多少和换池子的手机提醒按你仓位的宽度算，所以和表格里的数不一样。差 30 个百分点以内算差不多：你现在的收益和最高的差不多就不动；要动的话，差不多的里面先看钱已经在的，再看看板能追踪的，再看扣掉成本后一周多挣多少。成本是估算：两边的 gas、一半的钱兑换（0.05%）、跨链（0.05%）。</li>
             <li>换池子的手机提醒：某个钱包的去处数据满 7 天，平常和 24 小时都比现在的仓位高 30 个百分点以上，稳定领先（近 7 天较差的日子也比现在高，最近两个 Aero 周都领先），3 天内回本，提醒一次；看合计时不提醒，按各个钱包提醒。</li>
           </ul>
@@ -1101,7 +1102,9 @@
   const CHAIN_NAMES = { eth: '以太坊' };
   const EXPLORERS = { base: 'https://basescan.org', eth: 'https://etherscan.io' };
   const LIVE_EVERY = 15000, LIVE_STALE = 120000;
-  let live = null, liveFailed = false, liveBusy = null, dataFailed = false;
+  // noNews: the data (its as_of) a refresh brought nothing newer than, and until when the header says so (the
+  // button below): only beside that very data, so it goes the moment newer data is drawn.
+  let live = null, liveFailed = false, liveBusy = null, dataFailed = false, noNews = null;
   const rpcFirst = {};
   async function rpcBatch(chain, calls) {
     const urls = RPCS[chain] ?? RPCS.base;
@@ -1165,13 +1168,17 @@
   const refreshBtn = $('lp-refresh');
   refreshBtn.addEventListener('click', async () => {
     refreshBtn.disabled = true; refreshBtn.textContent = '刷新中…';
+    const asOf = () => { const S = dash.data('summary'); return S.status === 'ok' ? S.data[0]?.as_of ?? null : null; };
+    const before = asOf();
     try {
       const [ok] = await Promise.all([dash.refresh?.(), readLive()]);
       dataFailed = ok === false;
+      // Asked for and nothing newer came: say for a while how often the data is updated, rather than nothing.
+      noNews = ok === true && before && asOf() === before ? { asOf: before, until: Date.now() + 30e3 } : null;
     } finally { refreshBtn.disabled = false; refreshBtn.textContent = '刷新'; drawHead(current()); }
   });
 
-  // Data older than this means the hourly update has been failing: the published positions may no
+  // Data older than this means the updates have been failing: the published positions may no
   // longer be what the wallets hold, so the page stops redoing them at live prices and says so.
   const STALE_AFTER = 2 * 3600e3;
   const staleHours = (s) => (s?.as_of && Date.now() - Date.parse(s.as_of) > STALE_AFTER ? Math.floor((Date.now() - Date.parse(s.as_of)) / 3600e3) : 0);
@@ -1322,7 +1329,7 @@
     const failed = !s || hours ? '' : time ? (liveFailed ? '（最新一次没取到）' : live?.partial ? '（有的池子没取到）' : '') : liveFailed ? '实时价格暂时取不到' : '';
     const note = $('lp-live');
     note.className = failed || dataFailed ? 'lp-live-warn' : '';
-    setText(note, (!s || hours ? '' : time ? ` · 价格实时 ${time}${failed}` : failed ? ` · ${failed}` : '') + (dataFailed ? ' · 刷新没成功，稍后再试' : ''));
+    setText(note, (!s || hours ? '' : time ? ` · 价格实时 ${time}${failed}` : failed ? ` · ${failed}` : '') + (dataFailed ? ' · 刷新没成功，稍后再试' : s && !hours && noNews && s.as_of === noNews.asOf && Date.now() < noNews.until ? ' · 还没有新数据，大约每 10 分钟更新一次' : ''));
     const unpriced = $('warn-unpriced');
     unpriced.hidden = !bad.length;
     setText(unpriced, bad.length ? `有代币没有价格：${bad.map((t) => t.symbol ?? `未知代币（${t.address.slice(0, 6)}…${t.address.slice(-4)}）`).join('、')}，按 $0 算了，现值、盈亏和利息不完整。` : '');

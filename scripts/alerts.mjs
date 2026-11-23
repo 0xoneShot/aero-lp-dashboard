@@ -4,13 +4,18 @@
 // keeps the state up to date. `--test` sends one test message.
 // With UPDATE_OK=false (the update or its checks failed) it alerts from the last good summary, kept in
 // data/cache/last-summary.json, at live pool prices read from each chain's public RPCs (pool contracts only).
-// Only counts are printed: the hourly job's logs are public, and the alerts name the wallets.
+// The alerts name the wallets, so their text is never printed: on one's own machine only counts are, and in the
+// job, whose log is public, only whether everything went (below).
 import fs from 'node:fs'
 import { evaluate, withLivePrices } from '../lib/alerts.mjs'
+import { PUBLIC_LOG, padFor, alertsLine, whyNotSent } from '../lib/public.mjs'
 
 // The step has 3 minutes (refresh.yml): sending stops a little before, and what is left waits for the next
 // run, rather than the step being stopped before the state is written (and everything sent again).
 const started = Date.now(), SEND_UNTIL = started + 140_000
+// In the job, how long the step takes whatever it sent (lib/public.mjs padFor): a message takes a few tenths
+// of a second, so this covers dozens.
+const PAD_SECONDS = 20
 const topic = process.env.NTFY_TOPIC?.trim()
 const STATE = 'data/cache/alerts.json', LAST = 'data/cache/last-summary.json', SITE = 'https://0xoneshot.github.io/aero-lp-dashboard/'
 const RPCS = {
@@ -103,17 +108,29 @@ try {
   tracked = new Set([...c.BASE_WALLETS, ...c.EXTRA_WALLETS, ...c.PAUSED_WALLETS].map((w) => w.key))
 } catch { console.log('alerts: the tracked wallets could not be read; alerting on the data alone') }
 const { messages, state } = evaluate(summary, prev, { lastGood: !updated, noPrices: !live, tracked })
-let sent = 0, left = 0
+let sent = 0, left = 0, why = ''
 if (topic) {
   for (const m of messages) {
     if (Date.now() > SEND_UNTIL) { if (prev && m.key in prev) state[m.key] = prev[m.key]; left++; continue }
     try { await send(m); sent++ } catch (e) {
       // Keep the previous state for what was not sent, so the next run tries again.
       if (prev && m.key in prev) state[m.key] = prev[m.key]
-      console.log(`alerts: one message failed (${e.message})`)
+      // Not said as it happens in the job's public log (below): the first one's reason goes into the line at
+      // the end, and only the first (a list of reasons would say there were at least so many messages).
+      why ||= whyNotSent(e)
+      if (!PUBLIC_LOG) console.log(`alerts: one message failed (${e.message})`)
     }
   }
 }
 fs.mkdirSync('data/cache', { recursive: true })
 fs.writeFileSync(STATE, JSON.stringify(state))
-console.log(`${updated ? '' : '(from the last good data) '}${topic ? `alerts: ${sent} of ${messages.length} sent${left ? ` (${left} left for the next run: out of time)` : ''}` : `alerts: off (${messages.length} would have been sent)`}`)
+// The job's log is public (lib/public.mjs, which needs none of the configuration the alerts must do without,
+// above), and so is when each line was printed. How many alerts an hour had, or that it had any, tells when
+// a range was crossed: there nothing is said while messages go out, the step ends on a padded time whether or
+// not anything was sent, and its one line says only whether everything went (and, when not, why the first
+// message that did not go did not, in lib/public.mjs whyNotSent's words: ntfy's status, a timeout, or that it
+// was not reached, nothing of the wallets). Not hidden, and said in the README: a line that not everything
+// went says the hour had something to send, and a step that a slow ntfy carries past its padded time (a
+// message waits 15 s at most) says it likely had more than one.
+if (PUBLIC_LOG) await new Promise((r) => setTimeout(r, padFor(Date.now() - started, PAD_SECONDS)))
+console.log(alertsLine({ topic, sent, total: messages.length, left, why, updated }))

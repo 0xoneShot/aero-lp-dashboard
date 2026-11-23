@@ -13,23 +13,31 @@ import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
 import { hodlHeld } from '../lib/hodl.mjs'
 import { snapshot } from '../lib/snapshot.mjs'
 import { pricesAt, usdOf, savePrices } from '../lib/prices.mjs'
-import { samplePools, blockFinder, poolStats, stayShare, ethVol, rangeLoss } from '../lib/pools.mjs'
-import { sampleStockPools, stockRows } from '../lib/stocks.mjs'
+import { samplePools, readPoolCache, blockFinder, poolStats, stayShare, ethVol, rangeLoss } from '../lib/pools.mjs'
+import { sampleStockPools, readStockCache, stockRows } from '../lib/stocks.mjs'
 import { switchTo } from '../lib/switch.mjs'
 import { overrideLookup, unmatchedOverrides } from '../lib/overrides.mjs'
 import { costSourcesFor } from '../lib/alerts.mjs'
 import { npmAbi, clPoolAbi, factoryAbi, erc20Abi, gaugeAbi, TOPIC } from '../lib/abi.mjs'
 import { tryRead } from '../lib/errors.mjs'
+import { PUBLIC_LOG } from '../lib/public.mjs'
 import { WALLETS, BASE_WALLETS, GROUPS, SCAN_FROM_BLOCK, START_DAY, TOKENS, ALL_TOKENS, CHAINS, COMPARE_CHAINS, WETH, ZERO, LABELS, GAUGE_IMPLS, OVERRIDES_FILE, PRICE, EXTRA_WALLETS, PAUSED_WALLETS } from '../lib/config.mjs'
 import { daysBetween, cstDay, cstDayStartTs, prevDay, createTimeline } from '../lib/time.mjs'
+import { headOf } from '../lib/fresh.mjs'
 import { priceAtTick, priceFromSqrt, amountsForLiquidity } from '../lib/univ3.mjs'
 
 const OUT = path.resolve('out')
-// While an address added on the page is tracked (paused this run or not), the run's totals in the public log
-// say no number: one hour's against the next would tell what it alone did (lib/scan.mjs says nothing of
-// its scan either).
+// A fresh pass (src/update.mjs, AERO_FRESH=1) is for the page alone: a chain whose safe head is minutes old
+// (lib/config.mjs freshSecs: Ethereum) is read to a little behind its latest block instead, the pools are
+// compared from the samples already kept, and nothing it reads is kept (src/update.mjs puts the caches back
+// as they were). So what it shows is minutes newer than a pass that keeps its reads may be, and a reorg
+// costs at most one published view, which the next pass puts right.
+const FRESH = process.env.AERO_FRESH === '1'
+// In the job's public log the run's totals say no number: one run's against the next would tell how much a
+// tracked wallet did in between, and when (lib/public.mjs PUBLIC_LOG; lib/scan.mjs says nothing of its scan
+// either). So too while an address added on the page is tracked (paused this run or not), wherever it runs.
 const ADDED_ANY = EXTRA_WALLETS.length > 0 || PAUSED_WALLETS.length > 0
-const tally = (n) => (ADDED_ANY ? '…' : n)
+const tally = (n) => (ADDED_ANY || PUBLIC_LOG ? '…' : n)
 const SNAP_CACHE = path.resolve('data/cache/snapshots.json')
 const CODE_CACHE = path.resolve('data/cache/code.json')
 const LINKS_CACHE = path.resolve('data/cache/cost-links.json')
@@ -85,7 +93,13 @@ function reviveSnap(s) {
 }
 
 // ---------- scan and classify ----------
-const baseHead = Number((await client.getBlock({ blockTag: 'safe' })).number)
+// Every chain's head (lib/fresh.mjs headOf), all read before anything is scanned: each then depends on when
+// the pass began and on nothing a wallet did. Read after another chain's scan, a head would tell how long
+// that scan took (a fresh pass's Ethereum head moves every twelve seconds), and that is longer when a wallet
+// has new transactions to be read.
+const heads = {}
+for (const c of Object.values(CHAINS)) heads[c.key] = await headOf(clientOf(c), c, FRESH)
+const baseHead = heads.base
 const state = await scan({ head: baseHead })
 // Block times from the chain (lib/time.mjs): exact across a change of block time.
 const timeline = await createTimeline(client, baseHead, path.join('data', 'cache', 'timeline.json'))
@@ -96,14 +110,13 @@ const tsOfBlock = timeline.tsOf
 for (const t of Object.values(state.txs)) t.ts = tsOfBlock(t.block)
 log(`scanned to ${state.scannedTo}, ${tally(Object.keys(state.txs).length)} transactions`)
 
-// The other chains, each to its own safe head. Everything is valued at one moment on every chain, so
+// The other chains, each to its own head. Everything is valued at one moment on every chain, so
 // Base's head is held back to the earliest of their heads.
 const ext = {} // chain key -> { chain, client, state, timeline, head, headTs }
 for (const c of Object.values(CHAINS).filter((x) => x.key !== 'base')) {
   // A chain starting before the first reported day would bring in holdings no day accounts for.
   if (c.startTs < cstDayStartTs(START_DAY)) throw new Error(`${c.key}: its start (chains.${c.key}.startTs) is before ${START_DAY} 00:00 Beijing; set chains.${c.key}.scanFromBlock and startTs at or after it`)
-  const cl = clientOf(c)
-  const h = Number((await cl.getBlock({ blockTag: c.safeTag })).number)
+  const cl = clientOf(c), h = heads[c.key]
   const st = await scan({ head: h, chain: c })
   const tl = await createTimeline(cl, h, path.resolve(c.files.timeline), { formula: c.formulaTs })
   await tl.ensure([c.scanFromBlock, ...Object.values(st.txs).map((t) => t.block)])
@@ -437,13 +450,14 @@ const prices = {}
 const eventBlocks = WALLETS.flatMap((w) => ledger[w.key].events.map((e) => e.block)).filter((b) => b > openingBlock && b <= head)
 await pmap([...new Set([...blocks, ...eventBlocks, ...Object.values(startBase).filter((b) => b <= head)])], 4, async (b) => { prices[b] = await pricesAt(b) })
 await savePrices(head) // kept now too: a stopped run keeps what it read (src/update.mjs)
-log(`valued ${blocks.length} day-end blocks and ${tally(new Set(eventBlocks).size)} event blocks`)
+log(`valued ${tally(blocks.length)} day-end blocks and ${tally(new Set(eventBlocks).size)} event blocks`)
 
 // Hourly samples of every gauged WETH/USDC pool on the chains (lib/pools.mjs), for the page's pool
 // card. Only pool contracts are read. A chain that cannot be read keeps its earlier samples, and a
 // first run that cannot fill the window in its time budget leaves the rest to the next runs.
-let poolCache = null
-try {
+// A fresh pass samples nothing: it compares the pools from the samples the last hourly pass kept.
+let poolCache = FRESH ? readPoolCache(POOLS_FILE) : null
+if (!FRESH) try {
   const atBase = async (t) => { const b = await timeline.blockBefore(t + 1); return { block: b, ts: tsOfBlock(b) } }
   // The chains only compared are read to a little behind their latest block (their own time).
   const others = await Promise.all(Object.values(COMPARE_CHAINS).map(async (c) => {
@@ -469,8 +483,8 @@ try {
 }
 // The stock/USDC pools, only listed beside those (lib/stocks.mjs). The reference prices of the hours are those
 // just read for the pools above, and a failure here costs nothing but the list.
-let stockCache = null
-try {
+let stockCache = FRESH ? readStockCache(STOCKS_FILE) : null
+if (!FRESH) try {
   const r = await sampleStockPools({
     client, chain: CHAINS.base, head, headTs: tsOfBlock(head), file: STOCKS_FILE, pmap, log, deadline: Math.min(Date.now() + 5 * 60e3, SOFT_END),
     blockAt: async (t) => { const b = await timeline.blockBefore(t + 1); return { block: b, ts: tsOfBlock(b) } },
@@ -845,7 +859,8 @@ function ethPrices(keys, invested, interest, value) {
   // At the reference price, except a position against another coin at its own pool's: the coin's feed can lag.
   const curveNow = c.fixedUsd + c.ethUnits * now + sum(c.curves, (x) => { const [e, u] = c.amounts(x, x.quote ? x.pool : now); return e * now + u })
   // A view with an address added on the page says no amount: the public log says nothing of what those hold.
-  if (Math.abs(curveNow - value) > 1) log(keys.every((k) => BASE_KEYS.includes(k)) ? `ETH curve check off by ${(curveNow - value).toFixed(2)} USD` : 'ETH curve check off in a view with an address added on the page')
+  // Nor of what the configured wallets hold: there (lib/public.mjs) only that the check is off.
+  if (Math.abs(curveNow - value) > 1) log(!keys.every((k) => BASE_KEYS.includes(k)) ? 'ETH curve check off in a view with an address added on the page' : PUBLIC_LOG ? 'ETH curve check off' : `ETH curve check off by ${(curveNow - value).toFixed(2)} USD`)
   const p0 = c.lowest != null ? Math.min(c.lowest * 0.999, now) : now
   const eth = c.ethAt(p0), rest = c.value(p0) - eth * p0
   // 0: what is held besides ETH already covers it; null: too little ETH for a price to mean anything.
@@ -946,6 +961,11 @@ const COMPARE_RATIO = 1.035 / 0.965, COMPARE_LABEL = '±3.5%'
 // Dollars per unit of liquidity of a centred range scale with 1 - ratio^(-1/4) (lib/pools.mjs dollarsPerL).
 const perLScale = (ratio) => 1 - ratio ** -0.25
 const DEFAULT_RATIO = COMPARE_RATIO
+// The moment the pools' rates are read as of. A fresh pass samples nothing, so it reads the kept samples over
+// the very windows the pass that took them did (that pass's Base head, kept with the gas price): what the
+// page says of a pool (平常, 损耗线) is then what the phone was told that hour, and does not drift from one
+// quick refresh to the next. How old the samples are is still counted from now.
+const statsTs = () => (FRESH && poolCache?.gas?.base?.ts) || tsOfBlock(head)
 function poolCompare(keys, myUsd) {
   if (!poolCache) return null
   // Only WETH/USDC pools are compared: money in a WETH/cbBTC position counts like money outside any pool.
@@ -957,11 +977,11 @@ function poolCompare(keys, myUsd) {
     const k = `${x.chain ?? 'base'}:${lc(x.pool)}`, was = inPool.get(k) ?? { staked: 0, all: 0 }
     inPool.set(k, { staked: was.staked + (x.staked ? usd : 0), all: was.all + usd })
   }
-  const nowTs = tsOfBlock(head)
+  const nowTs = tsOfBlock(head), asOf = statsTs()
   const rate = (x) => (x == null || !Number.isFinite(x) ? null : r6(x))
   const pools = Object.entries(poolCache.pools).map(([k, e]) => {
     const mine = inPool.get(k)
-    const opts = { myUsd: Math.max(0, myUsd), inStakedUsd: mine?.staked ?? 0, inPoolUsd: mine?.all ?? 0, nowTs }
+    const opts = { myUsd: Math.max(0, myUsd), inStakedUsd: mine?.staked ?? 0, inPoolUsd: mine?.all ?? 0, nowTs: asOf }
     const st = poolStats(e, { ratio, ...opts })
     // At the fixed width the money already in the pool is liquidity at its own width: in dollars of a
     // ±3.5% range it is worth less (a wide position holds less liquidity per dollar), so less of it is netted off.
@@ -975,9 +995,9 @@ function poolCompare(keys, myUsd) {
     return {
       chain: e.chain, chain_label: ch?.label ?? e.chain, label: `CL${e.tickSpacing}`, pool_address: e.address, here: mine ? (mine.staked > 0 ? 'staked' : 'unstaked') : null,
       tvl_usd: r2(units(e.tvl.weth, 18) * pNow.eth + units(e.tvl.usdc, 6)), staked_share: rate(st.last?.stakedShare), missing_hours: e.missing ?? null,
-      days: st.days, last_sample: st.last ? cstTime(st.last.ts) : null, age_h: ageH, stale: ageH == null || ageH > 3, stopped, in_range_72h: rate(stayShare(e, ratio, { nowTs })),
+      days: st.days, last_sample: st.last ? cstTime(st.last.ts) : null, age_h: ageH, stale: ageH == null || ageH > 3, stopped, in_range_72h: rate(stayShare(e, ratio, { nowTs: asOf })),
       staked: staked(st), fee: fee(st),
-      fixed: { staked: staked(fx), fee: fee(fx), in_range_72h: rate(stayShare(e, COMPARE_RATIO, { nowTs })) },
+      fixed: { staked: staked(fx), fee: fee(fx), in_range_72h: rate(stayShare(e, COMPARE_RATIO, { nowTs: asOf })) },
       daily: st.daily.map((d) => ({ day: d.day, staked: rate(d.staked), fee: rate(d.fee) })),
       // A week with under a day of data (the week under way at its start, or before a pool's gauge paid) says nothing yet.
       weeks: st.weeks.filter((w) => w.hours >= 24).map((w) => ({ start: w.start, hours: w.hours, staked: rate(w.staked), fee: rate(w.fee), emitted_day: Math.round(w.emitted_day) })),
@@ -994,7 +1014,7 @@ function poolCompare(keys, myUsd) {
   // What ETH's swings cost a range of the table's width kept centred (lib/pools.mjs rangeLoss): the bar a
   // rate in the table has to clear before the direction of the price is even counted. The median over the
   // pools of their 7-day volatility: all of them read the same reference price, so any would do.
-  const vols = Object.values(poolCache.pools).map((e) => ethVol(e, { days: 7, nowTs })).filter((v) => v != null)
+  const vols = Object.values(poolCache.pools).map((e) => ethVol(e, { days: 7, nowTs: asOf })).filter((v) => v != null)
   const vol = vols.length ? vols.sort((a, b) => a - b)[vols.length >> 1] : null
   const cost_line = vol == null ? null : { days: 7, vol: r6(vol), rate: r6(rangeLoss(vol, COMPARE_RATIO)) }
   // The pick sees the pools in the order it always did (by its own width's numbers), so ties fall as before.
@@ -1010,7 +1030,7 @@ function poolCompare(keys, myUsd) {
 // and the same money as their pools above, with the top of those to read them against.
 function stockList(pc, myUsd) {
   if (!stockCache) return null
-  const ratio = COMPARE_RATIO, rows = stockRows(stockCache, { ratio, myUsd, nowTs: tsOfBlock(head) })
+  const ratio = COMPARE_RATIO, rows = stockRows(stockCache, { ratio, myUsd, nowTs: statsTs(), ageTs: tsOfBlock(head) })
   if (!rows.length) return null
   const lower = (x) => (x?.median == null ? null : Math.min(x.median, x.recent ?? x.median))
   const top = pc?.pools.find((p) => !p.stale && (lower(p.fixed.staked) != null || lower(p.fixed.fee) != null))
@@ -1219,5 +1239,5 @@ writeJson(path.join(OUT, 'positions.json'), positions)
 writeJson(path.join(OUT, 'holdings.json'), holdings)
 writeJson(path.join(OUT, 'events.json'), events)
 writeJson(path.join(OUT, 'flows.json'), WALLETS.flatMap((w) => walletData[w.key].flows.map((f) => ({ scope: w.key, ...f, amount: units(f.amount, decOf(f.asset)), asset: symOf(f.asset) }))))
-// Only counts are printed: the hourly job's logs are public.
-log(`wrote out/ as of block ${head} (${cstTime(tsOfBlock(head))} CST): ${tally(daily.length)} daily rows, ${tally(events.length)} ledger rows, ${summary.find((s) => s.scope === 'total')?.to_check_count ?? 0} to check, ${tally(Object.keys(unpricedSymbols).length)} tokens without a price`)
+// No amounts, only counts; in the job's public log not the counts either (tally).
+log(`wrote out/ as of block ${head} (${cstTime(tsOfBlock(head))} CST): ${tally(daily.length)} daily rows, ${tally(events.length)} ledger rows, ${tally(summary.find((s) => s.scope === 'total')?.to_check_count ?? 0)} to check, ${tally(Object.keys(unpricedSymbols).length)} tokens without a price`)

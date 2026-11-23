@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { BASE_WALLETS } from '../lib/config.mjs'
 import { recentre, splitShare, usdCurve, amountsAtUsd } from '../lib/curve.mjs'
+import { hushed } from '../lib/public.mjs'
 
 // Same maths as dashboard/index.html.
 const amountsAt = (p, P) => {
@@ -25,7 +26,8 @@ const file = 'out/summary.json'
 // The configured wallets and their total: the rows that hold back publishing when they are wrong. An
 // address added on the page, and the views holding one, never do (and their figures stay out of the log).
 const gating = new Set([...BASE_WALLETS.map((w) => w.key), 'total'])
-test('the published ETH curve gives the same value and cost prices', { skip: !fs.existsSync(file) }, () => {
+// hushed (lib/public.mjs): in the job's public log a failure says which check, not a wallet's figures or bounds.
+test('the published ETH curve gives the same value and cost prices', { skip: !fs.existsSync(file) }, hushed(() => {
   for (const s of JSON.parse(fs.readFileSync(file, 'utf8')).filter((r) => gating.has(r.scope))) {
     const c = s.curve
     assert.ok(c && Array.isArray(c.positions), `${s.scope}: curve`)
@@ -53,7 +55,7 @@ test('the published ETH curve gives the same value and cost prices', { skip: !fs
     if (s.range_state === 'part') assert.ok(inside > 0 && inside < c.positions.length, `${s.scope}: part`)
     if (['below', 'above', 'gap'].includes(s.range_state)) assert.equal(inside, 0, `${s.scope}: ${s.range_state}`)
   }
-})
+}))
 
 // A range put back around the price, as wide as it was (the day-out alert, lib/alerts.mjs). Invented ranges:
 // 400 ticks on a spacing of 100 with WETH first (Base's order), and 300 on 50 with USDC first (inverted).

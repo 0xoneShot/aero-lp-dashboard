@@ -5,6 +5,7 @@
   "scripts": {
     "update": "node src/update.mjs",
     "test": "node --test test/*.test.mjs",
+    "test:e2e": "node --test test/e2e/*.test.mjs",
     "build:site": "node scripts/build-site.mjs",
     "serve": "node scripts/serve.mjs",
     "test:local": "node --test test/local/*.test.mjs"

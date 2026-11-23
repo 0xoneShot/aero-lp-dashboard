@@ -159,15 +159,23 @@ test('data the hourly update has not refreshed for a while is reported once, and
   const at = Date.parse('2026-10-30T04:00:00Z')
   const stamped = (r) => ({ ...r, as_of: '2026-10-30T04:00:00.000Z', as_of_cst: '2026-10-30 12:00' })
   let prev = evaluate([stamped(row(2200)), total], null, { now: at }).state
-  const kinds = []
+  const kinds = [], said = []
   for (const h of [1, 2.5, 3, 5]) {
     const r = evaluate([stamped(row(2200)), total], prev, { now: at + h * 3600e3 })
-    kinds.push(r.messages.map((m) => m.kind)); prev = r.state
+    kinds.push(r.messages.map((m) => m.kind)); said.push(...r.messages); prev = r.state
   }
   assert.deepEqual(kinds, [[], ['stale'], [], []])
   const back = evaluate([{ ...stamped(row(2200)), as_of: new Date(at + 5 * 3600e3).toISOString() }, total], prev, { now: at + 5 * 3600e3 + 60e3 })
   assert.deepEqual(back.messages.map((m) => m.kind), ['fresh'])
   assert.ok(STALE_MS === 2 * 3600e3)
+  // It speaks for the alerts' own data (the hourly update's), not for the page, which a fresh pass may have
+  // kept newer: it names the hourly update, and sends the reader to the page's own time.
+  assert.equal(said[0].title, '整点更新 2 小时没成功了')
+  assert.match(said[0].message, /^手机提醒用的数据停在 2026-10-30 12:00（北京时间）。/)
+  assert.ok(said[0].message.endsWith('看板有没有跟着停，看它顶上“数据截至”或“数据停在”后面的时间。'), said[0].message)
+  assert.doesNotMatch(said[0].message, /看板上的现值|先别按它做决定/)
+  assert.equal(back.messages[0].title, '整点更新恢复了')
+  assert.match(back.messages[0].message, /^手机提醒用的数据已更新到 /)
 })
 
 // A 2000–2500 range holding exactly 1 ETH below it, $2,300 put in and nothing earned yet.

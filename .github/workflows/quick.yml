@@ -1,0 +1,43 @@
+# Between the hourly runs, starts a quick refresh every ten minutes (refresh.yml, mode quick: only a fresh
+# pass for the page), so what a wallet did shows within minutes instead of at the next hour. Every full
+# refresh starts this (refresh.yml's first step). The refreshes come at fixed times whatever the wallets do,
+# so when one runs tells nothing about them. The job holds a runner while it waits (the repository is
+# public); if it dies, only that hour's quick refreshes are lost: the hourly chain is tick.yml's alone.
+name: Quick refreshes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+# A newer one (the next hour's, or another full refresh's) takes over from one still waiting.
+concurrency:
+  group: quick
+  cancel-in-progress: true
+
+jobs:
+  quick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 56
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      EVERY: 600 # seconds from one refresh to the next
+      TIMES: 5 # the next hourly run comes 59 minutes after the one that started this
+    steps:
+      - name: Start a quick refresh every ten minutes
+        run: |
+          start=$(date +%s)
+          for i in $(seq 1 "$TIMES"); do
+            wait=$(( start + i * EVERY - $(date +%s) ))
+            if [ "$wait" -gt 0 ]; then sleep "$wait"; fi
+            # Never behind another refresh: only one run can wait in the refresh queue, and a quick one queued
+            # there would push a waiting hourly run out of it.
+            busy=$(timeout 60 gh run list --workflow refresh.yml --limit 20 --json status --jq '[.[] | select(.status != "completed")] | length' || echo unknown)
+            if [ "$busy" = 0 ]; then
+              timeout 60 gh workflow run refresh.yml --ref main -f mode=quick || echo "::warning::a quick refresh could not be started"
+            else
+              echo "a refresh is under way (or could not be asked about): none started"
+            fi
+          done

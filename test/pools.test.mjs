@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { dollarsPerL, poolStats, samplePools, blockFinder, ethVol, rangeLoss } from '../lib/pools.mjs'
+import { dollarsPerL, poolStats, samplePools, readPoolCache, SAMPLE_VERSION, blockFinder, ethVol, rangeLoss } from '../lib/pools.mjs'
 import { usdCurve, amountsAtUsd } from '../lib/curve.mjs'
 import { evaluate } from '../lib/alerts.mjs'
 
@@ -192,8 +192,17 @@ test('the sampler fills missing hours newest first, keeps pools apart, and recor
   const blockAt = async (t) => ({ block: (t - T0) / 2, ts: t })
   const pmap = async (xs, n, f) => { for (const x of xs) await f(x) }
   const run = (maxNew) => samplePools({ chains: [{ chain, client: fakeClient, head: 90000, headTs, blockAt }], priceAt: async () => ({ aero: 0.5, eth: 2400 }), file, maxNew, pmap })
+  // Before anything was sampled there is nothing to read.
+  assert.equal(readPoolCache(file), null)
   let { cache, errors } = await run(10)
   assert.deepEqual(errors, [])
+  // The file holds what the sampler returned: a pass that samples nothing compares the pools from it.
+  assert.deepEqual(readPoolCache(file), JSON.parse(JSON.stringify(cache)))
+  const other = path.join(dir, 'other.json')
+  fs.writeFileSync(other, JSON.stringify({ ...cache, version: SAMPLE_VERSION - 1 }))
+  assert.equal(readPoolCache(other), null) // another version's samples are not read as this one's
+  fs.writeFileSync(other, '{ cut off')
+  assert.equal(readPoolCache(other), null)
   const e = cache.pools['base:0x00000000000000000000000000000000000000aa']
   assert.equal(e.tickSpacing, 100)
   assert.equal(Object.keys(e.samples).length, 10)
@@ -208,6 +217,9 @@ test('the sampler fills missing hours newest first, keeps pools apart, and recor
   await run(10000)
   assert.equal(reads, before) // nothing asked twice, not even the hours before the pool existed
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).gas.base.wei, String(5n * 10n ** 9n))
+  // Kept with the moment the sampling pass read to: a pass that samples nothing reads the rates as of then
+  // (src/run.mjs statsTs), through the same reader.
+  assert.equal(readPoolCache(file).gas.base.ts, headTs)
   assert.equal(cache.pools['base:0x00000000000000000000000000000000000000aa'].missing, 0)
   const key = 'base:0x00000000000000000000000000000000000000aa', newest = String(headTs)
   // A node that fails finding the pools: the error is reported and every sample is kept.

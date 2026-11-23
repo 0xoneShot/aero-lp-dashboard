@@ -227,7 +227,7 @@
       show(view, fresh)
       return true
     }
-    // Pick up the hourly refresh soon after it lands, and at once when the page comes back into view.
+    // Pick up each refresh (every ten minutes or so) soon after it lands, and at once when the page comes back into view.
     // Resolves to false when the data could not be fetched.
     async function reload() {
       const list = current, my = seq
@@ -297,7 +297,7 @@
   <p id="site-req" class="site-req" role="status" aria-live="polite" hidden></p>
 <!-- DASHBOARD -->
 </div>
-<p class="site-foot">数据全部来自 Base 和以太坊链上，每小时自动更新一次。</p>
+<p class="site-foot">数据全部来自 Base 和以太坊链上，大约每 10 分钟自动更新一次。</p>
 <script>
   (() => {
     const $ = (id) => document.getElementById(id)

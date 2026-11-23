@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deriveView, encryptView, decryptView, sealRequest, openRequest, normalizeSet, newJobKeys } from '../lib/views.mjs'
+import { deriveView, encryptView, decryptView, sealRequest, openRequest, normalizeSet, newJobKeys, VIEW_STEP } from '../lib/views.mjs'
 import { checkRequest, applyRequest, emptyStore, cleanName, newKey, pushLog, letGo, recordRun, suspects, HEALTH, LIMITS } from '../lib/requests.mjs'
 import { addedTxCounts } from '../lib/scan.mjs'
 
@@ -22,6 +22,26 @@ test('the inbox bits come after the old ones: existing data files keep their nam
   assert.match(d.topic, /^aero-[0-9a-f]{32}$/)
   assert.ok(!d.topic.includes(d.name))
   assert.notEqual((await deriveView([A])).topic, d.topic)
+})
+
+test('a view file grows only by whole steps, whatever is added inside one, and reads back the same', async () => {
+  // The encrypted bytes of a view (the 16 after the text are the cipher's tag).
+  const size = async (p) => Buffer.from(JSON.parse((await encryptView([A], p)).body).ct, 'base64').length
+  const small = { rows: ['一'] }, more = { rows: ['一', 'b'.repeat(700)] }
+  assert.equal(await size(small), VIEW_STEP + 16)
+  assert.equal(await size(more), await size(small))
+  // Counted in bytes, not characters: three bytes a character here, just over one step.
+  const wide = { rows: ['一'.repeat(Math.ceil(VIEW_STEP / 3))] }
+  assert.equal(await size(wide), 2 * VIEW_STEP + 16)
+  // Exactly one step of text is not padded further.
+  const exact = { r: 'c'.repeat(VIEW_STEP - '{"r":""}'.length) }
+  assert.equal(await size(exact), VIEW_STEP + 16)
+  for (const p of [small, more, wide, exact]) assert.deepEqual(await decryptView([A], (await encryptView([A], p)).body), p)
+  // The page reads the text the same way: JSON with spaces after it.
+  const { key } = await deriveView([A]), { iv, ct } = JSON.parse((await encryptView([A], more)).body)
+  const text = new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: Buffer.from(iv, 'base64') }, key, Buffer.from(ct, 'base64')))
+  assert.match(text, /^\{.*\} +$/s)
+  assert.deepEqual(JSON.parse(text), more)
 })
 
 test('a request opens only with the job\'s key, only in the inbox it was sent to, and a data file is never read as one', async () => {

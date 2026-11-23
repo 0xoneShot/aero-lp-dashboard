@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { poolStats, stayShare } from '../lib/pools.mjs'
-import { isStock, sampleStockPools, stockRows, STOCK_DAYS, STOCK_MIN_USD, STOCK_KEEP_USD } from '../lib/stocks.mjs'
+import { isStock, sampleStockPools, readStockCache, CACHE_VERSION, stockRows, STOCK_DAYS, STOCK_MIN_USD, STOCK_KEEP_USD } from '../lib/stocks.mjs'
 
 const Q96 = 2 ** 96, Q128 = 2n ** 128n, HOUR = 3600, YEAR = 365 * 86400
 const T0 = 1_790_000_000 - (1_790_000_000 % HOUR)
@@ -159,8 +159,15 @@ test('the sampler finds the pools once, reads those with money in them, and keep
   ]
   const reads = { n: 0, found: [] }
   const client = chainOf({ pools: chainPools, reads, onRead: () => { reads.n++ } })
+  assert.equal(readStockCache(opts.file), null) // nothing sampled yet
   let { cache, errors } = await sampleStockPools({ ...opts, client })
   assert.deepEqual(errors, [])
+  // The file holds what the sampler returned (a pass that samples nothing lists the pools from it); another
+  // version's file is not read.
+  assert.deepEqual(readStockCache(opts.file), JSON.parse(JSON.stringify(cache)))
+  const other = tmpFile()
+  fs.writeFileSync(other, JSON.stringify({ ...cache, version: CACHE_VERSION + 1 }))
+  assert.equal(readStockCache(other), null)
   // Each stock pool is known, the only one with money and a gauge and a sane price is read.
   assert.deepEqual(Object.values(cache.known).map((p) => p.symbol).sort(), ['AMZNc', 'NOGc', 'ODDc', 'THINc'])
   assert.deepEqual(Object.values(cache.pools).map((p) => p.symbol), ['AMZNc'])
@@ -351,4 +358,9 @@ test('a pool no longer read says since when, and goes below those that are', () 
   assert.equal(rows[1].stale, true)
   assert.equal(rows[1].age_h, 10)
   assert.equal(rows[1].last_sample, new Date((T0 + (9 * 24 - 10) * HOUR + 8 * 3600) * 1000).toISOString().slice(0, 16).replace('T', ' '))
+  // A pass that samples nothing reads the rates as of the pass that took the samples, and counts their age
+  // from now: samples that stopped coming go stale there too, with the rates unchanged.
+  const kept = stockRows({ pools: { b: fresh } }, { ratio: 1.05 ** 2, nowTs, ageTs: nowTs + 5 * HOUR })
+  assert.deepEqual([kept[0].age_h, kept[0].stale], [5, true])
+  assert.equal(kept[0].rate, stockRows({ pools: { b: fresh } }, { ratio: 1.05 ** 2, nowTs })[0].rate)
 })
