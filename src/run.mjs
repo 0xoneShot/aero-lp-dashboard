@@ -323,7 +323,6 @@ for (const w of WALLETS) {
   }
   L.events.sort((a, b) => a.block - b.block || a.ts - b.ts)
   L.warnings.sort((a, b) => a.block - b.block)
-  if (Object.keys(ext).length) L.escrow.push(...matchCrossChain(L.events, hodlKey, decOf, { headTs: tsOfBlock(head) }))
 }
 
 // Token pair and pool of each position, read on its chain at a block of that chain. They never change,
@@ -443,14 +442,19 @@ function mergeSnap(s, o, chainKey) {
   return out
 }
 for (const x of Object.values(ext)) for (const w of WALLETS) for (const [b, cb] of x.at) snaps[w.key][b] = mergeSnap(snaps[w.key][b], x.snaps[w.key][cb], x.chain.key)
-// What is on the way stays the wallet's money: WETH waiting in its open native-ETH orders
-// (lib/orders.mjs) and coins in transit between the tracked chains (lib/crosschain.mjs).
-for (const w of WALLETS) for (const b of blocks) snaps[w.key][b].escrow = escrowByAsset(ledger[w.key].escrow, b)
 const prices = {}
 const eventBlocks = WALLETS.flatMap((w) => ledger[w.key].events.map((e) => e.block)).filter((b) => b > openingBlock && b <= head)
 await pmap([...new Set([...blocks, ...eventBlocks, ...Object.values(startBase).filter((b) => b <= head)])], 4, async (b) => { prices[b] = await pricesAt(b) })
 await savePrices(head) // kept now too: a stopped run keeps what it read (src/update.mjs)
 log(`valued ${tally(blocks.length)} day-end blocks and ${tally(new Set(eventBlocks).size)} event blocks`)
+// Transfers and swaps between the tracked chains are matched once the event blocks are priced, then what is
+// on the way stays the wallet's money: WETH waiting in its open native-ETH orders (lib/orders.mjs) and coins
+// in transit between the tracked chains (lib/crosschain.mjs).
+if (Object.keys(ext).length) {
+  const legUsd = (g, e) => (prices[e.block] ? Math.abs(valueOf(g.asset, g.amount, prices[e.block])) : null)
+  for (const w of WALLETS) ledger[w.key].escrow.push(...matchCrossChain(ledger[w.key].events.filter((e) => e.block <= head), hodlKey, decOf, { headTs: tsOfBlock(head), usd: legUsd }))
+}
+for (const w of WALLETS) for (const b of blocks) snaps[w.key][b].escrow = escrowByAsset(ledger[w.key].escrow, b)
 
 // Hourly samples of every gauged WETH/USDC pool on the chains (lib/pools.mjs), for the page's pool
 // card. Only pool contracts are read. A chain that cannot be read keeps its earlier samples, and a
@@ -554,13 +558,13 @@ for (const w of WALLETS) {
     for (const g of e.legs) {
       if (isExternal(g.cls)) flows.push({ block: e.block, ts: e.ts, asset: g.asset, amount: g.amount, usd: valueOf(g.asset, g.amount, p), kind: g.cls, bridge: e.bridge, hash: e.hash, cp: g.cp, chain: e.chain, ...(g.overridden ? { forced: true } : {}) })
     }
-    // AERO (or xAERO) leaving, except to the wallet's own other chain and what went into its own positions
-    // in the same transaction (still held), net of AERO that came back in it other than as a reward.
+    // AERO (or xAERO) leaving, except to the wallet's own other chain as AERO (still held) and what went
+    // into its own positions in the same transaction, net of AERO that came back in it other than as a reward.
     let kept = 0n
     for (const x of e.lp) if (x.type === 'increase') { const pr = await pairOf(e.chain, x.npm, x.tokenId, e.chainBlock); if (isAero(pr.token0)) kept += x.amount0; if (isAero(pr.token1)) kept += x.amount1 }
-    if (e.lp.length) for (const g of e.legs) if (isAero(g.asset) && g.amount > 0n && g.cls !== 'reward' && !g.crossChain) kept += g.amount
+    if (e.lp.length) for (const g of e.legs) if (isAero(g.asset) && g.amount > 0n && g.cls !== 'reward' && !(g.crossChain && !g.crossSwap)) kept += g.amount
     for (const g of e.legs) {
-      if (!isAero(g.asset) || g.amount >= 0n || g.crossChain) continue
+      if (!isAero(g.asset) || g.amount >= 0n || (g.crossChain && !g.crossSwap)) continue
       const take = kept < -g.amount ? kept : -g.amount, out = -g.amount - take
       kept -= take
       if (out > 0n) aeroOut.push({ block: e.block, amount: out, usd: valueOf(g.asset, out, p), between: g.cls === 'between', cls: g.cls, cp: g.cp, forced: Boolean(g.overridden) })
@@ -592,8 +596,8 @@ for (const w of WALLETS) {
   // an order paid to someone else is booked as money leaving.
   const byBlock = new Map()
   const escrowIn = new Map() // tx hash -> [asset, amount] moved into (+) or out of (-) what is on the way
-  // A matched transfer between chains releases only what arrived: its fee is a known cost, not a mismatch.
-  for (const m of L.escrow) escrowIn.set(m.hash, [...(escrowIn.get(m.hash) ?? []), [m.asset, m.received != null ? -m.received : m.amount]])
+  // A matched transfer or swap between chains releases what arrived: its fee or spread is a known cost, not a mismatch.
+  for (const m of L.escrow) escrowIn.set(m.hash, [...(escrowIn.get(m.hash) ?? []), [m.receivedAsset ?? m.asset, m.received != null ? -m.received : m.amount]])
   for (const e of ev) {
     const p = prices[e.block]
     const k = `${e.chain}:${e.block}`
@@ -658,7 +662,7 @@ function scopeAt(keys, b) {
   for (const v of vs) for (const [t, a] of Object.entries(v.feeTok)) feeAccrued[t] = (feeAccrued[t] ?? 0n) + a
   const hodl = sum([...c.hodl], ([k, a]) => valueOf(k, a, p))
   const pendingAero = sum(vs, (v) => v.pendingAero)
-  const aeroHeld = units(keys.reduce((a, k) => a + Object.entries(snaps[k][b].balances).reduce((x, [t, raw]) => x + (isAero(t) ? raw : 0n), 0n), 0n), 18)
+  const aeroHeld = units(keys.reduce((a, k) => a + [...Object.entries(snaps[k][b].balances), ...(snaps[k][b].escrow ?? [])].reduce((x, [t, raw]) => x + (isAero(t) ? raw : 0n), 0n), 0n), 18)
   return {
     b, p, c, feeAccrued, hodl, pendingAero, aeroHeld,
     value: sum(vs, (v) => v.total), lp: sum(vs, (v) => v.lp), wallet: sum(vs, (v) => v.wallet), pending: sum(vs, (v) => v.pending), feesNow: sum(vs, (v) => v.fees),
@@ -1226,7 +1230,7 @@ for (const w of WALLETS) {
     }
     // Moves between the tracked chains (lib/crosschain.mjs), and principal collected after it was removed.
     for (const g of e.legs.filter((x) => x.crossChain)) {
-      const amount = `${r6(Math.abs(units(g.amount, decOf(g.asset))))} ${symOf(g.asset)}`, via = e.bridge ? `（${e.bridge}）` : ''
+      const amount = `${r6(Math.abs(units(g.amount, decOf(g.asset))))} ${symOf(g.asset)}`, via = (g.bridge ?? e.bridge) ? `（${g.bridge ?? e.bridge}）` : ''
       if (g.sameChain) { // a bridge's fill on the same chain: a swap settled in two transactions
         events.push({ ...base, kind: '兑换', detail: `${g.amount > 0n ? '收到' : '付出'} ${amount}${via}`, usd: r2(Math.abs(valueOf(g.asset, g.amount, p))) })
         continue
@@ -1234,7 +1238,8 @@ for (const w of WALLETS) {
       const other = Object.values(CHAINS).filter((c) => c.key !== e.chain).map((c) => c.label).join('、')
       // On its way, the chain it goes to is not known yet.
       const where = g.pending ? '转出' : g.amount > 0n ? `来自${other}` : `转到${other}`
-      events.push({ ...base, kind: g.amount > 0n ? '跨链转入' : '跨链转出', detail: `${where}${via} · ${amount}${g.pending ? '（还在路上，6 小时内没到账就按转出计）' : ''}`, usd: r2(valueOf(g.asset, g.amount, p)) })
+      const kind = g.crossSwap ? '跨链兑换' : g.amount > 0n ? '跨链转入' : '跨链转出'
+      events.push({ ...base, kind, detail: `${where}${via} · ${amount}${g.pending ? '（还在路上，6 小时内没到账就按转出计）' : ''}`, usd: r2(valueOf(g.asset, g.amount, p)) })
     }
     if (!e.lp.length && (e.owed ?? []).some((o) => o.amount0 < 0n || o.amount1 < 0n)) {
       for (const o of e.owed.filter((y) => y.amount0 < 0n || y.amount1 < 0n)) {

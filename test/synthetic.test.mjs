@@ -469,6 +469,31 @@ test('coins handed to LI.FI\'s contract with nothing back are a bridge; a swap t
   assert.deepEqual(legsOf(L, 'a', '0xd8').sort(), [`0xc02a:${-(10n ** 18n)}:internal`, '0xa0b8:2250000000:internal'].sort())
 })
 
+test('a cross-chain swap through Bungee (AERO on Base to USDC on Ethereum) pairs into an internal swap with nothing to check', () => {
+  const OPEN_ROUTER = '0x50cfe7c1938db66a1a6d2e86d36f39fbef3d5c4a'
+  const RFQ_VAULT = '0x97caca78ac2a94c67643d07843f85afaa44a3ea5'
+  const DEPOSIT = '0x4794ca0cccec06c04b75a414e5ff1bd4594b69f002410d24a64b80fb2c22d456'
+  const FULFILLED = '0x91170d66098c018af5b9550ca3307975a6933fc4c2491ea3d53ca41e31397af2'
+  const A = 400n * 10n ** 18n, U = 160_000000n
+  const base = ledgerOn(CHAINS.base, [
+    { hash: '0xb5', from: WA, logs: [transfer(AERO, WA, OPEN_ROUTER, A), { address: RFQ_VAULT, topics: [DEPOSIT], data: words(0x1n, USDC, U) }] },
+    // Same-chain swap through OpenRouter (no bridge vault log): stays a plain internal swap.
+    { hash: '0xb6', from: WA, logs: [transfer(AERO, WA, OPEN_ROUTER, A), transfer(USDC, OPEN_ROUTER, WA, U)] },
+  ])
+  const eth = ledgerOn(ETHC, [
+    { hash: '0xb7', from: EOA, to: RFQ_VAULT, ts: 1030, logs: [transfer(ETHC.usdc, RFQ_VAULT, WA, U - 100000n), { address: RFQ_VAULT, topics: [FULFILLED], data: words(0x1n, ETHC.usdc, U - 100000n, WA) }] },
+  ])
+  assert.deepEqual(legsOf(base, 'a', '0xb5'), [`0x3f5b:${-A}:bridge`])
+  assert.deepEqual(legsOf(base, 'a', '0xb6').sort(), [`0x3f5b:${-A}:internal`, `0x8335:${U}:internal`].sort())
+  assert.deepEqual(legsOf(eth, 'a', '0xb7'), [`0xa0b8:${U - 100000n}:bridge`])
+  const events = [...base.a.events.filter((e) => e.hash === '0xb5').map((e) => ({ ...e, chain: 'base' })), ...eth.a.events.map((e) => ({ ...e, chain: 'eth' }))]
+  const canon = (a) => (a === ETHC.usdc ? USDC : a)
+  const dec = (a) => (canon(a) === USDC ? 6 : 18)
+  const usd = (g) => (Math.abs(Number(g.amount)) / 10 ** dec(g.asset)) * (g.asset === AERO ? 0.4 : 1)
+  matchCrossChain(events, canon, dec, { usd })
+  assert.deepEqual(events.map((e) => [e.legs[0].cls, e.legs[0].crossSwap, e.review]), [['internal', true, false], ['internal', true, false]])
+})
+
 test('a little ETH from an unknown contract is money in with nothing to check; more of it, or a little going out, is flagged', () => {
   const pay = (hash, value) => ({ hash, from: EOA, to: FAKE, eth: { [WA]: { delta: String(value), legs: [{ cp: FAKE, value: String(value) }] } }, logs: [] })
   const L = ledgerOf([pay('0xd9', 2n * 10n ** 15n - 1n), pay('0xdb', 2n * 10n ** 15n), pay('0xdc', -(10n ** 15n))])
